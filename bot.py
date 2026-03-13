@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # КОНФИГУРАЦИЯ
 # ============================================================
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '8767446234:AAGRz1sJfDtV321CpUBdI2sqGVDcWryGqcY')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # Убрано значение по умолчанию!
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
 # ХАОТИЧНЫЙ РЕЖИМ (в секундах)
