@@ -11,7 +11,7 @@ import io
 BOT_NAME = os.getenv('BOT_NAME') # Имя бота, например, "bot1"
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS') # Содержимое JSON-ключа
 # ID папки на Google Диске (достаем из ссылки: https://drive.google.com/drive/folders/XXXXX)
-FOLDER_ID = 'ВАШ_ID_ПАПКИ_ВСТАВЬТЕ_СЮДА'
+FOLDER_ID = '1H576aQQ1VYqt1-pKwcv0zIP8uYKSh2Af'
 
 # --- 1. Подключаемся к Google Drive ---
 def get_drive_service():
