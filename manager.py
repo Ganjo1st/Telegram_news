@@ -1,131 +1,175 @@
 import os
 import json
-import importlib.util
+import subprocess
 import sys
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
+import logging
 
-# --- НАСТРОЙКИ (их будет передавать GitHub Actions) ---
-BOT_NAME = os.getenv('BOT_NAME') # Имя бота, например, "bot1"
-GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS') # Содержимое JSON-ключа
-# ID папки на Google Диске (достаем из ссылки: https://drive.google.com/drive/folders/XXXXX)
-FOLDER_ID = '1H576aQQ1VYqt1-pKwcv0zIP8uYKSh2Af'
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- 1. Подключаемся к Google Drive ---
+# --- НАСТРОЙКИ (передаются через переменные окружения GitHub Actions) ---
+BOT_SCRIPT = os.getenv('BOT_SCRIPT', 'bot.py') # Имя вашего основного файла бота
+GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS') # Секретный ключ
+FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID') # ID папки на Google Drive
+
+# Имена файлов состояния (должны совпадать с теми, что использует bot.py)
+STATE_FILES = [
+    'sent_links.json',
+    'sent_hashes.json',
+    'sent_titles.json',
+    'posts_log.json'
+]
+
+# --- 1. Подключение к Google Drive ---
 def get_drive_service():
-    """Создает сервис для работы с Google Drive"""
-    import json
-    creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
-    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=['https://www.googleapis.com/auth/drive'])
-    return build('drive', 'v3', credentials=creds)
-
-# --- 2. Скачиваем файл состояния с Google Drive ---
-def download_file_from_drive(service, file_name, destination):
-    """Скачивает файл из Google Drive"""
+    """Создает сервис для работы с Google Drive из JSON-ключа."""
+    if not GOOGLE_CREDENTIALS_JSON:
+        logger.error("❌ Переменная окружения GOOGLE_CREDENTIALS не найдена!")
+        sys.exit(1)
     try:
-        # Ищем файл в нашей папке
-        query = f"name='{file_name}' and '{FOLDER_ID}' in parents and trashed=false"
-        results = service.files().list(q=query, fields="files(id, name)").execute()
-        files = results.get('files', [])
-
-        if files:
-            file_id = files[0]['id']
-            request = service.files().get_media(fileId=file_id)
-            fh = io.FileIO(destination, 'wb')
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-            print(f"✅ Файл {file_name} скачан с Google Drive.")
-        else:
-            # Если файла нет, создаем пустой
-            print(f"⚠️ Файл {file_name} не найден на Диске. Создаем пустой локально.")
-            with open(destination, 'w') as f:
-                json.dump({}, f)
+        creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=['https://www.googleapis.com/auth/drive']
+        )
+        return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        print(f"❌ Ошибка скачивания: {e}")
-        # В случае ошибки создаем пустой файл
-        with open(destination, 'w') as f:
-            json.dump({}, f)
+        logger.error(f"❌ Ошибка создания сервиса Google Drive: {e}")
+        sys.exit(1)
 
-# --- 3. Загружаем файл состояния обратно на Google Drive ---
-def upload_file_to_drive(service, file_path, file_name):
-    """Загружает файл на Google Drive, заменяя старый"""
+# --- 2. Скачивание файлов с Google Drive ---
+def download_files(service):
+    """Скачивает все файлы состояния из указанной папки на Google Drive."""
+    logger.info("📥 Скачивание файлов состояния с Google Drive...")
+    for file_name in STATE_FILES:
+        try:
+            # Ищем файл в папке
+            query = f"name='{file_name}' and '{FOLDER_ID}' in parents and trashed=false"
+            results = service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+
+            if files:
+                file_id = files[0]['id']
+                request = service.files().get_media(fileId=file_id)
+                fh = io.FileIO(file_name, 'wb')
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+                logger.info(f"  ✅ {file_name} скачан.")
+            else:
+                # Если файла нет, создаем пустой локально, чтобы бот мог работать
+                logger.info(f"  ⚠️ {file_name} не найден на Диске. Создаю пустой.")
+                with open(file_name, 'w') as f:
+                    json.dump([] if file_name != 'posts_log.json' else {}, f) # posts_log - словарь
+        except Exception as e:
+            logger.error(f"  ❌ Ошибка скачивания {file_name}: {e}")
+            # В случае ошибки тоже создаем пустой файл
+            with open(file_name, 'w') as f:
+                json.dump([] if file_name != 'posts_log.json' else {}, f)
+
+# --- 3. Загрузка файлов на Google Drive ---
+def upload_files(service):
+    """Загружает обновленные файлы состояния обратно на Google Drive."""
+    logger.info("📤 Загрузка файлов состояния на Google Drive...")
+    for file_name in STATE_FILES:
+        try:
+            # Пропускаем, если файл не существует (например, бот его не создал)
+            if not os.path.exists(file_name):
+                logger.warning(f"  ⚠️ {file_name} не найден локально, пропуск загрузки.")
+                continue
+
+            # Ищем старый файл в папке, чтобы обновить его
+            query = f"name='{file_name}' and '{FOLDER_ID}' in parents and trashed=false"
+            results = service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+
+            media = MediaFileUpload(file_name, mimetype='application/json')
+
+            if files:
+                file_id = files[0]['id']
+                updated_file = service.files().update(fileId=file_id, media_body=media).execute()
+                logger.info(f"  ✅ {file_name} обновлен на Диске.")
+            else:
+                # Если файла нет, создаем новый
+                file_metadata = {'name': file_name, 'parents': [FOLDER_ID]}
+                new_file = service.files().create(body=file_metadata, media_body=media).execute()
+                logger.info(f"  ✅ {file_name} создан на Диске.")
+        except Exception as e:
+            logger.error(f"  ❌ Ошибка загрузки {file_name}: {e}")
+
+# --- 4. Запуск бота ---
+def run_bot():
+    """Запускает скрипт бота, передавая ему пути к файлам через переменные окружения."""
+    logger.info(f"🚀 Запуск бота ({BOT_SCRIPT})...")
     try:
-        # Ищем старый файл, чтобы удалить или обновить
-        query = f"name='{file_name}' and '{FOLDER_ID}' in parents and trashed=false"
-        results = service.files().list(q=query, fields="files(id, name)").execute()
-        files = results.get('files', [])
+        # Создаем окружение для дочернего процесса, добавляя пути к файлам
+        bot_env = os.environ.copy()
+        for f in STATE_FILES:
+            # Устанавливаем переменные вроде SENT_LINKS_FILE=./sent_links.json
+            env_var_name = f.replace('.', '_').upper() # Пример: SENT_LINKS_JSON -> SENT_LINKS_JSON (не совсем точно, лучше задать явно)
+            # Зададим явно, как мы изменили в bot.py
+            if f == 'sent_links.json':
+                bot_env['SENT_LINKS_FILE'] = f
+            elif f == 'sent_hashes.json':
+                bot_env['SENT_HASHES_FILE'] = f
+            elif f == 'sent_titles.json':
+                bot_env['SENT_TITLES_FILE'] = f
+            elif f == 'posts_log.json':
+                bot_env['POSTS_LOG_FILE'] = f
 
-        media = MediaFileUpload(file_path, mimetype='application/json')
+        # Запускаем бота как отдельный процесс
+        result = subprocess.run([sys.executable, BOT_SCRIPT], env=bot_env, capture_output=True, text=True, timeout=600) # Таймаут 10 минут
 
-        if files:
-            file_id = files[0]['id']
-            # Обновляем существующий файл
-            updated_file = service.files().update(fileId=file_id, media_body=media).execute()
-            print(f"✅ Файл {file_name} обновлен на Google Drive.")
-        else:
-            # Создаем новый файл в нашей папке
-            file_metadata = {'name': file_name, 'parents': [FOLDER_ID]}
-            new_file = service.files().create(body=file_metadata, media_body=media).execute()
-            print(f"✅ Файл {file_name} создан на Google Drive.")
-    except Exception as e:
-        print(f"❌ Ошибка загрузки: {e}")
+        # Выводим логи бота в лог менеджера
+        if result.stdout:
+            logger.info(f"📢 ВЫВОД БОТА:\n{result.stdout}")
+        if result.stderr:
+            logger.error(f"⚠️ ОШИБКИ БОТА:\n{result.stderr}")
 
-# --- 4. Запускаем нужного бота ---
-def run_bot(bot_name):
-    """Динамически импортирует и запускает функцию main() из файла бота"""
-    bot_file = f"{bot_name}.py"
-    state_file = f"sent_links_{bot_name}.json"
-
-    # Проверяем, существует ли файл бота
-    if not os.path.exists(bot_file):
-        print(f"❌ Файл бота {bot_file} не найден!")
-        return False
-
-    try:
-        # Динамически импортируем модуль бота
-        spec = importlib.util.spec_from_file_location(bot_name, bot_file)
-        bot_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(bot_module)
-
-        # Проверяем, есть ли в боте функция main()
-        if hasattr(bot_module, 'main'):
-            # Передаем имя файла состояния, чтобы бот его использовал
-            # ВАЖНО! Ваш бот должен принимать аргумент `state_file` и читать/писать этот файл.
-            bot_module.main(state_file)
-            print(f"✅ Бот {bot_name} успешно выполнен.")
-            return True
-        else:
-            print(f"❌ В файле {bot_file} нет функции main()!")
+        if result.returncode != 0:
+            logger.error(f"❌ Бот завершился с ошибкой (код {result.returncode})")
             return False
+        else:
+            logger.info("✅ Бот успешно завершил работу.")
+            return True
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Бот выполнялся слишком долго (>10 минут). Прерывание.")
+        return False
     except Exception as e:
-        print(f"❌ Ошибка при выполнении бота {bot_name}: {e}")
+        logger.error(f"❌ Ошибка при запуске бота: {e}")
         return False
 
 # --- ГЛАВНАЯ ФУНКЦИЯ ---
 if __name__ == "__main__":
-    print(f"🚀 Запуск менеджера для бота: {BOT_NAME}")
+    logger.info("="*50)
+    logger.info("🚀 ЗАПУСК МЕНЕДЖЕРА")
+    logger.info("="*50)
 
-    # 1. Подключаемся к Drive
-    service = get_drive_service()
+    # 1. Проверяем обязательные параметры
+    if not FOLDER_ID:
+        logger.error("❌ Переменная окружения GOOGLE_DRIVE_FOLDER_ID не задана!")
+        sys.exit(1)
 
-    # 2. Определяем имена файлов
-    local_state_file = f"sent_links_{BOT_NAME}.json"
-    drive_state_file = f"sent_links_{BOT_NAME}.json"
+    # 2. Подключаемся к Google Drive
+    drive_service = get_drive_service()
 
-    # 3. Скачиваем актуальное состояние с Google Drive
-    download_file_from_drive(service, drive_state_file, local_state_file)
+    # 3. Скачиваем актуальные файлы состояния
+    download_files(drive_service)
 
     # 4. Запускаем бота
-    success = run_bot(BOT_NAME)
+    success = run_bot()
 
-    if success:
-        # 5. Если бот выполнился, загружаем обновленное состояние обратно
-        upload_file_to_drive(service, local_state_file, drive_state_file)
+    # 5. Если бот выполнился (даже с ошибками? Лучше загружать, если файлы изменились), загружаем файлы обратно
+    # Для простоты будем загружать всегда, если бот запустился.
+    if success: # Загружаем только при успехе, чтобы не затереть данные плохим состоянием
+        upload_files(drive_service)
+        logger.info("✅ Все операции завершены, файлы синхронизированы.")
     else:
-        print("❌ Бот не выполнен, файл состояния не загружается на Drive.")
+        logger.warning("⚠️ Бот завершился с ошибкой, файлы НЕ загружены на Disk, чтобы не повредить данные.")
 
-    print("🏁 Работа менеджера завершена.")
+    logger.info("🏁 РАБОТА МЕНЕДЖЕРА ЗАВЕРШЕНА")
