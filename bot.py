@@ -78,13 +78,20 @@ ALL_FEEDS = [
 ]
 
 # ============================================================
-# ФАЙЛЫ ДЛЯ ХРАНЕНИЯ ДАННЫХ
+# ФАЙЛЫ ДЛЯ ХРАНЕНИЯ ДАННЫХ (пути могут быть переданы извне)
 # ============================================================
-SENT_LINKS_FILE = 'sent_links.json'
-SENT_HASHES_FILE = 'sent_hashes.json'  # НОВЫЙ ФАЙЛ для хешей
-SENT_TITLES_FILE = 'sent_titles.json'  # НОВЫЙ ФАЙЛ для заголовков
-POSTS_LOG_FILE = 'posts_log.json'
+import os
+
+# Если переменная окружения не задана, используем имя по умолчанию в текущей папке
+SENT_LINKS_FILE = os.getenv('SENT_LINKS_FILE', 'sent_links.json')
+SENT_HASHES_FILE = os.getenv('SENT_HASHES_FILE', 'sent_hashes.json')
+SENT_TITLES_FILE = os.getenv('SENT_TITLES_FILE', 'sent_titles.json')
+POSTS_LOG_FILE = os.getenv('POSTS_LOG_FILE', 'posts_log.json')
 TELEGRAM_MAX_CAPTION = 1024
+
+# Для отладки выведем, какие файлы используем
+logger = logging.getLogger(__name__) # Убедитесь, что этот импорт есть выше
+logger.info(f"📁 Используемые файлы данных: {SENT_LINKS_FILE}, {SENT_HASHES_FILE}, {SENT_TITLES_FILE}, {POSTS_LOG_FILE}")
 
 # ============================================================
 # ОСНОВНОЙ КЛАСС БОТА
