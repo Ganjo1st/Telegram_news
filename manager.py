@@ -25,8 +25,8 @@ STATE_FILES = [
     'posts_log.json'
 ]
 
-# УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 15 МИНУТ
-BOT_TIMEOUT = 900  # 15 минут
+# УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 20 МИНУТ
+BOT_TIMEOUT = 1200  # 20 минут
 
 def get_drive_service():
     """Создает сервис для работы с Google Drive из JSON-ключа."""
