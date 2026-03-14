@@ -985,7 +985,7 @@ class NewsBot:
         logger.info("🚀 NEWS BOT 10.1 - АБСОЛЮТНАЯ ЗАЩИТА ОТ ДУБЛЕЙ")
         logger.info("="*80)
         logger.info(f"📢 Канал: {CHANNEL_ID}")
-       logger.info(f"⏱ ХАОТИЧНЫЙ РЕЖИМ: {MIN_POST_INTERVAL//60}-{MAX_POST_INTERVAL//60} мин")
+        logger.info(f"⏱ ХАОТИЧНЫЙ РЕЖИМ: {MIN_POST_INTERVAL//60}-{MAX_POST_INTERVAL//60} мин")
         logger.info(f"🛡️ Лимит: {MAX_POSTS_PER_DAY} постов/день")
         logger.info(f"🌍 Часовой пояс: UTC+{TIMEZONE_OFFSET}")
         logger.info(f"🔒 Защита от дублей:")
