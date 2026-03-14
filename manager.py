@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # --- НАСТРОЙКИ ---
 BOT_SCRIPT = os.getenv('BOT_SCRIPT', 'bot.py')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS')
-FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')  # ID папки my_bot_data
+FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
 
 # Имена файлов состояния
 STATE_FILES = [
@@ -26,8 +26,8 @@ STATE_FILES = [
     'posts_log.json'
 ]
 
-# Таймаут для бота (в секундах) - уменьшаем до 5 минут
-BOT_TIMEOUT = 600  # 10 минут (как было изначально)
+# УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 10 МИНУТ
+BOT_TIMEOUT = 600  # 10 минут
 
 def get_drive_service():
     """Создает сервис для работы с Google Drive из JSON-ключа."""
@@ -109,7 +109,6 @@ def run_bot():
     try:
         bot_env = os.environ.copy()
         
-        # Передаем пути к файлам состояния
         for f in STATE_FILES:
             if f == 'sent_links.json':
                 bot_env['SENT_LINKS_FILE'] = f
@@ -120,7 +119,6 @@ def run_bot():
             elif f == 'posts_log.json':
                 bot_env['POSTS_LOG_FILE'] = f
         
-        # Передаем токен Telegram
         bot_env['TELEGRAM_TOKEN'] = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         bot_env['CHANNEL_ID'] = os.environ.get('TELEGRAM_CHANNEL_ID', '@Novikon_news')
         
@@ -128,7 +126,6 @@ def run_bot():
             logger.error("❌ TELEGRAM_TOKEN не передан в менеджер!")
             return False
 
-        # Запускаем процесс с таймаутом
         result = subprocess.run(
             [sys.executable, BOT_SCRIPT], 
             env=bot_env, 
@@ -138,7 +135,6 @@ def run_bot():
         )
 
         if result.stdout:
-            # Показываем только последние 20 строк вывода, чтобы не засорять лог
             last_lines = result.stdout.strip().split('\n')[-20:]
             logger.info(f"📢 ПОСЛЕДНИЕ 20 СТРОК ВЫВОДА БОТА:\n" + "\n".join(last_lines))
         if result.stderr:
