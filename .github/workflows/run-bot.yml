@@ -2,10 +2,8 @@ name: Run News Bot
 
 on:
   schedule:
-    # Запускаем каждый час в 15 минут (например, в 00:15, 01:15 и т.д. UTC)
-    # Настройте под нужное вам время
     - cron: '15 * * * *'
-  workflow_dispatch: # Позволяет запускать вручную со вкладки Actions
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -22,19 +20,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          # Устанавливаем зависимости вашего бота из requirements.txt
           pip install -r requirements.txt
-          # Устанавливаем библиотеку для Google Drive
-          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
       - name: Run Manager
         env:
-          # Передаем секреты в менеджер
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          # Передаем токены бота, они нужны самому bot.py
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          # Указываем, какой скрипт запускать (по умолчанию bot.py)
           BOT_SCRIPT: 'bot.py'
         run: python manager.py
