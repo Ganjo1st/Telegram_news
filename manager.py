@@ -7,15 +7,16 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 import logging
+import signal
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ (передаются через переменные окружения GitHub Actions) ---
+# --- НАСТРОЙКИ ---
 BOT_SCRIPT = os.getenv('BOT_SCRIPT', 'bot.py')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS')
-FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')  # ID папки my_bot_data
 
 # Имена файлов состояния
 STATE_FILES = [
@@ -25,7 +26,9 @@ STATE_FILES = [
     'posts_log.json'
 ]
 
-# --- 1. Подключение к Google Drive ---
+# Таймаут для бота (в секундах) - уменьшаем до 5 минут
+BOT_TIMEOUT = 300  # 5 минут
+
 def get_drive_service():
     """Создает сервис для работы с Google Drive из JSON-ключа."""
     if not GOOGLE_CREDENTIALS_JSON:
@@ -41,7 +44,6 @@ def get_drive_service():
         logger.error(f"❌ Ошибка создания сервиса Google Drive: {e}")
         sys.exit(1)
 
-# --- 2. Скачивание файлов с Google Drive ---
 def download_files(service):
     """Скачивает все файлы состояния из указанной папки на Google Drive."""
     logger.info("📥 Скачивание файлов состояния с Google Drive...")
@@ -64,18 +66,17 @@ def download_files(service):
                 logger.info(f"  ⚠️ {file_name} не найден на Диске. Создаю пустой.")
                 with open(file_name, 'w') as f:
                     if file_name == 'posts_log.json':
-                        json.dump({}, f)
+                        json.dump([], f)
                     else:
                         json.dump([], f)
         except Exception as e:
             logger.error(f"  ❌ Ошибка скачивания {file_name}: {e}")
             with open(file_name, 'w') as f:
                 if file_name == 'posts_log.json':
-                    json.dump({}, f)
+                    json.dump([], f)
                 else:
                     json.dump([], f)
 
-# --- 3. Загрузка файлов на Google Drive ---
 def upload_files(service):
     """Загружает обновленные файлы состояния обратно на Google Drive."""
     logger.info("📤 Загрузка файлов состояния на Google Drive...")
@@ -102,10 +103,9 @@ def upload_files(service):
         except Exception as e:
             logger.error(f"  ❌ Ошибка загрузки {file_name}: {e}")
 
-# --- 4. Запуск бота ---
 def run_bot():
-    """Запускает скрипт бота, передавая ему все необходимые переменные."""
-    logger.info(f"🚀 Запуск бота ({BOT_SCRIPT})...")
+    """Запускает скрипт бота с таймаутом."""
+    logger.info(f"🚀 Запуск бота ({BOT_SCRIPT}) с таймаутом {BOT_TIMEOUT//60} минут...")
     try:
         bot_env = os.environ.copy()
         
@@ -120,7 +120,7 @@ def run_bot():
             elif f == 'posts_log.json':
                 bot_env['POSTS_LOG_FILE'] = f
         
-        # Явно передаем токен Telegram (из секретов GitHub -> переменная TELEGRAM_BOT_TOKEN)
+        # Передаем токен Telegram
         bot_env['TELEGRAM_TOKEN'] = os.environ.get('TELEGRAM_BOT_TOKEN', '')
         bot_env['CHANNEL_ID'] = os.environ.get('TELEGRAM_CHANNEL_ID', '@Novikon_news')
         
@@ -128,16 +128,19 @@ def run_bot():
             logger.error("❌ TELEGRAM_TOKEN не передан в менеджер!")
             return False
 
+        # Запускаем процесс с таймаутом
         result = subprocess.run(
             [sys.executable, BOT_SCRIPT], 
             env=bot_env, 
             capture_output=True, 
             text=True, 
-            timeout=600
+            timeout=BOT_TIMEOUT
         )
 
         if result.stdout:
-            logger.info(f"📢 ВЫВОД БОТА:\n{result.stdout}")
+            # Показываем только последние 20 строк вывода, чтобы не засорять лог
+            last_lines = result.stdout.strip().split('\n')[-20:]
+            logger.info(f"📢 ПОСЛЕДНИЕ 20 СТРОК ВЫВОДА БОТА:\n" + "\n".join(last_lines))
         if result.stderr:
             logger.error(f"⚠️ ОШИБКИ БОТА:\n{result.stderr}")
 
@@ -147,14 +150,14 @@ def run_bot():
         else:
             logger.info("✅ Бот успешно завершил работу.")
             return True
+            
     except subprocess.TimeoutExpired:
-        logger.error("❌ Бот выполнялся слишком долго (>10 минут). Прерывание.")
+        logger.error(f"❌ Бот выполнялся слишком долго (>{BOT_TIMEOUT//60} минут). Прерывание.")
         return False
     except Exception as e:
         logger.error(f"❌ Ошибка при запуске бота: {e}")
         return False
 
-# --- ГЛАВНАЯ ФУНКЦИЯ ---
 if __name__ == "__main__":
     logger.info("="*50)
     logger.info("🚀 ЗАПУСК МЕНЕДЖЕРА")
