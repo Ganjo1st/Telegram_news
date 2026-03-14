@@ -10,6 +10,6 @@ lxml==5.1.0
 charset-normalizer==3.3.2
 idna==3.6
 urllib3==2.2.1
-certifi==2024.2.7
+certifi==2024.2.2
 deep-translator==1.11.4
 feedparser==6.0.10
