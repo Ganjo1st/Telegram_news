@@ -7,7 +7,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 import logging
-import signal
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,6 +25,7 @@ STATE_FILES = [
     'posts_log.json'
 ]
 
+# УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 15 МИНУТ
 BOT_TIMEOUT = 900  # 15 минут
 
 def get_drive_service():
