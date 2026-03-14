@@ -27,6 +27,19 @@ import tempfile
 import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+import asyncio
+import signal
+
+# Глобальный таймаут для всех операций
+TIMEOUT = 240  # 4 минуты на всё
+
+async def run_with_timeout(coro, timeout):
+    """Запускает корутину с таймаутом"""
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error(f"❌ Операция превысила таймаут {timeout}с")
+        return None
 
 # Настройка логирования
 logging.basicConfig(
