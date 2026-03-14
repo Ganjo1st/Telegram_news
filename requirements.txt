@@ -11,3 +11,7 @@ charset-normalizer==3.3.2
 idna==3.6
 urllib3==2.2.1
 certifi==2024.2.2
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
