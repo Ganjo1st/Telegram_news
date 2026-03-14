@@ -91,12 +91,18 @@ TELEGRAM_MAX_CAPTION = 1024
 # ============================================================
 class NewsBot:
     def __init__(self):
-        # Создаем файлы если их нет
-        for file in [SENT_LINKS_FILE, SENT_HASHES_FILE, SENT_TITLES_FILE, POSTS_LOG_FILE]:
+               # Создаем файлы если их нет
+        for file in [SENT_LINKS_FILE, SENT_HASHES_FILE, SENT_TITLES_FILE]:
             if not os.path.exists(file):
                 with open(file, 'w', encoding='utf-8') as f:
                     json.dump([], f)
                 logger.info(f"📁 Создан файл {file}")
+        
+        # Для posts_log.json нужен словарь, а не список
+        if not os.path.exists(POSTS_LOG_FILE):
+            with open(POSTS_LOG_FILE, 'w', encoding='utf-8') as f:
+                json.dump([], f)  # Оставляем как список, потому что в log_post мы делаем append
+            logger.info(f"📁 Создан файл {POSTS_LOG_FILE}")
 
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
