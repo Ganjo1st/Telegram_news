@@ -27,19 +27,7 @@ import tempfile
 import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-import asyncio
 import signal
-
-# Глобальный таймаут для всех операций
-TIMEOUT = 240  # 4 минуты на всё
-
-async def run_with_timeout(coro, timeout):
-    """Запускает корутину с таймаутом"""
-    try:
-        return await asyncio.wait_for(coro, timeout=timeout)
-    except asyncio.TimeoutError:
-        logger.error(f"❌ Операция превысила таймаут {timeout}с")
-        return None
 
 # Настройка логирования
 logging.basicConfig(
@@ -60,6 +48,13 @@ MAX_POST_INTERVAL = 2 * 60 * 60  # 2 часа
 CHECK_INTERVAL = 30 * 60         # 30 минут
 MAX_POSTS_PER_DAY = 24
 TIMEZONE_OFFSET = 7
+
+# Таймауты (в секундах)
+REQUEST_TIMEOUT = 15
+PARSING_TIMEOUT = 30
+TRANSLATION_TIMEOUT = 60
+PUBLISH_TIMEOUT = 30
+TOTAL_BOT_TIMEOUT = 240  # 4 минуты на всё
 
 # ============================================================
 # ИСТОЧНИКИ
@@ -100,16 +95,29 @@ POSTS_LOG_FILE = os.getenv('POSTS_LOG_FILE', 'posts_log.json')
 TELEGRAM_MAX_CAPTION = 1024
 
 # ============================================================
-# ЗАГРУЗКА ФАЙЛОВ СОСТОЯНИЯ С GOOGLE DRIVE (для синхронизации)
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
-def download_state_files_from_drive():
-    """Скачивает файлы состояния с Google Drive, если они там есть."""
-    # Здесь должен быть код для скачивания файлов из папки my_bot_data
-    # Но чтобы не усложнять, пока можно просто проверять их наличие
-    # и копировать из папки, куда их кладет manager.py первого проекта.
-    pass
+async def run_with_timeout(coro, timeout, default=None):
+    """Запускает корутину с таймаутом"""
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error(f"❌ Операция превысила таймаут {timeout}с")
+        return default
+    except Exception as e:
+        logger.error(f"❌ Ошибка в операции: {e}")
+        return default
 
-# Вызовите эту функцию в начале __init__ класса NewsBot
+def fetch_with_timeout(func, timeout, *args, **kwargs):
+    """Запускает синхронную функцию с таймаутом"""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            logger.error(f"❌ Функция {func.__name__} превысила таймаут {timeout}с")
+            return None
 
 # ============================================================
 # ОСНОВНОЙ КЛАСС БОТА
@@ -194,62 +202,43 @@ class NewsBot:
         - Приводит к нижнему регистру
         - Удаляет знаки препинания
         - Удаляет лишние пробелы
-        - Удаляет общие слова (the, a, an, and, etc)
+        - Удаляет общие слова
         """
         if not title:
             return ""
         
-        # Приводим к нижнему регистру
         title = title.lower()
-        
-        # Удаляем знаки препинания
         title = re.sub(r'[^\w\s]', '', title)
-        
-        # Удаляем лишние пробелы
         title = re.sub(r'\s+', ' ', title).strip()
         
-        # Удаляем общие слова (опционально)
         common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']
         words = title.split()
         words = [w for w in words if w not in common_words]
         
-        return ' '.join(words)[:100]  # Ограничиваем длину
+        return ' '.join(words)[:100]
 
     def create_content_hash(self, content):
-        """
-        Создает хеш содержимого статьи
-        Использует первые 500 символов текста для создания уникального ключа
-        """
+        """Создает хеш содержимого статьи"""
         if not content:
             return None
-        
-        # Берем первые 500 символов (достаточно для уникальности)
         sample = content[:500].encode('utf-8')
         return hashlib.md5(sample).hexdigest()
 
     def is_duplicate(self, article_data):
-        """
-        ТРЁХУРОВНЕВАЯ ПРОВЕРКА НА ДУБЛИКАТ:
-        1. Проверка по URL (быстро)
-        2. Проверка по нормализованному заголовку (средне)
-        3. Проверка по хешу содержимого (надежно)
-        """
+        """Трёхуровневая проверка на дубликат"""
         url = article_data.get('link', '')
         title = article_data.get('title', '')
         content = article_data.get('content', '')
         
-        # Уровень 1: Проверка по URL
         if url in self.sent_links:
             logger.info(f"⏭️ ДУБЛИКАТ (URL): {title[:50]}...")
             return True
         
-        # Уровень 2: Проверка по нормализованному заголовку
         norm_title = self.normalize_title(title)
         if norm_title and norm_title in self.sent_titles:
             logger.info(f"⏭️ ДУБЛИКАТ (заголовок): {title[:50]}...")
             return True
         
-        # Уровень 3: Проверка по хешу содержимого
         if content:
             content_hash = self.create_content_hash(content)
             if content_hash and content_hash in self.sent_hashes:
@@ -264,40 +253,33 @@ class NewsBot:
         title = article_data.get('title', '')
         content = article_data.get('content', '')
         
-        # Добавляем URL
         if url:
             self.sent_links.add(url)
             self.save_set(SENT_LINKS_FILE, self.sent_links)
         
-        # Добавляем нормализованный заголовок
         norm_title = self.normalize_title(title)
         if norm_title:
             self.sent_titles.add(norm_title)
             self.save_set(SENT_TITLES_FILE, self.sent_titles)
         
-        # Добавляем хеш содержимого
         if content:
             content_hash = self.create_content_hash(content)
             if content_hash:
                 self.sent_hashes.add(content_hash)
                 self.save_set(SENT_HASHES_FILE, self.sent_hashes)
         
-        logger.info(f"✅ Статья помечена как отправленная (URL + заголовок + хеш)")
+        logger.info(f"✅ Статья помечена как отправленная")
 
     # ========== УДАЛЕНИЕ МЕТА-ДАННЫХ ==========
     def remove_metadata(self, text):
         if not text:
             return text
         
-        # Удаляем временные метки
         text = re.sub(r'\d+\s*(hour|min|sec|day|minute|second)s?\s+ago', '', text, flags=re.IGNORECASE)
         text = re.sub(r'Updated\s*:?\s*[\d:APM\s-]+', '', text, flags=re.IGNORECASE)
         text = re.sub(r'Published\s*:?\s*[\d:APM\s-]+', '', text, flags=re.IGNORECASE)
-        
-        # Удаляем информацию об авторе
         text = re.sub(r'^By\s+[\w\s,]+\n', '', text, flags=re.IGNORECASE | re.MULTILINE)
         
-        # Удаляем служебные надписи
         garbage_phrases = [
             r'(?:Фарси|Русский|Немецкий|Испанский|Португальский|Французский|Итальянский)[\s,]+',
             r'Subscribe', r'Newsletter', r'Sign up', r'Follow us',
@@ -361,8 +343,6 @@ class NewsBot:
         return delay
 
     def log_post(self, link, title):
-        """Добавляет запись о публикации в лог"""
-        # Убеждаемся, что posts_log - это список
         if not isinstance(self.posts_log, list):
             self.posts_log = []
             
@@ -372,7 +352,6 @@ class NewsBot:
             'time': datetime.now().isoformat()
         })
         
-        # Оставляем только последние 100 записей
         if len(self.posts_log) > 100:
             self.posts_log = self.posts_log[-100:]
             
@@ -410,8 +389,11 @@ class NewsBot:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get('https://apnews.com/', headers=headers, timeout=15)
-            if response.status_code != 200:
+            response = fetch_with_timeout(
+                lambda: requests.get('https://apnews.com/', headers=headers, timeout=REQUEST_TIMEOUT),
+                REQUEST_TIMEOUT
+            )
+            if not response or response.status_code != 200:
                 return []
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -447,7 +429,6 @@ class NewsBot:
                 
                 title = re.sub(r'\s+', ' ', title).strip()
                 
-                # Пропускаем служебные страницы
                 lower_title = title.lower()
                 if any(phrase in lower_title for phrase in ['newsletter', 'subscribe', 'sign up']):
                     continue
@@ -457,7 +438,6 @@ class NewsBot:
                     'title': title
                 })
 
-            # Убираем дубликаты URL
             unique_articles = []
             seen_urls = set()
             for article in articles:
@@ -476,13 +456,15 @@ class NewsBot:
         try:
             logger.info(f"🌐 Парсинг статьи AP News: {url}")
             headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
+            response = fetch_with_timeout(
+                lambda: requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT),
+                REQUEST_TIMEOUT
+            )
+            if not response or response.status_code != 200:
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -498,13 +480,11 @@ class NewsBot:
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = self.clean_text(title)
 
-            # Изображение
             main_image = None
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 main_image = meta_img['content']
 
-            # Текст статьи
             article_text = ""
             main_container = None
             
@@ -525,19 +505,16 @@ class NewsBot:
                 main_container = soup.body
             
             if main_container:
-                # Удаляем ненужные элементы
                 for unwanted in main_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                     unwanted.decompose()
                 
                 for elem in main_container.find_all(class_=re.compile(r'sidebar|newsletter|related|ad|promo', re.I)):
                     elem.decompose()
                 
-                # Собираем параграфы
                 paragraphs = []
                 for p in main_container.find_all('p'):
                     p_text = p.get_text(strip=True)
                     if p_text and len(p_text) > 20:
-                        # Пропускаем рекламные параграфы
                         lower_text = p_text.lower()
                         if not any(phrase in lower_text for phrase in 
                                  ['subscribe', 'newsletter', 'sign up', 'follow us']):
@@ -566,8 +543,11 @@ class NewsBot:
         try:
             logger.info(f"🌐 Парсинг InfoBrics: {url}")
             headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
+            response = fetch_with_timeout(
+                lambda: requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT),
+                REQUEST_TIMEOUT
+            )
+            if not response or response.status_code != 200:
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -620,8 +600,11 @@ class NewsBot:
         try:
             logger.info(f"🌐 Парсинг Global Research: {url}")
             headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
+            response = fetch_with_timeout(
+                lambda: requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT),
+                REQUEST_TIMEOUT
+            )
+            if not response or response.status_code != 200:
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -686,7 +669,6 @@ class NewsBot:
                 url = article['url']
                 title = article['title']
 
-                # Быстрая проверка по URL
                 if url in self.sent_links:
                     logger.info(f"⏭️ УЖЕ БЫЛО (URL): {title[:50]}...")
                     continue
@@ -698,7 +680,6 @@ class NewsBot:
                 )
 
                 if article_data:
-                    # ПОЛНАЯ ПРОВЕРКА на дубликат
                     if self.is_duplicate({
                         'link': url,
                         'title': article_data['title'],
@@ -714,7 +695,7 @@ class NewsBot:
                         'main_image': article_data.get('main_image'),
                         'priority': 1
                     })
-                    logger.info(f"✅ Статья добавлена (прошла все проверки)")
+                    logger.info(f"✅ Статья добавлена")
                 else:
                     logger.warning(f"❌ Не удалось спарсить")
 
@@ -754,7 +735,6 @@ class NewsBot:
                 link = entry.get('link', '')
                 title = entry.get('title', 'Без заголовка')
 
-                # Быстрая проверка по URL
                 if link in self.sent_links:
                     logger.info(f"⏭️ УЖЕ БЫЛО (URL): {title[:50]}...")
                     continue
@@ -767,7 +747,6 @@ class NewsBot:
                 )
 
                 if article_data:
-                    # ПОЛНАЯ ПРОВЕРКА на дубликат
                     if self.is_duplicate({
                         'link': link,
                         'title': article_data['title'],
@@ -783,7 +762,7 @@ class NewsBot:
                         'main_image': article_data.get('main_image'),
                         'priority': priority
                     })
-                    logger.info(f"✅ Статья добавлена (прошла все проверки)")
+                    logger.info(f"✅ Статья добавлена")
                 else:
                     logger.warning(f"❌ Не удалось спарсить {source_name}")
 
@@ -810,7 +789,6 @@ class NewsBot:
             all_news.extend(news)
             await asyncio.sleep(random.randint(5, 10))
 
-        # Сортируем по приоритету
         all_news.sort(key=lambda x: x.get('priority', 5))
 
         logger.info(f"📊 ВСЕГО НОВЫХ УНИКАЛЬНЫХ СТАТЕЙ: {len(all_news)}")
@@ -842,13 +820,26 @@ class NewsBot:
                 for i in range(0, len(text), 2000):
                     part = text[i:i+2000]
                     try:
-                        translated = self.translator.translate(part)
-                        parts.append(translated)
+                        translated = fetch_with_timeout(
+                            self.translator.translate, 
+                            TRANSLATION_TIMEOUT, 
+                            part
+                        )
+                        if translated:
+                            parts.append(translated)
+                        else:
+                            parts.append(part)
                     except:
                         parts.append(part)
                     time.sleep(random.uniform(0.5, 1.5))
                 return ' '.join(parts)
-            return self.translator.translate(text)
+            
+            translated = fetch_with_timeout(
+                self.translator.translate, 
+                TRANSLATION_TIMEOUT, 
+                text
+            )
+            return translated if translated else text
         except Exception as e:
             logger.error(f"❌ Ошибка перевода: {e}")
             return text
@@ -974,11 +965,14 @@ class NewsBot:
         try:
             if post_data['image_path']:
                 with open(post_data['image_path'], 'rb') as photo:
-                    await self.bot.send_photo(
-                        chat_id=CHANNEL_ID,
-                        photo=photo,
-                        caption=post_data['caption'],
-                        parse_mode='HTML'
+                    await run_with_timeout(
+                        self.bot.send_photo(
+                            chat_id=CHANNEL_ID,
+                            photo=photo,
+                            caption=post_data['caption'],
+                            parse_mode='HTML'
+                        ),
+                        PUBLISH_TIMEOUT
                     )
                 try:
                     os.unlink(post_data['image_path'])
@@ -987,10 +981,13 @@ class NewsBot:
                 logger.info("✅ Пост опубликован")
                 return True
             else:
-                await self.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=post_data['caption'],
-                    parse_mode='HTML'
+                await run_with_timeout(
+                    self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=post_data['caption'],
+                        parse_mode='HTML'
+                    ),
+                    PUBLISH_TIMEOUT
                 )
                 return True
 
@@ -1005,22 +1002,36 @@ class NewsBot:
             else:
                 logger.error(f"❌ Ошибка Telegram: {e}")
                 return False
+        except asyncio.TimeoutError:
+            logger.error(f"❌ Таймаут публикации в Telegram")
+            return False
 
     async def check_and_publish(self):
         logger.info("="*60)
         logger.info(f"🔍 ПРОВЕРКА: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("="*60)
 
-        news_items = await self.fetch_all_news()
-        
-        if not news_items:
-            logger.info("📭 НОВЫХ УНИКАЛЬНЫХ СТАТЕЙ НЕТ")
-            return
+        try:
+            # Сбор новостей с общим таймаутом
+            news_items = await run_with_timeout(
+                self.fetch_all_news(),
+                timeout=120  # 2 минуты на сбор
+            )
+            
+            if not news_items:
+                logger.info("📭 НОВЫХ УНИКАЛЬНЫХ СТАТЕЙ НЕТ")
+                return
 
-        self.post_queue.extend(news_items)
-        logger.info(f"📦 В очереди {len(self.post_queue)} уникальных статей")
+            self.post_queue.extend(news_items)
+            logger.info(f"📦 В очереди {len(self.post_queue)} уникальных статей")
 
-        await self.try_publish_from_queue()
+            # Публикация с общим таймаутом
+            await run_with_timeout(
+                self.try_publish_from_queue(),
+                timeout=180  # 3 минуты на публикацию
+            )
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка в check_and_publish: {e}")
 
     async def try_publish_from_queue(self):
         if not self.post_queue:
@@ -1043,7 +1054,6 @@ class NewsBot:
         if post_data:
             success = await self.publish_post(post_data)
             if success:
-                # Помечаем статью как отправленную во всех трёх базах
                 self.mark_as_sent(item)
                 self.log_post(item['link'], item['title'])
                 logger.info(f"✅ Статья опубликована и помечена во всех базах")
@@ -1075,8 +1085,12 @@ class NewsBot:
         logger.info("="*80)
 
         try:
-            me = await self.bot.get_me()
-            logger.info(f"✅ Бот @{me.username} авторизован")
+            me = await run_with_timeout(self.bot.get_me(), timeout=10)
+            if me:
+                logger.info(f"✅ Бот @{me.username} авторизован")
+            else:
+                logger.error("❌ Таймаут авторизации бота")
+                return
         except Exception as e:
             logger.error(f"❌ Ошибка подключения бота: {e}")
             return
