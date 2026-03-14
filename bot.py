@@ -91,17 +91,17 @@ TELEGRAM_MAX_CAPTION = 1024
 # ============================================================
 class NewsBot:
     def __init__(self):
-               # Создаем файлы если их нет
+        # Создаем файлы если их нет - для sent_* используем списки
         for file in [SENT_LINKS_FILE, SENT_HASHES_FILE, SENT_TITLES_FILE]:
             if not os.path.exists(file):
                 with open(file, 'w', encoding='utf-8') as f:
                     json.dump([], f)
                 logger.info(f"📁 Создан файл {file}")
         
-        # Для posts_log.json нужен словарь, а не список
+        # Для posts_log.json тоже создаем список
         if not os.path.exists(POSTS_LOG_FILE):
             with open(POSTS_LOG_FILE, 'w', encoding='utf-8') as f:
-                json.dump([], f)  # Оставляем как список, потому что в log_post мы делаем append
+                json.dump([], f)
             logger.info(f"📁 Создан файл {POSTS_LOG_FILE}")
 
         self.bot = Bot(token=TELEGRAM_TOKEN)
@@ -113,6 +113,11 @@ class NewsBot:
         self.sent_hashes = self.load_set(SENT_HASHES_FILE)
         self.sent_titles = self.load_set(SENT_TITLES_FILE)
         self.posts_log = self.load_json(POSTS_LOG_FILE)
+        
+        # Убеждаемся, что posts_log - это список
+        if not isinstance(self.posts_log, list):
+            self.posts_log = []
+            self.save_json(POSTS_LOG_FILE, self.posts_log)
         
         self.session = None
         self.last_post_time = None
@@ -331,13 +336,21 @@ class NewsBot:
         return delay
 
     def log_post(self, link, title):
+        """Добавляет запись о публикации в лог"""
+        # Убеждаемся, что posts_log - это список
+        if not isinstance(self.posts_log, list):
+            self.posts_log = []
+            
         self.posts_log.append({
             'link': link,
             'title': title[:50],
             'time': datetime.now().isoformat()
         })
+        
+        # Оставляем только последние 100 записей
         if len(self.posts_log) > 100:
             self.posts_log = self.posts_log[-100:]
+            
         self.save_json(POSTS_LOG_FILE, self.posts_log)
         self.last_post_time = datetime.now()
 
