@@ -1,10 +1,6 @@
 """
 🤖 Telegram News Bot - Версия 10.1
 АБСОЛЮТНАЯ ЗАЩИТА ОТ ДУБЛИКАТОВ
-- Проверка по хешу содержимого
-- Проверка по нормализованному заголовку
-- Проверка по URL
-- Детальное логирование
 """
 
 import os
@@ -36,62 +32,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# КОНФИГУРАЦИЯ
+# КОНФИГУРАЦИЯ (читаем из переменных окружения)
 # ============================================================
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # Убрано значение по умолчанию!
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '8767446234:AAGRz1sJfDtV321CpUBdI2sqGVDcWryGqcY')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
-
-# ХАОТИЧНЫЙ РЕЖИМ (в секундах)
-MIN_POST_INTERVAL = 35 * 60      # 35 минут
-MAX_POST_INTERVAL = 2 * 60 * 60  # 2 часа
-CHECK_INTERVAL = 30 * 60         # 30 минут
-MAX_POSTS_PER_DAY = 24
-TIMEZONE_OFFSET = 7
-
-# ============================================================
-# ИСТОЧНИКИ
-# ============================================================
-ALL_FEEDS = [
-    {
-        'name': 'InfoBrics',
-        'url': 'https://infobrics.org/rss/en',
-        'enabled': True,
-        'parser': 'infobrics',
-        'type': 'rss',
-        'priority': 1
-    },
-    {
-        'name': 'Global Research',
-        'url': 'https://www.globalresearch.ca/feed',
-        'enabled': True,
-        'parser': 'globalresearch',
-        'type': 'rss',
-        'priority': 2
-    },
-    {
-        'name': 'AP News',
-        'url': 'https://apnews.com/',
-        'enabled': True,
-        'type': 'html_apnews_v2',
-        'priority': 1
-    }
-]
 
 # ============================================================
 # ФАЙЛЫ ДЛЯ ХРАНЕНИЯ ДАННЫХ (пути могут быть переданы извне)
 # ============================================================
-import os
-
-# Если переменная окружения не задана, используем имя по умолчанию в текущей папке
 SENT_LINKS_FILE = os.getenv('SENT_LINKS_FILE', 'sent_links.json')
 SENT_HASHES_FILE = os.getenv('SENT_HASHES_FILE', 'sent_hashes.json')
 SENT_TITLES_FILE = os.getenv('SENT_TITLES_FILE', 'sent_titles.json')
 POSTS_LOG_FILE = os.getenv('POSTS_LOG_FILE', 'posts_log.json')
 TELEGRAM_MAX_CAPTION = 1024
 
-# Для отладки выведем, какие файлы используем
-logger = logging.getLogger(__name__) # Убедитесь, что этот импорт есть выше
 logger.info(f"📁 Используемые файлы данных: {SENT_LINKS_FILE}, {SENT_HASHES_FILE}, {SENT_TITLES_FILE}, {POSTS_LOG_FILE}")
+
+# ... (дальше весь ваш остальной код bot.py без изменений)
 
 # ============================================================
 # ОСНОВНОЙ КЛАСС БОТА
