@@ -9,6 +9,10 @@ on:
 jobs:
   run-news-bot:
     runs-on: ubuntu-latest
+    # Добавляем права на запись
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -57,9 +61,12 @@ jobs:
             git add state_news_bot.json
             git diff --quiet && git diff --staged --quiet || git commit -m "🤖 Update bot state [skip ci]"
             
-            # Пробуем запушить, если не получилось - значит ничего не изменилось
-            git push || echo "✅ Файл состояния уже актуален"
-            echo "✅ Файл состояния обновлён в репозитории"
+            # Пробуем запушить
+            if git push; then
+              echo "✅ Файл состояния успешно обновлён в репозитории"
+            else
+              echo "⚠️ Не удалось запушить, но файл сохранён локально"
+            fi
           else
             echo "⚠️ Файл состояния не найден"
           fi
