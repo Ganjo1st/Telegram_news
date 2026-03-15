@@ -3,6 +3,7 @@
 
 """
 Telegram News Bot - Чистые статьи, антидубликат, хаотичный режим
+Версия для GitHub Actions (состояние хранится в репозитории)
 """
 
 import os
@@ -39,13 +40,16 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
 # Хаотичный режим (в секундах)
 MIN_POST_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '2100'))      # 35 минут
-MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '5400'))      # 1.5 часа (5400 сек)
+MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '7200'))      # 2 часа
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '24'))
 TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
 
 # Таймауты
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
 PUBLISH_TIMEOUT = int(os.getenv('PUBLISH_TIMEOUT', '30'))
+
+# Файл состояния
+STATE_FILE = os.getenv('STATE_FILE', 'state_news_bot.json')
 
 # ========== ИСТОЧНИКИ ==========
 ALL_FEEDS = [
@@ -94,8 +98,8 @@ def fetch_with_timeout(func, timeout, *args, **kwargs):
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
-    def __init__(self, state_file: str):
-        self.state_file = state_file
+    def __init__(self):
+        self.state_file = STATE_FILE
         self.state = self.load_state()
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
@@ -104,7 +108,7 @@ class NewsBot:
 
     # ========== РАБОТА С СОСТОЯНИЕМ ==========
     def load_state(self) -> dict:
-        """Загружает состояние, преобразуя списки в множества для быстрой проверки"""
+        """Загружает состояние из файла"""
         default = {
             'sent_links': [],
             'sent_hashes': [],
@@ -122,6 +126,8 @@ class NewsBot:
                         'sent_titles': set(state.get('sent_titles', [])),
                         'posts_log': state.get('posts_log', [])
                     }
+            else:
+                logger.info(f"📁 Файл {self.state_file} не найден, создаю новый")
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки: {e}")
         
@@ -133,7 +139,7 @@ class NewsBot:
         }
 
     def save_state(self):
-        """Сохраняет состояние, преобразуя множества обратно в списки"""
+        """Сохраняет состояние в файл"""
         try:
             state_to_save = {
                 'sent_links': list(self.state['sent_links']),
@@ -143,6 +149,7 @@ class NewsBot:
             }
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(state_to_save, f, ensure_ascii=False, indent=2)
+            logger.info(f"💾 Состояние сохранено в {self.state_file}")
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения: {e}")
 
@@ -807,13 +814,15 @@ class NewsBot:
                 await self.session.close()
 
 # ========== ТОЧКА ВХОДА ==========
-async def main(state_file: str):
+def main():
+    """Основная функция"""
     if not TELEGRAM_TOKEN or not CHANNEL_ID:
         logger.error("❌ Нет TELEGRAM_TOKEN или CHANNEL_ID")
         return
-    bot = NewsBot(state_file)
-    await bot.run_once()
+    
+    # Создаем и запускаем бота
+    bot = NewsBot()
+    asyncio.run(bot.run_once())
 
 if __name__ == "__main__":
-    state = sys.argv[1] if len(sys.argv) > 1 else "test_state.json"
-    asyncio.run(main(state))
+    main()
