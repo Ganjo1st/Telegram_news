@@ -14,18 +14,9 @@ deep-translator==1.11.4
 aiohttp==3.9.1
 httpx==0.25.2
 
-# Google Drive (совместимые версии)
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
-google-api-python-client==2.126.0
-
-# Планировщик
-apscheduler==3.10.4
-pytz==2024.1
-
-# Утилиты (совместимые версии без конфликтов)
+# Утилиты
 charset-normalizer==3.3.2
 idna==3.7
-urllib3==1.26.18  # Важно: версия 1.x, совместимая с requests и google-auth
+urllib3==1.26.18
 certifi==2024.2.2
+pytz==2024.1
