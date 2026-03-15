@@ -70,6 +70,7 @@ def download_state(service):
                 }, f)
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки: {e}")
+        # Создаем пустой файл при ошибке
         with open(STATE_FILE, 'w') as f:
             json.dump({
                 'sent_links': [],
@@ -100,11 +101,10 @@ def upload_state(service):
 def run_bot():
     logger.info(f"🚀 Запуск {BOT_SCRIPT}")
     env = os.environ.copy()
-    env['STATE_FILE'] = STATE_FILE
     
     try:
         result = subprocess.run(
-            [sys.executable, BOT_SCRIPT],
+            [sys.executable, BOT_SCRIPT, STATE_FILE],  # Передаем файл как аргумент
             env=env,
             capture_output=True,
             text=True,
