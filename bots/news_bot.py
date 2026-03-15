@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram News Bot - Чистые статьи без мета-данных
+Telegram News Bot - Чистые статьи, антидубликат, хаотичный режим
 """
 
 import os
@@ -37,13 +37,14 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
-MIN_POST_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '2100'))
-MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '7200'))
+# Хаотичный режим (в секундах)
+MIN_POST_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '2100'))      # 35 минут
+MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '5400'))      # 1.5 часа (5400 сек)
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '24'))
 TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
 
+# Таймауты
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
-TRANSLATION_TIMEOUT = int(os.getenv('TRANSLATION_TIMEOUT', '60'))
 PUBLISH_TIMEOUT = int(os.getenv('PUBLISH_TIMEOUT', '30'))
 
 # ========== ИСТОЧНИКИ ==========
@@ -99,9 +100,11 @@ class NewsBot:
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
         self.session = None
+        self.last_post_time = None
 
     # ========== РАБОТА С СОСТОЯНИЕМ ==========
     def load_state(self) -> dict:
+        """Загружает состояние, преобразуя списки в множества для быстрой проверки"""
         default = {
             'sent_links': [],
             'sent_hashes': [],
@@ -112,6 +115,7 @@ class NewsBot:
             if os.path.exists(self.state_file):
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
+                    # Преобразуем списки в множества для быстрой проверки
                     return {
                         'sent_links': set(state.get('sent_links', [])),
                         'sent_hashes': set(state.get('sent_hashes', [])),
@@ -120,9 +124,16 @@ class NewsBot:
                     }
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки: {e}")
-        return default
+        
+        return {
+            'sent_links': set(),
+            'sent_hashes': set(),
+            'sent_titles': set(),
+            'posts_log': []
+        }
 
     def save_state(self):
+        """Сохраняет состояние, преобразуя множества обратно в списки"""
         try:
             state_to_save = {
                 'sent_links': list(self.state['sent_links']),
@@ -137,57 +148,119 @@ class NewsBot:
 
     # ========== ДЕДУПЛИКАЦИЯ ==========
     def normalize_title(self, title: str) -> str:
+        """Нормализует заголовок для сравнения"""
         if not title:
             return ""
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
         title = re.sub(r'\s+', ' ', title).strip()
+        # Удаляем общие слова
         common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']
         words = [w for w in title.split() if w not in common_words]
         return ' '.join(words)[:100]
 
     def create_content_hash(self, content: str) -> str:
+        """Создает хеш содержимого"""
         if not content:
             return ""
         return hashlib.md5(content[:500].encode('utf-8')).hexdigest()
 
     def is_duplicate(self, url: str, title: str, content: str = "") -> bool:
+        """Трехуровневая проверка на дубликат"""
         if url in self.state['sent_links']:
             logger.info(f"⏭️ Дубликат URL: {title[:50]}...")
             return True
+            
         norm_title = self.normalize_title(title)
         if norm_title and norm_title in self.state['sent_titles']:
             logger.info(f"⏭️ Дубликат заголовка: {title[:50]}...")
             return True
+            
         if content:
             h = self.create_content_hash(content)
             if h and h in self.state['sent_hashes']:
                 logger.info(f"⏭️ Дубликат содержимого: {title[:50]}...")
                 return True
+                
         return False
 
     def mark_as_sent(self, url: str, title: str, content: str = ""):
+        """Помечает статью как отправленную"""
         self.state['sent_links'].add(url)
+        
         norm_title = self.normalize_title(title)
         if norm_title:
             self.state['sent_titles'].add(norm_title)
+            
         if content:
             h = self.create_content_hash(content)
             if h:
                 self.state['sent_hashes'].add(h)
+                
         self.save_state()
 
     def log_post(self, link: str, title: str):
+        """Логирует опубликованный пост"""
         self.state['posts_log'].append({
             'link': link,
             'title': title[:50],
             'time': datetime.now().isoformat()
         })
+        # Оставляем только последние 100 записей
         if len(self.state['posts_log']) > 100:
             self.state['posts_log'] = self.state['posts_log'][-100:]
         self.save_state()
+        self.last_post_time = datetime.now()
 
-    # ========== ОЧИСТКА СТАТЬИ ОТ МЕТА-ДАННЫХ ==========
+    # ========== ХАОТИЧНЫЙ РЕЖИМ ==========
+    def can_post_now(self) -> bool:
+        """Проверяет, можно ли публиковать сейчас"""
+        # Проверка ночного времени
+        hour = (datetime.now().hour + TIMEZONE_OFFSET) % 24
+        if 23 <= hour or hour < 7:
+            logger.info(f"🌙 Ночное время ({hour}:00), пропускаю")
+            return False
+
+        # Проверка дневного лимита
+        today = datetime.now().date()
+        today_posts = 0
+        last_posts = []
+        
+        for post in self.state['posts_log']:
+            try:
+                post_time = datetime.fromisoformat(post['time'])
+                if post_time.date() == today:
+                    today_posts += 1
+                    last_posts.append(post_time)
+            except:
+                continue
+
+        if today_posts >= MAX_POSTS_PER_DAY:
+            logger.info(f"⏳ Дневной лимит {MAX_POSTS_PER_DAY} достигнут")
+            return False
+
+        # Проверка минимального интервала
+        if last_posts:
+            last_posts.sort(reverse=True)
+            time_since_last = (datetime.now() - last_posts[0]).total_seconds()
+            if time_since_last < MIN_POST_INTERVAL:
+                wait_minutes = (MIN_POST_INTERVAL - time_since_last) / 60
+                logger.info(f"⏳ Минимальный интервал: следующий пост через {wait_minutes:.0f} минут")
+                return False
+
+        return True
+
+    def get_next_delay(self) -> int:
+        """Возвращает случайную задержку между MIN и MAX"""
+        delay = random.randint(MIN_POST_INTERVAL, MAX_POST_INTERVAL)
+        # Добавляем случайную вариацию ±15%
+        variation = random.uniform(0.85, 1.15)
+        delay = int(delay * variation)
+        # Ограничиваем рамками
+        delay = max(MIN_POST_INTERVAL, min(delay, MAX_POST_INTERVAL))
+        return delay
+
+    # ========== ОЧИСТКА СТАТЬИ ==========
     def clean_article(self, text: str) -> str:
         """Полная очистка статьи от служебной информации"""
         if not text:
@@ -196,15 +269,14 @@ class NewsBot:
         # Удаляем HTML теги
         text = re.sub(r'<[^>]+>', '', text)
         
-        # Удаляем мета-информацию (даты, авторы, подписки)
+        # Удаляем мета-информацию
         patterns = [
             r'\d+\s*(hour|min|sec|day|minute|second)s?\s+ago',
             r'Updated\s*:?\s*[\d:APM\s-]+',
             r'Published\s*:?\s*[\d:APM\s-]+',
             r'^By\s+[\w\s,]+\n',
-            r'^(AP|Reuters|AFP|Bloomberg|CNN|BBC)\s+[–-]\s+',
-            r'\(AP\)\s+[–-]\s+',
-            r'—\s+(AP|Reuters)',
+            r'^\([A-Z]+\)\s+',
+            r'—\s+(AP|Reuters|AFP)',
             r'Слушайте\s+в\s+Apple\s+Podcasts',
             r'Подписывайтесь\s+на\s+наш\s+канал',
             r'Читайте\s+нас\s+в\s+Telegram',
@@ -221,24 +293,31 @@ class NewsBot:
             r'Read more',
             r'Share this',
             r'Advertisement',
-            r'Реклама',
-            r'Фарси|Русский|Немецкий|Испанский|Португальский|Французский|Итальянский'
+            r'Реклама'
         ]
         
         for pattern in patterns:
             text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
         
-        # Убираем лишние переносы строк
+        # Убираем лишние переносы
         text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # Разбиваем на абзацы и фильтруем пустые
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        paragraphs = [p for p in paragraphs if len(p) > 20]  # Убираем слишком короткие
-        
-        return '\n\n'.join(paragraphs)
+        return text.strip()
+
+    def get_first_sentence(self, text: str) -> str:
+        """Извлекает первое предложение из текста"""
+        if not text:
+            return ""
+        # Ищем конец первого предложения
+        match = re.search(r'^.*?[.!?]', text)
+        if match:
+            return match.group(0).strip()
+        # Если нет знаков препинания, берем первые 100 символов
+        return text[:100].strip() + "..."
 
     # ========== ПАРСЕРЫ ==========
     def get_apnews_articles(self):
+        """Получает список статей с AP News"""
         try:
             logger.info("🌐 Парсинг AP News")
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -294,6 +373,7 @@ class NewsBot:
             return []
 
     def parse_apnews_article(self, url: str):
+        """Парсит отдельную статью AP News"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = fetch_with_timeout(
@@ -328,7 +408,6 @@ class NewsBot:
             article_text = ""
             container = soup.find('article') or soup.find('main') or soup.body
             if container:
-                # Удаляем мусор
                 for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                     tag.decompose()
                 
@@ -344,7 +423,7 @@ class NewsBot:
             if len(article_text) < 200:
                 return None
 
-            # Очищаем от мета-данных
+            # Очищаем
             article_text = self.clean_article(article_text)
 
             return {
@@ -357,6 +436,7 @@ class NewsBot:
             return None
 
     def parse_infobrics(self, url: str):
+        """Парсит статью InfoBrics"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = fetch_with_timeout(
@@ -417,6 +497,7 @@ class NewsBot:
             return None
 
     def parse_globalresearch(self, url: str):
+        """Парсит статью Global Research"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = fetch_with_timeout(
@@ -478,10 +559,11 @@ class NewsBot:
 
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_from_apnews(self):
+        """Собирает новости с AP News"""
         items = []
         try:
             articles = await asyncio.get_event_loop().run_in_executor(None, self.get_apnews_articles)
-            for article in articles[:3]:
+            for article in articles[:3]:  # Берем первые 3
                 url, title = article['url'], article['title']
                 if self.is_duplicate(url, title):
                     continue
@@ -500,10 +582,11 @@ class NewsBot:
                     })
                 await asyncio.sleep(random.randint(2, 4))
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+            logger.error(f"❌ Ошибка AP News: {e}")
         return items
 
     async def fetch_from_rss(self, feed_config):
+        """Собирает новости из RSS"""
         items = []
         try:
             name = feed_config['name']
@@ -514,9 +597,10 @@ class NewsBot:
             
             feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, feed_config['url'])
             if feed.bozo:
+                logger.warning(f"⚠️ Ошибка RSS {name}: {feed.bozo_exception}")
                 return []
 
-            for entry in feed.entries[:3]:
+            for entry in feed.entries[:3]:  # Берем первые 3
                 link = entry.get('link', '')
                 title = entry.get('title', '')
                 if self.is_duplicate(link, title):
@@ -538,6 +622,7 @@ class NewsBot:
         return items
 
     async def fetch_all_news(self):
+        """Собирает новости из всех источников"""
         all_news = []
         for feed in ALL_FEEDS:
             if not feed['enabled']:
@@ -549,6 +634,7 @@ class NewsBot:
             all_news.extend(news)
             await asyncio.sleep(random.randint(3, 5))
         
+        # Сортируем по приоритету
         all_news.sort(key=lambda x: x.get('priority', 5))
         logger.info(f"📊 Всего новых: {len(all_news)}")
         return all_news
@@ -560,6 +646,7 @@ class NewsBot:
         return self.session
 
     async def download_image(self, url: str):
+        """Скачивает изображение, если есть"""
         if not url:
             return None
         try:
@@ -575,125 +662,142 @@ class NewsBot:
             logger.error(f"Ошибка скачивания: {e}")
         return None
 
-    def translate_text(self, text: str) -> str:
+    def translate_text_safe(self, text: str) -> str:
+        """Безопасный перевод с обработкой ошибок и ограничением длины"""
         if not text or len(text) < 20:
             return text
+        
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            translated = loop.run_until_complete(
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: fetch_with_timeout(self.translator.translate, TRANSLATION_TIMEOUT, text)
-                )
-            )
-            return translated if translated else text
+            # Ограничиваем длину текста для перевода
+            if len(text) > 4000:
+                # Переводим по частям
+                parts = []
+                for i in range(0, len(text), 3000):
+                    part = text[i:i+3000]
+                    try:
+                        translated = self.translator.translate(part)
+                        if translated:
+                            parts.append(translated)
+                        else:
+                            parts.append(part)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Ошибка перевода части: {e}")
+                        parts.append(part)
+                    time.sleep(random.uniform(0.5, 1))
+                return ' '.join(parts)
+            else:
+                return self.translator.translate(text)
         except Exception as e:
             logger.error(f"❌ Ошибка перевода: {e}")
             return text
 
     def escape_html(self, text: str) -> str:
+        """Экранирует HTML для Telegram"""
         if not text:
             return ""
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-    def can_post_now(self) -> bool:
-        hour = (datetime.now().hour + TIMEZONE_OFFSET) % 24
-        if 23 <= hour or hour < 7:
-            return False
-
-        today = datetime.now().date()
-        today_posts = 0
-        for post in self.state['posts_log']:
-            try:
-                if datetime.fromisoformat(post['time']).date() == today:
-                    today_posts += 1
-            except:
-                continue
-        if today_posts >= MAX_POSTS_PER_DAY:
-            return False
-        return True
-
     async def create_and_publish(self, item: dict) -> bool:
+        """Создает и публикует пост"""
         try:
             logger.info(f"\n📝 Публикация: {item['title'][:70]}...")
             
-            # Перевод
-            title_ru = await asyncio.get_event_loop().run_in_executor(None, self.translate_text, item['title'])
-            content_ru = await asyncio.get_event_loop().run_in_executor(None, self.translate_text, item['content'])
+            # Перевод в потоке
+            loop = asyncio.get_event_loop()
+            title_ru = await loop.run_in_executor(None, self.translate_text_safe, item['title'])
+            content_ru = await loop.run_in_executor(None, self.translate_text_safe, item['content'])
             
-            # Экранирование
+            # Если заголовок пустой после перевода, берем первое предложение из текста
+            if not title_ru or title_ru == "Без заголовка":
+                title_ru = self.get_first_sentence(content_ru)
+            
+            # Экранируем
             title_esc = self.escape_html(title_ru)
             content_esc = self.escape_html(content_ru)
             
-            # Разбиваем на абзацы
+            # Разбиваем на абзацы и берем первые 3-4
             paragraphs = [p for p in content_esc.split('\n\n') if p.strip()]
+            post_paragraphs = paragraphs[:4]  # Первые 4 абзаца
             
-            # Формируем пост (чистый, без служебной информации)
+            # Формируем пост
             post_text = f"<b>{title_esc}</b>\n\n"
-            post_text += '\n\n'.join(paragraphs[:3])  # Первые 3 абзаца
+            post_text += '\n\n'.join(post_paragraphs)
             
-            # Скачиваем фото
+            # Ограничиваем длину для Telegram
+            if len(post_text) > 1024:
+                post_text = post_text[:1020] + "..."
+            
+            # Скачиваем изображение (если есть)
             image_path = None
             if item.get('main_image'):
                 image_path = await self.download_image(item['main_image'])
             
             # Публикуем
-            if image_path:
-                with open(image_path, 'rb') as photo:
+            try:
+                if image_path:
+                    with open(image_path, 'rb') as photo:
+                        await run_with_timeout(
+                            self.bot.send_photo(
+                                chat_id=CHANNEL_ID,
+                                photo=photo,
+                                caption=post_text,
+                                parse_mode='HTML'
+                            ),
+                            PUBLISH_TIMEOUT
+                        )
+                    os.unlink(image_path)
+                    logger.info("✅ Пост с фото опубликован")
+                else:
                     await run_with_timeout(
-                        self.bot.send_photo(
+                        self.bot.send_message(
                             chat_id=CHANNEL_ID,
-                            photo=photo,
-                            caption=post_text[:1024],
+                            text=post_text,
                             parse_mode='HTML'
                         ),
                         PUBLISH_TIMEOUT
                     )
-                os.unlink(image_path)
-            else:
-                await run_with_timeout(
-                    self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=post_text[:1024],
-                        parse_mode='HTML'
-                    ),
-                    PUBLISH_TIMEOUT
-                )
-            
-            # Отмечаем как отправленное
-            self.mark_as_sent(item['link'], item['title'], item['content'])
-            self.log_post(item['link'], item['title'])
-            logger.info("✅ Опубликовано")
-            return True
-            
-        except TelegramError as e:
-            if "Too Many Requests" in str(e):
-                logger.warning("⚠️ Лимит Telegram")
-            else:
-                logger.error(f"❌ Ошибка Telegram: {e}")
+                    logger.info("✅ Пост без фото опубликован")
+                
+                # Отмечаем как отправленное
+                self.mark_as_sent(item['link'], item['title'], item['content'])
+                self.log_post(item['link'], item['title'])
+                
+                # Логируем следующую публикацию
+                next_delay = self.get_next_delay()
+                logger.info(f"⏰ Следующая публикация через {next_delay//60} минут")
+                
+                return True
+                
+            except TelegramError as e:
+                if "Too Many Requests" in str(e):
+                    logger.warning("⚠️ Лимит Telegram")
+                else:
+                    logger.error(f"❌ Ошибка Telegram: {e}")
+                return False
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
-        return False
+            logger.error(f"❌ Ошибка публикации: {e}")
+            return False
 
     async def run_once(self):
+        """Один цикл работы бота"""
         logger.info("="*50)
         logger.info(f"🔍 Запуск: {datetime.now()}")
         logger.info("="*50)
 
         try:
-            # Сбор новостей
+            # Собираем новости
             news = await run_with_timeout(self.fetch_all_news(), timeout=120)
             if not news:
                 logger.info("📭 Новых статей нет")
                 return
 
-            # Проверка лимитов
+            # Проверяем лимиты
             if not self.can_post_now():
                 logger.info("⏰ Нельзя публиковать сейчас")
                 return
 
-            # Публикация одной статьи
+            # Публикуем первую статью
             await self.create_and_publish(news[0])
 
         except Exception as e:
