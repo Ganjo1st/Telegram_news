@@ -1,18 +1,21 @@
 {
   "sent_links": [
+    "https://infobrics.org/en/post/86392/",
+    "https://infobrics.org/en/post/86681/",
     "https://infobrics.org/en/post/86404/",
-    "https://infobrics.org/en/post/86412/",
-    "https://infobrics.org/en/post/86392/"
+    "https://infobrics.org/en/post/86412/"
   ],
   "sent_hashes": [
-    "f476cb8f8971f5245b0fb45b20323c47",
+    "406ebf723d57f9ce2dba915398949193",
+    "b30c2b049fc970fc5c14cf79fc071113",
     "e6ae6f10381bd20a820a6a3b4c753545",
-    "406ebf723d57f9ce2dba915398949193"
+    "f476cb8f8971f5245b0fb45b20323c47"
   ],
   "sent_titles": [
     "naspers brics strategy shows emerging markets drive global value",
-    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
-    "jim oneill could brics currency work"
+    "jim oneill could brics currency work",
+    "northern sea route could partially replace oil supplies through strait hormuz",
+    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars"
   ],
   "posts_log": [
     {
@@ -29,6 +32,11 @@
       "link": "https://infobrics.org/en/post/86404/",
       "title": "Jim O'Neill: Could a BRICS Currency Work?",
       "time": "2026-03-15T21:51:00.088870+00:00"
+    },
+    {
+      "link": "https://infobrics.org/en/post/86681/",
+      "title": "Northern Sea Route could partially replace oil sup",
+      "time": "2026-03-15T22:44:44.282967+00:00"
     }
   ]
 }
