@@ -3,8 +3,9 @@ name: Run News Bot
 on:
   schedule:
     # Запуск каждый час в 15 минут (UTC)
+    # Это соответствует, например, 18:15 МСК (UTC+3)
     - cron: '15 * * * *'
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:  # Возможность ручного запуска
 
 jobs:
   run-news-bot:
@@ -17,39 +18,61 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
+          cache: 'pip'  # Кэширование зависимостей для ускорения
       
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Проверяем установленные пакеты (для отладки)
+          pip list
+      
+      - name: Create bots directory if not exists
+        run: |
+          mkdir -p bots
+          # Проверяем наличие файлов (для отладки)
+          ls -la
+          ls -la bots/ || echo "bots directory is empty"
       
       - name: Run News Bot Manager
         env:
-          # Основные настройки
+          # === НАСТРОЙКИ БОТА (обязательные) ===
           BOT_NAME: 'news_bot'
           BOT_SCRIPT: 'bots/news_bot.py'
           
-          # Google Drive
+          # === GOOGLE DRIVE (обязательные) ===
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           
-          # Telegram
+          # === TELEGRAM (обязательные) ===
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           
-          # Настройки бота (опционально)
-          MIN_POST_INTERVAL: '2100'      # 35 минут
-          MAX_POST_INTERVAL: '7200'      # 2 часа
+          # === НАСТРОЙКИ ХАОТИЧНОГО РЕЖИМА (опционально) ===
+          MIN_POST_INTERVAL: '2100'      # 35 минут в секундах
+          MAX_POST_INTERVAL: '7200'      # 2 часа в секундах
           MAX_POSTS_PER_DAY: '24'
-          TIMEZONE_OFFSET: '7'
-          REQUEST_TIMEOUT: '15'
-          TRANSLATION_TIMEOUT: '60'
-          PUBLISH_TIMEOUT: '30'
+          TIMEZONE_OFFSET: '7'           # UTC+7 (можно изменить под свой часовой пояс)
           
-          # Настройки менеджера
-          BOT_TIMEOUT: '1800'             # 30 минут
-          MAX_RETRIES: '3'
-          RETRY_DELAY: '5'
+          # === ТАЙМАУТЫ (опционально) ===
+          REQUEST_TIMEOUT: '15'           # Таймаут HTTP запросов (сек)
+          TRANSLATION_TIMEOUT: '60'       # Таймаут перевода (сек)
+          PUBLISH_TIMEOUT: '30'           # Таймаут публикации в Telegram (сек)
+          TOTAL_BOT_TIMEOUT: '240'        # Общий таймаут бота (4 минуты)
+          
+          # === НАСТРОЙКИ МЕНЕДЖЕРА (опционально) ===
+          BOT_TIMEOUT: '1800'              # Максимальное время работы бота (30 минут)
+          MAX_RETRIES: '3'                 # Количество попыток при ошибках Drive
+          RETRY_DELAY: '5'                 # Задержка между попытками (сек)
           
         run: python manager.py
+      
+      - name: Upload logs as artifact (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs
+          path: |
+            *.log
+            logs/
+          retention-days: 7
