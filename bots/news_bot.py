@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Чистые статьи, антидубликат, хаотичный режим
-Версия для GitHub Actions (состояние хранится в репозитории)
+Версия с отображением времени следующей публикации в UTC+7
 """
 
 import os
@@ -16,7 +16,7 @@ import re
 import html
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import feedparser
 import requests
@@ -42,7 +42,7 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 MIN_POST_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '2100'))      # 35 минут
 MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '7200'))      # 2 часа
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '24'))
-TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
+TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))  # UTC+7
 
 # Таймауты
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
@@ -96,6 +96,16 @@ def fetch_with_timeout(func, timeout, *args, **kwargs):
             logger.error(f"❌ Таймаут функции {func.__name__}")
             return None
 
+def get_local_time() -> datetime:
+    """Возвращает текущее время в UTC+7"""
+    utc_now = datetime.now(timezone.utc)
+    local_now = utc_now + timedelta(hours=TIMEZONE_OFFSET)
+    return local_now
+
+def format_local_time(dt: datetime) -> str:
+    """Форматирует время в читаемый вид"""
+    return dt.strftime('%d.%m.%Y %H:%M:%S')
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
@@ -105,6 +115,7 @@ class NewsBot:
         self.translator = GoogleTranslator(source='en', target='ru')
         self.session = None
         self.last_post_time = None
+        self.next_post_time = None
 
     # ========== РАБОТА С СОСТОЯНИЕМ ==========
     def load_state(self) -> dict:
@@ -208,28 +219,31 @@ class NewsBot:
 
     def log_post(self, link: str, title: str):
         """Логирует опубликованный пост"""
+        local_time = get_local_time()
         self.state['posts_log'].append({
             'link': link,
             'title': title[:50],
-            'time': datetime.now().isoformat()
+            'time': local_time.isoformat()
         })
         # Оставляем только последние 100 записей
         if len(self.state['posts_log']) > 100:
             self.state['posts_log'] = self.state['posts_log'][-100:]
         self.save_state()
-        self.last_post_time = datetime.now()
+        self.last_post_time = local_time
 
     # ========== ХАОТИЧНЫЙ РЕЖИМ ==========
     def can_post_now(self) -> bool:
         """Проверяет, можно ли публиковать сейчас"""
+        local_now = get_local_time()
+        
         # Проверка ночного времени
-        hour = (datetime.now().hour + TIMEZONE_OFFSET) % 24
+        hour = local_now.hour
         if 23 <= hour or hour < 7:
             logger.info(f"🌙 Ночное время ({hour}:00), пропускаю")
             return False
 
         # Проверка дневного лимита
-        today = datetime.now().date()
+        today = local_now.date()
         today_posts = 0
         last_posts = []
         
@@ -249,7 +263,7 @@ class NewsBot:
         # Проверка минимального интервала
         if last_posts:
             last_posts.sort(reverse=True)
-            time_since_last = (datetime.now() - last_posts[0]).total_seconds()
+            time_since_last = (local_now - last_posts[0]).total_seconds()
             if time_since_last < MIN_POST_INTERVAL:
                 wait_minutes = (MIN_POST_INTERVAL - time_since_last) / 60
                 logger.info(f"⏳ Минимальный интервал: следующий пост через {wait_minutes:.0f} минут")
@@ -769,9 +783,14 @@ class NewsBot:
                 self.mark_as_sent(item['link'], item['title'], item['content'])
                 self.log_post(item['link'], item['title'])
                 
-                # Логируем следующую публикацию
+                # Вычисляем время следующей публикации
                 next_delay = self.get_next_delay()
+                local_now = get_local_time()
+                self.next_post_time = local_now + timedelta(seconds=next_delay)
+                
+                # Логируем следующую публикацию
                 logger.info(f"⏰ Следующая публикация через {next_delay//60} минут")
+                logger.info(f"📅 Точное время (UTC+{TIMEZONE_OFFSET}): {format_local_time(self.next_post_time)}")
                 
                 return True
                 
@@ -788,8 +807,9 @@ class NewsBot:
 
     async def run_once(self):
         """Один цикл работы бота"""
+        local_start = get_local_time()
         logger.info("="*50)
-        logger.info(f"🔍 Запуск: {datetime.now()}")
+        logger.info(f"🔍 Запуск: {format_local_time(local_start)} (UTC+{TIMEZONE_OFFSET})")
         logger.info("="*50)
 
         try:
