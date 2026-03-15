@@ -2,31 +2,54 @@ name: Run News Bot
 
 on:
   schedule:
+    # Запуск каждый час в 15 минут (UTC)
     - cron: '15 * * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # Ручной запуск
 
 jobs:
-  run-bot:
+  run-news-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
+          cache: 'pip'
+      
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Run Manager
+      
+      - name: Run News Bot Manager
         env:
+          # Основные настройки
+          BOT_NAME: 'news_bot'
+          BOT_SCRIPT: 'bots/news_bot.py'
+          
+          # Google Drive
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          BOT_SCRIPT: 'bot.py'
+          
+          # Telegram
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          
+          # Настройки бота (опционально)
+          MIN_POST_INTERVAL: '2100'      # 35 минут
+          MAX_POST_INTERVAL: '7200'      # 2 часа
+          MAX_POSTS_PER_DAY: '24'
+          TIMEZONE_OFFSET: '7'
+          REQUEST_TIMEOUT: '15'
+          TRANSLATION_TIMEOUT: '60'
+          PUBLISH_TIMEOUT: '30'
+          
+          # Настройки менеджера
+          BOT_TIMEOUT: '1800'             # 30 минут
+          MAX_RETRIES: '3'
+          RETRY_DELAY: '5'
+          
         run: python manager.py
