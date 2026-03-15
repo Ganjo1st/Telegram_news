@@ -1,18 +1,26 @@
 {
   "sent_links": [
+    "https://infobrics.org/en/post/86392/",
     "https://infobrics.org/en/post/86412/"
   ],
   "sent_hashes": [
+    "f476cb8f8971f5245b0fb45b20323c47",
     "e6ae6f10381bd20a820a6a3b4c753545"
   ],
   "sent_titles": [
-    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars"
+    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
+    "naspers brics strategy shows emerging markets drive global value"
   ],
   "posts_log": [
     {
       "link": "https://infobrics.org/en/post/86412/",
       "title": "USAF KC-135 'Stratotanker' shot down, ISR aircraft",
       "time": "2026-03-15T18:50:57.010587+00:00"
+    },
+    {
+      "link": "https://infobrics.org/en/post/86392/",
+      "title": "Naspers’ Brics Strategy Shows Emerging Markets Dri",
+      "time": "2026-03-15T20:18:50.944667+00:00"
     }
   ]
 }
