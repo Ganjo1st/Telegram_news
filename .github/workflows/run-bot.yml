@@ -2,6 +2,7 @@ name: Run News Bot
 
 on:
   schedule:
+    # Каждый час в 15 минут
     - cron: '15 * * * *'
   workflow_dispatch:
 
@@ -22,20 +23,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Проверяем установку
+          pip list
       
-      - name: Create bots directory
+      - name: Verify bots directory
         run: |
           mkdir -p bots
           ls -la bots/
       
       - name: Run News Bot Manager
         env:
+          # Основные настройки
           BOT_NAME: 'news_bot'
           BOT_SCRIPT: 'bots/news_bot.py'
+          
+          # Google Drive
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          
+          # Telegram
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          
+          # Настройки бота
           MIN_POST_INTERVAL: '2100'
           MAX_POST_INTERVAL: '7200'
           MAX_POSTS_PER_DAY: '24'
@@ -43,7 +53,21 @@ jobs:
           REQUEST_TIMEOUT: '15'
           TRANSLATION_TIMEOUT: '60'
           PUBLISH_TIMEOUT: '30'
+          TOTAL_BOT_TIMEOUT: '240'
+          
+          # Настройки менеджера
           BOT_TIMEOUT: '1800'
           MAX_RETRIES: '3'
           RETRY_DELAY: '5'
+          
         run: python manager.py
+      
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs
+          path: |
+            *.log
+            logs/
+          retention-days: 7
