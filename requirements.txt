@@ -1,20 +1,31 @@
+# Основные зависимости
 requests==2.31.0
 beautifulsoup4==4.12.2
+feedparser==6.0.10
+lxml==5.1.0
+
+# Telegram
+python-telegram-bot==20.7
+
+# Перевод
+deep-translator==1.11.4
+
+# Асинхронность и HTTP
+aiohttp==3.9.1
+httpx==0.25.2
+
+# Google Drive
+google-auth==2.23.0
+google-auth-oauthlib==1.0.0
+google-auth-httplib2==0.1.0
+google-api-python-client==2.95.0
+
+# Планировщик (может пригодиться)
 apscheduler==3.10.4
 pytz==2023.3
-selenium==4.18.1
-python-telegram-bot==20.7
-httpx==0.25.2
-webdriver-manager==4.0.1
-lxml==5.1.0
+
+# Утилиты
 charset-normalizer==3.3.2
 idna==3.6
 urllib3==2.2.1
 certifi==2024.2.2
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
-feedparser==6.0.10
-deep-translator==1.11.4
-aiohttp==3.9.1
