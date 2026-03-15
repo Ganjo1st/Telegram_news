@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram News Bot - Чистые статьи, антидубликат, хаотичный режим
-Версия с отображением времени следующей публикации в UTC+7
+Telegram News Bot - Чистые статьи, антидубликат, умное обрезание до последней точки
 """
 
 import os
@@ -42,7 +41,7 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 MIN_POST_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '2100'))      # 35 минут
 MAX_POST_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '7200'))      # 2 часа
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '24'))
-TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))  # UTC+7
+TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
 
 # Таймауты
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
@@ -335,6 +334,40 @@ class NewsBot:
             return match.group(0).strip()
         # Если нет знаков препинания, берем первые 100 символов
         return text[:100].strip() + "..."
+
+    # ========== УМНОЕ ОБРЕЗАНИЕ ТЕКСТА ==========
+    def smart_truncate(self, text: str, max_length: int) -> str:
+        """
+        Обрезает текст до последней точки, не превышая max_length
+        """
+        if len(text) <= max_length:
+            return text
+        
+        # Ищем последнюю точку в пределах max_length
+        last_dot = text.rfind('.', 0, max_length)
+        last_excl = text.rfind('!', 0, max_length)
+        last_question = text.rfind('?', 0, max_length)
+        
+        # Берем самый последний знак препинания
+        last_punct = max(last_dot, last_excl, last_question)
+        
+        if last_punct > 0:
+            # Обрезаем до последнего знака препинания + 1 (чтобы включить его)
+            truncated = text[:last_punct + 1]
+            logger.info(f"✂️ Текст обрезан до {len(truncated)} символов (до последней точки)")
+            return truncated
+        else:
+            # Если нет знаков препинания, обрезаем до последнего пробела
+            last_space = text.rfind(' ', 0, max_length)
+            if last_space > 0:
+                truncated = text[:last_space] + "..."
+                logger.info(f"✂️ Текст обрезан до {len(truncated)} символов (до пробела)")
+                return truncated
+            else:
+                # В крайнем случае просто обрезаем
+                truncated = text[:max_length - 3] + "..."
+                logger.info(f"✂️ Текст обрезан принудительно до {len(truncated)} символов")
+                return truncated
 
     # ========== ПАРСЕРЫ ==========
     def get_apnews_articles(self):
@@ -719,7 +752,7 @@ class NewsBot:
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
     async def create_and_publish(self, item: dict) -> bool:
-        """Создает и публикует пост"""
+        """Создает и публикует пост с умным обрезанием"""
         try:
             logger.info(f"\n📝 Публикация: {item['title'][:70]}...")
             
@@ -736,21 +769,26 @@ class NewsBot:
             title_esc = self.escape_html(title_ru)
             content_esc = self.escape_html(content_ru)
             
-            # Разбиваем на абзацы и берем первые 3-4
-            paragraphs = [p for p in content_esc.split('\n\n') if p.strip()]
-            post_paragraphs = paragraphs[:4]  # Первые 4 абзаца
+            # Формируем полный текст поста
+            full_text = f"<b>{title_esc}</b>\n\n{content_esc}"
             
-            # Формируем пост
-            post_text = f"<b>{title_esc}</b>\n\n"
-            post_text += '\n\n'.join(post_paragraphs)
+            # Максимальная длина для Telegram (1024 символа)
+            MAX_LENGTH = 1024
             
-            # Ограничиваем длину для Telegram
-            if len(post_text) > 1024:
-                post_text = post_text[:1020] + "..."
+            if len(full_text) > MAX_LENGTH:
+                logger.info(f"📏 Длина текста {len(full_text)} символов, требуется обрезание")
+                
+                # Обрезаем текст умно
+                text_without_title = content_esc
+                truncated_text = self.smart_truncate(text_without_title, MAX_LENGTH - len(title_esc) - 4)
+                full_text = f"<b>{title_esc}</b>\n\n{truncated_text}"
+                
+                logger.info(f"✅ Текст обрезан до {len(full_text)} символов")
             
             # Скачиваем изображение (если есть)
             image_path = None
             if item.get('main_image'):
+                logger.info("🖼️ Скачивание изображения...")
                 image_path = await self.download_image(item['main_image'])
             
             # Публикуем
@@ -761,7 +799,7 @@ class NewsBot:
                             self.bot.send_photo(
                                 chat_id=CHANNEL_ID,
                                 photo=photo,
-                                caption=post_text,
+                                caption=full_text,
                                 parse_mode='HTML'
                             ),
                             PUBLISH_TIMEOUT
@@ -772,7 +810,7 @@ class NewsBot:
                     await run_with_timeout(
                         self.bot.send_message(
                             chat_id=CHANNEL_ID,
-                            text=post_text,
+                            text=full_text,
                             parse_mode='HTML'
                         ),
                         PUBLISH_TIMEOUT
