@@ -2,7 +2,7 @@ name: Run News Bot
 
 on:
   schedule:
-    # Каждый час в 15 минут
+    # Каждый час в 15 минут (UTC)
     - cron: '15 * * * *'
   workflow_dispatch:
 
@@ -12,6 +12,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # Нужно для коммита обратно
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,31 +26,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Проверяем установку
-          pip list
       
-      - name: Verify bots directory
+      - name: Create bots directory
         run: |
           mkdir -p bots
           ls -la bots/
       
-      - name: Run News Bot Manager
+      - name: Run News Bot
         env:
-          # Основные настройки
-          BOT_NAME: 'news_bot'
-          BOT_SCRIPT: 'bots/news_bot.py'
-          
-          # Google Drive
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          
           # Telegram
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           
           # Настройки бота
-          MIN_POST_INTERVAL: '2100'
-          MAX_POST_INTERVAL: '7200'
+          MIN_POST_INTERVAL: '2100'      # 35 минут
+          MAX_POST_INTERVAL: '7200'      # 2 часа (можно изменить на 5400 для 1.5ч)
           MAX_POSTS_PER_DAY: '24'
           TIMEZONE_OFFSET: '7'
           REQUEST_TIMEOUT: '15'
@@ -55,12 +48,23 @@ jobs:
           PUBLISH_TIMEOUT: '30'
           TOTAL_BOT_TIMEOUT: '240'
           
-          # Настройки менеджера
-          BOT_TIMEOUT: '1800'
-          MAX_RETRIES: '3'
-          RETRY_DELAY: '5'
+        run: python bots/news_bot.py
+      
+      - name: Commit and push state file
+        run: |
+          # Настраиваем git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-        run: python manager.py
+          # Проверяем, изменился ли файл состояния
+          if [ -f "state_news_bot.json" ]; then
+            git add state_news_bot.json
+            git diff --quiet && git diff --staged --quiet || git commit -m "🤖 Update bot state [skip ci]"
+            git push
+            echo "✅ Файл состояния обновлён в репозитории"
+          else
+            echo "⚠️ Файл состояния не найден"
+          fi
       
       - name: Upload logs on failure
         if: failure()
