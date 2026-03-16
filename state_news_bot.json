@@ -1,39 +1,42 @@
 {
   "sent_links": [
+    "https://apnews.com/article/iran-iraq-us-trump-march-15-2026-9bbed3c906146844be08fdfd02595754",
+    "https://infobrics.org/en/post/86404/",
+    "https://apnews.com/article/mideast-wars-west-bank-deaths-ec9966789dbd71f85fe5776fe864ab97",
+    "https://apnews.com/article/palestinian-gaza-israel-flights-ad-kan-evacuation-65c9acf46fb65483e866d75636f219a6",
+    "https://infobrics.org/en/post/86681/",
+    "https://apnews.com/article/china-taiwan-planes-military-decline-surge-c7a1dfa0bd5fba6b74ccf430a422c178",
+    "https://infobrics.org/en/post/86392/",
+    "https://infobrics.org/en/post/86821/",
     "https://infobrics.org/en/post/86796/",
     "https://infobrics.org/en/post/86820/",
-    "https://apnews.com/article/palestinian-gaza-israel-flights-ad-kan-evacuation-65c9acf46fb65483e866d75636f219a6",
-    "https://apnews.com/article/iran-iraq-us-trump-march-15-2026-9bbed3c906146844be08fdfd02595754",
-    "https://infobrics.org/en/post/86412/",
-    "https://apnews.com/article/china-taiwan-planes-military-decline-surge-c7a1dfa0bd5fba6b74ccf430a422c178",
-    "https://infobrics.org/en/post/86404/",
-    "https://infobrics.org/en/post/86392/",
-    "https://apnews.com/article/mideast-wars-west-bank-deaths-ec9966789dbd71f85fe5776fe864ab97",
-    "https://infobrics.org/en/post/86681/"
+    "https://infobrics.org/en/post/86412/"
   ],
   "sent_hashes": [
     "e6ae6f10381bd20a820a6a3b4c753545",
     "1a889a847b6efd7ae2307cee8af8c9f9",
-    "63a336e88e456c5585aecd8caf2248b1",
-    "406ebf723d57f9ce2dba915398949193",
-    "bd3a15898c47134a6ec04dda4457894b",
-    "b30c2b049fc970fc5c14cf79fc071113",
     "92c5ef182078a62c28331732d629c25f",
+    "4ba4dd50849aeea50026cef4c28be4ff",
+    "b30c2b049fc970fc5c14cf79fc071113",
     "f476cb8f8971f5245b0fb45b20323c47",
     "83b308faa4a10a2c611d6e94f855c5ca",
-    "4ba4dd50849aeea50026cef4c28be4ff"
+    "63a336e88e456c5585aecd8caf2248b1",
+    "bf001e0de208a58d04e0bc9b3f6367d2",
+    "406ebf723d57f9ce2dba915398949193",
+    "bd3a15898c47134a6ec04dda4457894b"
   ],
   "sent_titles": [
-    "after quieter weeks taiwan reports largescale chinese military aircraft presence near island",
     "northern sea route could partially replace oil supplies through strait hormuz",
-    "ap finds israeli group discreetly organized mystery flights evacuating palestinians from gaza",
-    "brazil next target washingtons drug war",
+    "after quieter weeks taiwan reports largescale chinese military aircraft presence near island",
+    "naspers brics strategy shows emerging markets drive global value",
+    "israeli soldiers fire family car occupied west bank killing 4",
+    "jim oneill could brics currency work",
     "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
+    "ap finds israeli group discreetly organized mystery flights evacuating palestinians from gaza",
+    "can brics pay eventually succeed challenging wests global financial hegemony",
     "trump says that hes asked about 7 countries join coalition police irans strait hormuz",
     "brics precious metals exchange member nations move toward launch",
-    "jim oneill could brics currency work",
-    "naspers brics strategy shows emerging markets drive global value",
-    "israeli soldiers fire family car occupied west bank killing 4"
+    "brazil next target washingtons drug war"
   ],
   "posts_log": [
     {
@@ -85,6 +88,11 @@
       "link": "https://infobrics.org/en/post/86820/",
       "title": "BRICS Precious Metals Exchange: Member Nations Mov",
       "time": "2026-03-16T20:55:40.759297+00:00"
+    },
+    {
+      "link": "https://infobrics.org/en/post/86821/",
+      "title": "Can BRICS Pay Eventually Succeed in Challenging th",
+      "time": "2026-03-16T22:20:44.264178+00:00"
     }
   ]
 }
