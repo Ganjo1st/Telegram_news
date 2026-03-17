@@ -1,45 +1,48 @@
 {
   "sent_links": [
-    "https://infobrics.org/en/post/86820/",
-    "https://infobrics.org/en/post/86412/",
     "https://infobrics.org/en/post/86821/",
-    "https://apnews.com/article/mideast-wars-west-bank-deaths-ec9966789dbd71f85fe5776fe864ab97",
-    "https://apnews.com/article/china-taiwan-planes-military-decline-surge-c7a1dfa0bd5fba6b74ccf430a422c178",
-    "https://infobrics.org/en/post/86819/",
-    "https://infobrics.org/en/post/86404/",
+    "https://apnews.com/article/iran-iraq-us-trump-march-15-2026-9bbed3c906146844be08fdfd02595754",
+    "https://apnews.com/article/cuba-power-outage-electricity-4dcd92d4b7b3bbeda88622b543074ceb",
+    "https://infobrics.org/en/post/86820/",
+    "https://apnews.com/article/palestinian-gaza-israel-flights-ad-kan-evacuation-65c9acf46fb65483e866d75636f219a6",
     "https://infobrics.org/en/post/86796/",
     "https://infobrics.org/en/post/86392/",
-    "https://apnews.com/article/palestinian-gaza-israel-flights-ad-kan-evacuation-65c9acf46fb65483e866d75636f219a6",
-    "https://infobrics.org/en/post/86681/",
-    "https://apnews.com/article/iran-iraq-us-trump-march-15-2026-9bbed3c906146844be08fdfd02595754"
+    "https://apnews.com/article/china-taiwan-planes-military-decline-surge-c7a1dfa0bd5fba6b74ccf430a422c178",
+    "https://infobrics.org/en/post/86412/",
+    "https://infobrics.org/en/post/86404/",
+    "https://infobrics.org/en/post/86819/",
+    "https://apnews.com/article/mideast-wars-west-bank-deaths-ec9966789dbd71f85fe5776fe864ab97",
+    "https://infobrics.org/en/post/86681/"
   ],
   "sent_hashes": [
     "406ebf723d57f9ce2dba915398949193",
-    "bd3a15898c47134a6ec04dda4457894b",
+    "b30c2b049fc970fc5c14cf79fc071113",
+    "bf001e0de208a58d04e0bc9b3f6367d2",
+    "d80ef238f1c50d464a1b2ac534443bc2",
     "e6ae6f10381bd20a820a6a3b4c753545",
+    "4ba4dd50849aeea50026cef4c28be4ff",
     "f476cb8f8971f5245b0fb45b20323c47",
     "83b308faa4a10a2c611d6e94f855c5ca",
-    "63a336e88e456c5585aecd8caf2248b1",
-    "b30c2b049fc970fc5c14cf79fc071113",
-    "4ba4dd50849aeea50026cef4c28be4ff",
-    "1a889a847b6efd7ae2307cee8af8c9f9",
-    "d80ef238f1c50d464a1b2ac534443bc2",
     "92c5ef182078a62c28331732d629c25f",
-    "bf001e0de208a58d04e0bc9b3f6367d2"
+    "35b0c9d0f64c3890f597737945d7e36a",
+    "1a889a847b6efd7ae2307cee8af8c9f9",
+    "63a336e88e456c5585aecd8caf2248b1",
+    "bd3a15898c47134a6ec04dda4457894b"
   ],
   "sent_titles": [
-    "after quieter weeks taiwan reports largescale chinese military aircraft presence near island",
-    "northern sea route could partially replace oil supplies through strait hormuz",
-    "dr iqbal survés insights future brics",
-    "can brics pay eventually succeed challenging wests global financial hegemony",
+    "jim oneill could brics currency work",
     "naspers brics strategy shows emerging markets drive global value",
+    "islandwide blackout hits cuba as it struggles deepening energy crisis",
+    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
+    "can brics pay eventually succeed challenging wests global financial hegemony",
+    "dr iqbal survés insights future brics",
+    "trump says that hes asked about 7 countries join coalition police irans strait hormuz",
     "brics precious metals exchange member nations move toward launch",
     "ap finds israeli group discreetly organized mystery flights evacuating palestinians from gaza",
-    "jim oneill could brics currency work",
+    "northern sea route could partially replace oil supplies through strait hormuz",
+    "after quieter weeks taiwan reports largescale chinese military aircraft presence near island",
     "israeli soldiers fire family car occupied west bank killing 4",
-    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
-    "brazil next target washingtons drug war",
-    "trump says that hes asked about 7 countries join coalition police irans strait hormuz"
+    "brazil next target washingtons drug war"
   ],
   "posts_log": [
     {
@@ -101,6 +104,11 @@
       "link": "https://infobrics.org/en/post/86819/",
       "title": "Dr Iqbal Survé's Insights on the Future of BRICS",
       "time": "2026-03-17T10:13:56.618041+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/cuba-power-outage-electricity-4dcd92d4b7b3bbeda88622b543074ceb",
+      "title": "Islandwide blackout hits Cuba as it struggles with",
+      "time": "2026-03-17T12:04:15.890976+00:00"
     }
   ]
 }
