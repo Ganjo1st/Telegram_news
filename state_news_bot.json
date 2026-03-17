@@ -1,54 +1,57 @@
 {
   "sent_links": [
-    "https://apnews.com/article/cuba-power-outage-electricity-4dcd92d4b7b3bbeda88622b543074ceb",
-    "https://apnews.com/article/spain-mexico-conquest-indigenous-americas-de561ec7f6e00c332d60bbbc164db05d",
-    "https://infobrics.org/en/post/86412/",
-    "https://infobrics.org/en/post/86821/",
-    "https://infobrics.org/en/post/86819/",
-    "https://infobrics.org/en/post/86820/",
-    "https://infobrics.org/en/post/86796/",
     "https://apnews.com/article/china-taiwan-planes-military-decline-surge-c7a1dfa0bd5fba6b74ccf430a422c178",
-    "https://infobrics.org/en/post/86392/",
-    "https://infobrics.org/en/post/86404/",
     "https://apnews.com/article/mideast-wars-west-bank-deaths-ec9966789dbd71f85fe5776fe864ab97",
+    "https://apnews.com/article/poland-economy-growth-g20-gdp-26fe06e120398410f8d773ba5661e7aa",
+    "https://apnews.com/article/spain-mexico-conquest-indigenous-americas-de561ec7f6e00c332d60bbbc164db05d",
+    "https://infobrics.org/en/post/86392/",
+    "https://apnews.com/article/cuba-power-outage-electricity-4dcd92d4b7b3bbeda88622b543074ceb",
+    "https://infobrics.org/en/post/86820/",
     "https://apnews.com/article/palestinian-gaza-israel-flights-ad-kan-evacuation-65c9acf46fb65483e866d75636f219a6",
     "https://infobrics.org/en/post/86681/",
+    "https://infobrics.org/en/post/86404/",
+    "https://infobrics.org/en/post/86412/",
+    "https://infobrics.org/en/post/86796/",
+    "https://apnews.com/article/eu-iran-shipping-hormuz-brussels-6360165465e302cbe05d2f27eafff145",
     "https://apnews.com/article/iran-iraq-us-trump-march-15-2026-9bbed3c906146844be08fdfd02595754",
-    "https://apnews.com/article/poland-economy-growth-g20-gdp-26fe06e120398410f8d773ba5661e7aa"
+    "https://infobrics.org/en/post/86821/",
+    "https://infobrics.org/en/post/86819/"
   ],
   "sent_hashes": [
-    "4ba4dd50849aeea50026cef4c28be4ff",
-    "f476cb8f8971f5245b0fb45b20323c47",
-    "406ebf723d57f9ce2dba915398949193",
     "e6ae6f10381bd20a820a6a3b4c753545",
-    "af560231b19bb476ea836fb4f5e265ed",
-    "bd3a15898c47134a6ec04dda4457894b",
-    "35b0c9d0f64c3890f597737945d7e36a",
+    "97d9752c312d9a6832fba17f733118f7",
+    "92c5ef182078a62c28331732d629c25f",
+    "f476cb8f8971f5245b0fb45b20323c47",
+    "1a889a847b6efd7ae2307cee8af8c9f9",
     "63a336e88e456c5585aecd8caf2248b1",
+    "142ed9e66d8430d361f9c1bc4602729e",
+    "35b0c9d0f64c3890f597737945d7e36a",
     "bf001e0de208a58d04e0bc9b3f6367d2",
     "83b308faa4a10a2c611d6e94f855c5ca",
     "d80ef238f1c50d464a1b2ac534443bc2",
-    "97d9752c312d9a6832fba17f733118f7",
-    "92c5ef182078a62c28331732d629c25f",
+    "406ebf723d57f9ce2dba915398949193",
     "b30c2b049fc970fc5c14cf79fc071113",
-    "1a889a847b6efd7ae2307cee8af8c9f9"
+    "af560231b19bb476ea836fb4f5e265ed",
+    "bd3a15898c47134a6ec04dda4457894b",
+    "4ba4dd50849aeea50026cef4c28be4ff"
   ],
   "sent_titles": [
-    "northern sea route could partially replace oil supplies through strait hormuz",
-    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
-    "poland is now among worlds 20 largest economies how it happened",
-    "jim oneill could brics currency work",
     "spains king acknowledges much abuse conquest americas",
+    "dr iqbal survés insights future brics",
+    "usaf kc135 stratotanker shot down isr aircraft forced replace destroyed groundbased radars",
     "islandwide blackout hits cuba as it struggles deepening energy crisis",
-    "israeli soldiers fire family car occupied west bank killing 4",
-    "naspers brics strategy shows emerging markets drive global value",
     "after quieter weeks taiwan reports largescale chinese military aircraft presence near island",
-    "can brics pay eventually succeed challenging wests global financial hegemony",
-    "brics precious metals exchange member nations move toward launch",
+    "naspers brics strategy shows emerging markets drive global value",
+    "europeans seek clarity about trumps iran war aims before agreeing his warship demands",
     "brazil next target washingtons drug war",
     "trump says that hes asked about 7 countries join coalition police irans strait hormuz",
     "ap finds israeli group discreetly organized mystery flights evacuating palestinians from gaza",
-    "dr iqbal survés insights future brics"
+    "northern sea route could partially replace oil supplies through strait hormuz",
+    "jim oneill could brics currency work",
+    "poland is now among worlds 20 largest economies how it happened",
+    "israeli soldiers fire family car occupied west bank killing 4",
+    "brics precious metals exchange member nations move toward launch",
+    "can brics pay eventually succeed challenging wests global financial hegemony"
   ],
   "posts_log": [
     {
@@ -125,6 +128,11 @@
       "link": "https://apnews.com/article/poland-economy-growth-g20-gdp-26fe06e120398410f8d773ba5661e7aa",
       "title": "Poland is now among the world's 20 largest economi",
       "time": "2026-03-17T14:31:49.642774+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/eu-iran-shipping-hormuz-brussels-6360165465e302cbe05d2f27eafff145",
+      "title": "Europeans seek clarity about Trump's Iran war aims",
+      "time": "2026-03-17T17:09:52.588566+00:00"
     }
   ]
 }
