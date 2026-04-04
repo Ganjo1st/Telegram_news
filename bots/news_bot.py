@@ -751,6 +751,37 @@ class NewsBot:
             return ""
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
+    def save_post_meta(self, item: dict, folder_name: str):
+        """Сохраняет мета-информацию о посте для публикатора"""
+        meta_file = "posts_meta.json"
+        
+        # Загружаем существующие данные
+        if os.path.exists(meta_file):
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                meta_data = json.load(f)
+        else:
+            meta_data = {"posts": {}}
+        
+        # Сохраняем информацию о посте
+        meta_data["posts"][folder_name] = {
+            "title": item['title'],
+            "source_name": item.get('source', 'Unknown'),
+            "source_url": item['link'],
+            "published_at": datetime.now().isoformat(),
+            "content_hash": hashlib.md5(item['content'][:500].encode()).hexdigest()
+        }
+        
+        # Оставляем только последние 500 записей
+        if len(meta_data["posts"]) > 500:
+            oldest_keys = list(meta_data["posts"].keys())[:100]
+            for key in oldest_keys:
+                del meta_data["posts"][key]
+        
+        with open(meta_file, 'w', encoding='utf-8') as f:
+            json.dump(meta_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"💾 Мета-информация сохранена для: {folder_name}")
+
     async def create_and_publish(self, item: dict) -> bool:
         """Создает и публикует пост с умным обрезанием"""
         try:
@@ -820,6 +851,10 @@ class NewsBot:
                 # Отмечаем как отправленное
                 self.mark_as_sent(item['link'], item['title'], item['content'])
                 self.log_post(item['link'], item['title'])
+                
+                # Сохраняем мета-информацию для публикатора на 9111.ru
+                folder_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{item['title'][:50].replace('/', '_').replace('?', '').replace('*', '').replace(':', '').replace('\"', '')}"
+                self.save_post_meta(item, folder_name)
                 
                 # Вычисляем время следующей публикации
                 next_delay = self.get_next_delay()
