@@ -105,6 +105,19 @@ def format_local_time(dt: datetime) -> str:
     """Форматирует время в читаемый вид"""
     return dt.strftime('%d.%m.%Y %H:%M:%S')
 
+def sanitize_filename(text: str, max_length: int = 50) -> str:
+    """Очищает строку от недопустимых символов для имени папки/файла"""
+    # Заменяем недопустимые символы на подчеркивания
+    text = re.sub(r'[<>:"/\\|?*\'"]', '_', text)
+    # Убираем лишние пробелы и подчеркивания
+    text = re.sub(r'[\s_]+', '_', text)
+    # Ограничиваем длину
+    if len(text) > max_length:
+        text = text[:max_length]
+    # Убираем подчеркивания в начале и конце
+    text = text.strip('_')
+    return text if text else "post"
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
@@ -853,7 +866,10 @@ class NewsBot:
                 self.log_post(item['link'], item['title'])
                 
                 # Сохраняем мета-информацию для публикатора на 9111.ru
-                folder_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{item['title'][:50].replace('/', '_').replace('?', '').replace('*', '').replace(':', '').replace('\"', '')}"
+                # Очищаем заголовок от недопустимых символов для имени папки
+                safe_title = sanitize_filename(item['title'], max_length=50)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                folder_name = f"{timestamp}_{safe_title}"
                 self.save_post_meta(item, folder_name)
                 
                 # Вычисляем время следующей публикации
