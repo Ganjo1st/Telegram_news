@@ -3,7 +3,6 @@
 
 """
 Telegram News Bot - Чистые статьи, антидубликат, умное обрезание до последней точки
-Поддерживает: AP News, InfoBrics, Global Research
 """
 
 import os
@@ -22,7 +21,6 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.ext import Application
 from telegram.error import TelegramError
 from deep_translator import GoogleTranslator
 import aiohttp
@@ -51,22 +49,31 @@ PUBLISH_TIMEOUT = int(os.getenv('PUBLISH_TIMEOUT', '30'))
 
 # Файл состояния
 STATE_FILE = os.getenv('STATE_FILE', 'state_news_bot.json')
-# Файл для сохранения данных сессии бота
-SESSION_FILE = 'bot_session.dat'
 
-# ========== RSS ИСТОЧНИКИ ==========
-RSS_FEEDS = [
+# ========== ИСТОЧНИКИ ==========
+ALL_FEEDS = [
     {
         'name': 'InfoBrics',
         'url': 'https://infobrics.org/rss/en',
+        'enabled': True,
         'parser': 'infobrics',
-        'priority': 2
+        'type': 'rss',
+        'priority': 1
     },
     {
         'name': 'Global Research',
         'url': 'https://www.globalresearch.ca/feed',
+        'enabled': True,
         'parser': 'globalresearch',
-        'priority': 3
+        'type': 'rss',
+        'priority': 2
+    },
+    {
+        'name': 'AP News',
+        'url': 'https://apnews.com/',
+        'enabled': True,
+        'type': 'html_apnews_v2',
+        'priority': 1
     }
 ]
 
@@ -100,14 +107,18 @@ def format_local_time(dt: datetime) -> str:
 
 def sanitize_filename(text: str, max_length: int = 50) -> str:
     """Очищает строку от недопустимых символов для имени папки/файла"""
+    # Заменяем недопустимые символы на подчеркивания
     text = re.sub(r'[<>:"/\\|?*\'"]', '_', text)
+    # Убираем лишние пробелы и подчеркивания
     text = re.sub(r'[\s_]+', '_', text)
+    # Ограничиваем длину
     if len(text) > max_length:
         text = text[:max_length]
+    # Убираем подчеркивания в начале и конце
     text = text.strip('_')
     return text if text else "post"
 
-# ========== ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
+# ========== НОВАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
 def remove_ap_parentheses(text: str) -> str:
     """
     Удаляет из текста конструкцию (AP), (АР) и подобные с пробелами.
@@ -116,8 +127,13 @@ def remove_ap_parentheses(text: str) -> str:
     if not text:
         return text
     
+    # Шаблон: открывающая скобка, пробелы (если есть), буквы A/P или А/Р в любом регистре, пробелы (если есть), закрывающая скобка
     pattern = r'\(\s*[AaАа][PpРр]\s*\)'
+    
+    # Заменяем на пустую строку
     cleaned = re.sub(pattern, '', text)
+    
+    # Дополнительно: удаляем лишние пробелы, которые могли образоваться после удаления
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = cleaned.strip()
     
@@ -131,50 +147,11 @@ class NewsBot:
     def __init__(self):
         self.state_file = STATE_FILE
         self.state = self.load_state()
-        self.bot = None
-        self.application = None
-        self.session_file = SESSION_FILE
+        self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
+        self.session = None
         self.last_post_time = None
         self.next_post_time = None
-
-    async def init_bot(self):
-        """Инициализирует бота с восстановлением сессии"""
-        try:
-            self.application = Application.builder().token(TELEGRAM_TOKEN).build()
-            self.bot = self.application.bot
-            
-            if os.path.exists(self.session_file):
-                try:
-                    with open(self.session_file, 'rb') as f:
-                        session_data = f.read()
-                    if hasattr(self.bot._bot, '_session') and session_data:
-                        logger.info("♻️ Восстановлена сохранённая сессия бота")
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось восстановить сессию: {e}")
-            
-            me = await self.bot.get_me()
-            logger.info(f"✅ Бот инициализирован: @{me.username}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка инициализации бота: {e}")
-            return False
-    
-    async def save_bot_session(self):
-        """Сохраняет данные сессии бота в файл"""
-        try:
-            if hasattr(self.bot._bot, '_session'):
-                session = self.bot._bot._session
-                if session:
-                    cookies = session.cookies.jar
-                    if cookies:
-                        import pickle
-                        with open(self.session_file, 'wb') as f:
-                            pickle.dump(cookies, f)
-                        logger.info("💾 Сессия бота сохранена")
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось сохранить сессию: {e}")
 
     # ========== РАБОТА С СОСТОЯНИЕМ ==========
     def load_state(self) -> dict:
@@ -189,6 +166,7 @@ class NewsBot:
             if os.path.exists(self.state_file):
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
+                    # Преобразуем списки в множества для быстрой проверки
                     return {
                         'sent_links': set(state.get('sent_links', [])),
                         'sent_hashes': set(state.get('sent_hashes', [])),
@@ -230,6 +208,7 @@ class NewsBot:
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
         title = re.sub(r'\s+', ' ', title).strip()
+        # Удаляем общие слова
         common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']
         words = [w for w in title.split() if w not in common_words]
         return ' '.join(words)[:100]
@@ -282,6 +261,7 @@ class NewsBot:
             'title': title[:50],
             'time': local_time.isoformat()
         })
+        # Оставляем только последние 100 записей
         if len(self.state['posts_log']) > 100:
             self.state['posts_log'] = self.state['posts_log'][-100:]
         self.save_state()
@@ -292,11 +272,13 @@ class NewsBot:
         """Проверяет, можно ли публиковать сейчас"""
         local_now = get_local_time()
         
+        # Проверка ночного времени
         hour = local_now.hour
         if 23 <= hour or hour < 7:
             logger.info(f"🌙 Ночное время ({hour}:00), пропускаю")
             return False
 
+        # Проверка дневного лимита
         today = local_now.date()
         today_posts = 0
         last_posts = []
@@ -314,6 +296,7 @@ class NewsBot:
             logger.info(f"⏳ Дневной лимит {MAX_POSTS_PER_DAY} достигнут")
             return False
 
+        # Проверка минимального интервала
         if last_posts:
             last_posts.sort(reverse=True)
             time_since_last = (local_now - last_posts[0]).total_seconds()
@@ -327,8 +310,10 @@ class NewsBot:
     def get_next_delay(self) -> int:
         """Возвращает случайную задержку между MIN и MAX"""
         delay = random.randint(MIN_POST_INTERVAL, MAX_POST_INTERVAL)
+        # Добавляем случайную вариацию ±15%
         variation = random.uniform(0.85, 1.15)
         delay = int(delay * variation)
+        # Ограничиваем рамками
         delay = max(MIN_POST_INTERVAL, min(delay, MAX_POST_INTERVAL))
         return delay
 
@@ -338,8 +323,10 @@ class NewsBot:
         if not text:
             return ""
         
+        # Удаляем HTML теги
         text = re.sub(r'<[^>]+>', '', text)
         
+        # Удаляем мета-информацию
         patterns = [
             r'\d+\s*(hour|min|sec|day|minute|second)s?\s+ago',
             r'Updated\s*:?\s*[\d:APM\s-]+',
@@ -369,6 +356,7 @@ class NewsBot:
         for pattern in patterns:
             text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
         
+        # Убираем лишние переносы
         text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text.strip()
@@ -377,39 +365,48 @@ class NewsBot:
         """Извлекает первое предложение из текста"""
         if not text:
             return ""
+        # Ищем конец первого предложения
         match = re.search(r'^.*?[.!?]', text)
         if match:
             return match.group(0).strip()
+        # Если нет знаков препинания, берем первые 100 символов
         return text[:100].strip() + "..."
 
     # ========== УМНОЕ ОБРЕЗАНИЕ ТЕКСТА ==========
     def smart_truncate(self, text: str, max_length: int) -> str:
-        """Обрезает текст до последней точки, не превышая max_length"""
+        """
+        Обрезает текст до последней точки, не превышая max_length
+        """
         if len(text) <= max_length:
             return text
         
+        # Ищем последнюю точку в пределах max_length
         last_dot = text.rfind('.', 0, max_length)
         last_excl = text.rfind('!', 0, max_length)
         last_question = text.rfind('?', 0, max_length)
         
+        # Берем самый последний знак препинания
         last_punct = max(last_dot, last_excl, last_question)
         
         if last_punct > 0:
+            # Обрезаем до последнего знака препинания + 1 (чтобы включить его)
             truncated = text[:last_punct + 1]
             logger.info(f"✂️ Текст обрезан до {len(truncated)} символов (до последней точки)")
             return truncated
         else:
+            # Если нет знаков препинания, обрезаем до последнего пробела
             last_space = text.rfind(' ', 0, max_length)
             if last_space > 0:
                 truncated = text[:last_space] + "..."
                 logger.info(f"✂️ Текст обрезан до {len(truncated)} символов (до пробела)")
                 return truncated
             else:
+                # В крайнем случае просто обрезаем
                 truncated = text[:max_length - 3] + "..."
                 logger.info(f"✂️ Текст обрезан принудительно до {len(truncated)} символов")
                 return truncated
 
-    # ========== ПАРСЕР AP NEWS ==========
+    # ========== ПАРСЕРЫ ==========
     def get_apnews_articles(self):
         """Получает список статей с AP News"""
         try:
@@ -430,6 +427,7 @@ class NewsBot:
                 if '/article/' not in href:
                     continue
 
+                # Формируем URL
                 if href.startswith('https://apnews.com/'):
                     url = href
                 elif href.startswith('/'):
@@ -437,6 +435,7 @@ class NewsBot:
                 else:
                     continue
 
+                # Заголовок
                 title = link.get_text(strip=True)
                 if not title or len(title) < 15:
                     parent = link.find_parent(['h1', 'h2', 'h3', 'h4'])
@@ -451,6 +450,7 @@ class NewsBot:
 
                 articles.append({'url': url, 'title': title})
 
+            # Убираем дубликаты URL
             unique = []
             seen = set()
             for a in articles:
@@ -476,6 +476,7 @@ class NewsBot:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -488,11 +489,13 @@ class NewsBot:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
 
+            # Изображение
             main_image = None
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 main_image = meta_img['content']
 
+            # Текст статьи
             article_text = ""
             container = soup.find('article') or soup.find('main') or soup.body
             if container:
@@ -511,7 +514,10 @@ class NewsBot:
             if len(article_text) < 200:
                 return None
 
+            # Очищаем
             article_text = self.clean_article(article_text)
+            
+            # Удаляем (AP) из текста
             article_text = remove_ap_parentheses(article_text)
 
             return {
@@ -520,58 +526,11 @@ class NewsBot:
                 'main_image': main_image
             }
         except Exception as e:
-            logger.error(f"❌ Ошибка парсинга статьи AP News: {e}")
+            logger.error(f"❌ Ошибка парсинга статьи: {e}")
             return None
 
-    async def fetch_from_apnews(self):
-        """Собирает новости с AP News"""
-        items = []
-        try:
-            articles = await asyncio.get_event_loop().run_in_executor(None, self.get_apnews_articles)
-            for article in articles[:3]:
-                url, title = article['url'], article['title']
-                if self.is_duplicate(url, title):
-                    continue
-                logger.info(f"🔍 AP News: {title[:50]}...")
-                data = await asyncio.get_event_loop().run_in_executor(
-                    None, self.parse_apnews_article, url
-                )
-                if data and not self.is_duplicate(url, title, data['content']):
-                    items.append({
-                        'title': data['title'],
-                        'content': data['content'],
-                        'url': url,
-                        'source': 'AP News',
-                        'image': data.get('main_image')
-                    })
-        except Exception as e:
-            logger.error(f"❌ Ошибка fetch_from_apnews: {e}")
-        return items
-
-    # ========== ПАРСЕР INFOBRICS ==========
-    def get_infobrics_articles(self):
-        """Получает список статей с InfoBrics через RSS"""
-        try:
-            logger.info("🌐 Парсинг RSS InfoBrics")
-            feed = feedparser.parse('https://infobrics.org/rss/en')
-            articles = []
-            
-            for entry in feed.entries[:5]:
-                url = entry.link
-                title = entry.title
-                
-                if self.is_duplicate(url, title):
-                    continue
-                    
-                articles.append({'url': url, 'title': title})
-            
-            return articles
-        except Exception as e:
-            logger.error(f"❌ Ошибка InfoBrics RSS: {e}")
-            return []
-
-    def parse_infobrics_article(self, url: str):
-        """Парсит отдельную статью InfoBrics"""
+    def parse_infobrics(self, url: str):
+        """Парсит статью InfoBrics"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = fetch_with_timeout(
@@ -583,11 +542,13 @@ class NewsBot:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Заголовок
             title = "Без заголовка"
             title_elem = soup.find('div', class_=re.compile(r'title.*big')) or soup.find('h1')
             if title_elem:
                 title = title_elem.get_text(strip=True)
 
+            # Изображение
             main_image = None
             img = soup.find('img', class_=re.compile(r'article.*image'))
             if img and img.get('src'):
@@ -601,6 +562,7 @@ class NewsBot:
                 else:
                     main_image = src
 
+            # Текст
             article_text = ""
             container = soup.find('div', class_=re.compile(r'article__text')) or soup.find('div', class_=re.compile(r'article'))
             if container:
@@ -625,58 +587,11 @@ class NewsBot:
                 'main_image': main_image
             }
         except Exception as e:
-            logger.error(f"❌ Ошибка парсинга InfoBrics: {e}")
+            logger.error(f"❌ Ошибка InfoBrics: {e}")
             return None
 
-    async def fetch_from_infobrics(self):
-        """Собирает новости с InfoBrics"""
-        items = []
-        try:
-            articles = await asyncio.get_event_loop().run_in_executor(None, self.get_infobrics_articles)
-            for article in articles[:2]:
-                url, title = article['url'], article['title']
-                if self.is_duplicate(url, title):
-                    continue
-                logger.info(f"🔍 InfoBrics: {title[:50]}...")
-                data = await asyncio.get_event_loop().run_in_executor(
-                    None, self.parse_infobrics_article, url
-                )
-                if data and not self.is_duplicate(url, title, data['content']):
-                    items.append({
-                        'title': data['title'],
-                        'content': data['content'],
-                        'url': url,
-                        'source': 'InfoBrics',
-                        'image': data.get('main_image')
-                    })
-        except Exception as e:
-            logger.error(f"❌ Ошибка fetch_from_infobrics: {e}")
-        return items
-
-    # ========== ПАРСЕР GLOBAL RESEARCH ==========
-    def get_globalresearch_articles(self):
-        """Получает список статей с Global Research через RSS"""
-        try:
-            logger.info("🌐 Парсинг RSS Global Research")
-            feed = feedparser.parse('https://www.globalresearch.ca/feed')
-            articles = []
-            
-            for entry in feed.entries[:5]:
-                url = entry.link
-                title = entry.title
-                
-                if self.is_duplicate(url, title):
-                    continue
-                    
-                articles.append({'url': url, 'title': title})
-            
-            return articles
-        except Exception as e:
-            logger.error(f"❌ Ошибка Global Research RSS: {e}")
-            return []
-
-    def parse_globalresearch_article(self, url: str):
-        """Парсит отдельную статью Global Research"""
+    def parse_globalresearch(self, url: str):
+        """Парсит статью Global Research"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = fetch_with_timeout(
@@ -688,11 +603,13 @@ class NewsBot:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Заголовок
             title = "Без заголовка"
             title_elem = soup.find('h1') or soup.find('title')
             if title_elem:
                 title = title_elem.get_text(strip=True)
 
+            # Изображение
             main_image = None
             img = soup.find('img', class_=re.compile(r'featured|wp-post-image'))
             if img and img.get('src'):
@@ -706,6 +623,7 @@ class NewsBot:
                 else:
                     main_image = src
 
+            # Текст
             article_text = ""
             container = soup.find('div', class_=re.compile(r'entry-content|post-content'))
             if container:
@@ -730,21 +648,78 @@ class NewsBot:
                 'main_image': main_image
             }
         except Exception as e:
-            logger.error(f"❌ Ошибка парсинга Global Research: {e}")
+            logger.error(f"❌ Ошибка Global Research: {e}")
             return None
 
-    async def fetch_from_globalresearch(self):
-        """Собирает новости с Global Research"""
+    # ========== СБОР НОВОСТЕЙ ==========
+    async def fetch_from_apnews(self):
+        """Собирает новости с AP News"""
         items = []
         try:
-            articles = await asyncio.get_event_loop().run_in_executor(None, self.get_globalresearch_articles)
-            for article in articles[:2]:
+            articles = await asyncio.get_event_loop().run_in_executor(None, self.get_apnews_articles)
+            for article in articles[:3]:  # Берем первые 3
                 url, title = article['url'], article['title']
+                if self.is_duplicate(url, title):
+                    continue
+                logger.info(f"🔍 AP News: {title[:50]}...")
+                data = await asyncio.get_event_loop().run_in_executor(
+                    None, self.parse_apnews_article, url
+                )
+                if data and not self.is_duplicate(url, title, data['content']):
+                    items.append({
+                        'title': data['title'],
+                        'content': data['content'],
+                        'url': url,
+                        'source': 'AP News',
+                        'image': data.get('main_image')
+                    })
+        except Exception as e:
+            logger.error(f"❌ Ошибка fetch_from_apnews: {e}")
+        return items
+
+    async def fetch_from_infobrics(self):
+        """Собирает новости с InfoBrics через RSS"""
+        items = []
+        try:
+            feed = await asyncio.get_event_loop().run_in_executor(
+                None, feedparser.parse, 'https://infobrics.org/rss/en'
+            )
+            for entry in feed.entries[:3]:
+                url = entry.link
+                title = entry.title
+                if self.is_duplicate(url, title):
+                    continue
+                logger.info(f"🔍 InfoBrics: {title[:50]}...")
+                data = await asyncio.get_event_loop().run_in_executor(
+                    None, self.parse_infobrics, url
+                )
+                if data and not self.is_duplicate(url, title, data['content']):
+                    items.append({
+                        'title': data['title'],
+                        'content': data['content'],
+                        'url': url,
+                        'source': 'InfoBrics',
+                        'image': data.get('main_image')
+                    })
+        except Exception as e:
+            logger.error(f"❌ Ошибка InfoBrics: {e}")
+        return items
+
+    async def fetch_from_globalresearch(self):
+        """Собирает новости с Global Research через RSS"""
+        items = []
+        try:
+            feed = await asyncio.get_event_loop().run_in_executor(
+                None, feedparser.parse, 'https://www.globalresearch.ca/feed'
+            )
+            for entry in feed.entries[:3]:
+                url = entry.link
+                title = entry.title
                 if self.is_duplicate(url, title):
                     continue
                 logger.info(f"🔍 Global Research: {title[:50]}...")
                 data = await asyncio.get_event_loop().run_in_executor(
-                    None, self.parse_globalresearch_article, url
+                    None, self.parse_globalresearch, url
                 )
                 if data and not self.is_duplicate(url, title, data['content']):
                     items.append({
@@ -755,28 +730,28 @@ class NewsBot:
                         'image': data.get('main_image')
                     })
         except Exception as e:
-            logger.error(f"❌ Ошибка fetch_from_globalresearch: {e}")
+            logger.error(f"❌ Ошибка Global Research: {e}")
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
     async def publish_post(self, post_data: dict):
-        """Публикует пост в Telegram"""
+        """Публикует пост в Telegram (оригинальный формат)"""
         try:
+            # Формируем сообщение
             title = post_data['title']
             content = post_data['content']
             url = post_data['url']
-            source = post_data.get('source', '')
             
+            # Обрезаем контент, если нужно (максимум 4000 символов для Telegram)
             if len(content) > 3800:
                 content = self.smart_truncate(content, 3800)
             
+            # Формируем текст в оригинальном формате (Markdown)
             message = f"📰 *{html.escape(title)}*\n\n"
             message += f"{html.escape(content)}\n\n"
             message += f"🔗 [Читать далее]({url})"
             
-            if source:
-                message += f"\n\n📌 *Источник:* {html.escape(source)}"
-            
+            # Отправляем
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=message,
@@ -784,8 +759,7 @@ class NewsBot:
                 disable_web_page_preview=False
             )
             
-            await self.save_bot_session()
-            
+            # Отмечаем как отправленное
             self.mark_as_sent(url, title, content)
             self.log_post(url, title)
             
@@ -801,29 +775,20 @@ class NewsBot:
         """Однократный сбор и публикация новостей"""
         logger.info("🚀 Запуск сбора новостей...")
         
-        if not await self.init_bot():
-            logger.error("❌ Не удалось инициализировать бота")
-            return
-        
+        # Собираем новости со всех источников
         all_posts = []
         
         # AP News
-        logger.info("📰 Парсинг AP News...")
         ap_posts = await self.fetch_from_apnews()
         all_posts.extend(ap_posts)
-        logger.info(f"✅ AP News: найдено {len(ap_posts)} новых статей")
         
         # InfoBrics
-        logger.info("📰 Парсинг InfoBrics...")
         infobrics_posts = await self.fetch_from_infobrics()
         all_posts.extend(infobrics_posts)
-        logger.info(f"✅ InfoBrics: найдено {len(infobrics_posts)} новых статей")
         
         # Global Research
-        logger.info("📰 Парсинг Global Research...")
         gr_posts = await self.fetch_from_globalresearch()
         all_posts.extend(gr_posts)
-        logger.info(f"✅ Global Research: найдено {len(gr_posts)} новых статей")
         
         if not all_posts:
             logger.info("📭 Новых статей не найдено")
@@ -848,17 +813,19 @@ class NewsBot:
             try:
                 await self.run_once()
                 
+                # Ждем следующий интервал
                 delay = self.get_next_delay()
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
                 
             except Exception as e:
                 logger.error(f"❌ Критическая ошибка: {e}")
-                await asyncio.sleep(300)
+                await asyncio.sleep(300)  # Ждем 5 минут при ошибке
 
 # ========== ТОЧКА ВХОДА ==========
 async def main():
     """Основная функция"""
+    # Проверяем переменные окружения
     if not TELEGRAM_TOKEN:
         logger.error("❌ TELEGRAM_TOKEN не задан!")
         return
@@ -869,9 +836,11 @@ async def main():
     
     bot = NewsBot()
     
+    # Если запущен в GitHub Actions, выполняем один раз
     if 'GITHUB_ACTIONS' in os.environ:
         await bot.run_once()
     else:
+        # Локальный запуск - бесконечный цикл
         await bot.run_forever()
 
 if __name__ == '__main__':
