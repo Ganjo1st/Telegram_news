@@ -118,6 +118,30 @@ def sanitize_filename(text: str, max_length: int = 50) -> str:
     text = text.strip('_')
     return text if text else "post"
 
+# ========== НОВАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
+def remove_ap_parentheses(text: str) -> str:
+    """
+    Удаляет из текста конструкцию (AP), (АР) и подобные с пробелами.
+    Примеры: (AP), (AP ), ( AP ), (АР)
+    """
+    if not text:
+        return text
+    
+    # Шаблон: открывающая скобка, пробелы (если есть), буквы A/P или А/Р в любом регистре, пробелы (если есть), закрывающая скобка
+    pattern = r'\(\s*[AaАа][PpРр]\s*\)'
+    
+    # Заменяем на пустую строку
+    cleaned = re.sub(pattern, '', text)
+    
+    # Дополнительно: удаляем лишние пробелы, которые могли образоваться после удаления
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = cleaned.strip()
+    
+    if cleaned != text:
+        logger.info(f"✂️ Удалено (AP) из текста")
+    
+    return cleaned
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
@@ -492,6 +516,9 @@ class NewsBot:
 
             # Очищаем
             article_text = self.clean_article(article_text)
+            
+            # Удаляем (AP) из текста
+            article_text = remove_ap_parentheses(article_text)
 
             return {
                 'title': title,
@@ -638,300 +665,125 @@ class NewsBot:
                 data = await asyncio.get_event_loop().run_in_executor(
                     None, self.parse_apnews_article, url
                 )
-                if data and not self.is_duplicate(url, data['title'], data['content']):
+                if data and not self.is_duplicate(url, title, data['content']):
                     items.append({
+                        'title': data['title'],
+                        'content': data['content'],
+                        'url': url,
                         'source': 'AP News',
-                        'title': data['title'],
-                        'content': data['content'],
-                        'link': url,
-                        'main_image': data.get('main_image'),
-                        'priority': 1
+                        'image': data.get('main_image')
                     })
-                await asyncio.sleep(random.randint(2, 4))
         except Exception as e:
-            logger.error(f"❌ Ошибка AP News: {e}")
+            logger.error(f"❌ Ошибка fetch_from_apnews: {e}")
         return items
-
-    async def fetch_from_rss(self, feed_config):
-        """Собирает новости из RSS"""
-        items = []
-        try:
-            name = feed_config['name']
-            parser = feed_config.get('parser', 'infobrics')
-            priority = feed_config.get('priority', 5)
-            
-            parser_func = self.parse_infobrics if parser == 'infobrics' else self.parse_globalresearch
-            
-            feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, feed_config['url'])
-            if feed.bozo:
-                logger.warning(f"⚠️ Ошибка RSS {name}: {feed.bozo_exception}")
-                return []
-
-            for entry in feed.entries[:3]:  # Берем первые 3
-                link = entry.get('link', '')
-                title = entry.get('title', '')
-                if self.is_duplicate(link, title):
-                    continue
-                logger.info(f"🔍 {name}: {title[:50]}...")
-                data = await asyncio.get_event_loop().run_in_executor(None, parser_func, link)
-                if data and not self.is_duplicate(link, data['title'], data['content']):
-                    items.append({
-                        'source': name,
-                        'title': data['title'],
-                        'content': data['content'],
-                        'link': link,
-                        'main_image': data.get('main_image'),
-                        'priority': priority
-                    })
-                await asyncio.sleep(random.randint(2, 4))
-        except Exception as e:
-            logger.error(f"❌ Ошибка {feed_config['name']}: {e}")
-        return items
-
-    async def fetch_all_news(self):
-        """Собирает новости из всех источников"""
-        all_news = []
-        for feed in ALL_FEEDS:
-            if not feed['enabled']:
-                continue
-            if feed.get('type') == 'html_apnews_v2':
-                news = await self.fetch_from_apnews()
-            else:
-                news = await self.fetch_from_rss(feed)
-            all_news.extend(news)
-            await asyncio.sleep(random.randint(3, 5))
-        
-        # Сортируем по приоритету
-        all_news.sort(key=lambda x: x.get('priority', 5))
-        logger.info(f"📊 Всего новых: {len(all_news)}")
-        return all_news
 
     # ========== ПУБЛИКАЦИЯ ==========
-    async def get_session(self):
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        return self.session
-
-    async def download_image(self, url: str):
-        """Скачивает изображение, если есть"""
-        if not url:
-            return None
+    async def publish_post(self, post_data: dict):
+        """Публикует пост в Telegram"""
         try:
-            fd, path = tempfile.mkstemp(suffix='.jpg')
-            os.close(fd)
-            session = await self.get_session()
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    with open(path, 'wb') as f:
-                        f.write(await response.read())
-                    return path
-        except Exception as e:
-            logger.error(f"Ошибка скачивания: {e}")
-        return None
-
-    def translate_text_safe(self, text: str) -> str:
-        """Безопасный перевод с обработкой ошибок и ограничением длины"""
-        if not text or len(text) < 20:
-            return text
-        
-        try:
-            # Ограничиваем длину текста для перевода
-            if len(text) > 4000:
-                # Переводим по частям
-                parts = []
-                for i in range(0, len(text), 3000):
-                    part = text[i:i+3000]
-                    try:
-                        translated = self.translator.translate(part)
-                        if translated:
-                            parts.append(translated)
-                        else:
-                            parts.append(part)
-                    except Exception as e:
-                        logger.warning(f"⚠️ Ошибка перевода части: {e}")
-                        parts.append(part)
-                    time.sleep(random.uniform(0.5, 1))
-                return ' '.join(parts)
-            else:
-                return self.translator.translate(text)
-        except Exception as e:
-            logger.error(f"❌ Ошибка перевода: {e}")
-            return text
-
-    def escape_html(self, text: str) -> str:
-        """Экранирует HTML для Telegram"""
-        if not text:
-            return ""
-        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
-    def save_post_meta(self, item: dict, folder_name: str):
-        """Сохраняет мета-информацию о посте для публикатора"""
-        meta_file = "posts_meta.json"
-        
-        # Загружаем существующие данные
-        if os.path.exists(meta_file):
-            with open(meta_file, 'r', encoding='utf-8') as f:
-                meta_data = json.load(f)
-        else:
-            meta_data = {"posts": {}}
-        
-        # Сохраняем информацию о посте
-        meta_data["posts"][folder_name] = {
-            "title": item['title'],
-            "source_name": item.get('source', 'Unknown'),
-            "source_url": item['link'],
-            "published_at": datetime.now().isoformat(),
-            "content_hash": hashlib.md5(item['content'][:500].encode()).hexdigest()
-        }
-        
-        # Оставляем только последние 500 записей
-        if len(meta_data["posts"]) > 500:
-            oldest_keys = list(meta_data["posts"].keys())[:100]
-            for key in oldest_keys:
-                del meta_data["posts"][key]
-        
-        with open(meta_file, 'w', encoding='utf-8') as f:
-            json.dump(meta_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"💾 Мета-информация сохранена для: {folder_name}")
-
-    async def create_and_publish(self, item: dict) -> bool:
-        """Создает и публикует пост с умным обрезанием"""
-        try:
-            logger.info(f"\n📝 Публикация: {item['title'][:70]}...")
+            # Формируем сообщение
+            title = post_data['title']
+            content = post_data['content']
+            url = post_data['url']
+            source = post_data.get('source', '')
             
-            # Перевод в потоке
-            loop = asyncio.get_event_loop()
-            title_ru = await loop.run_in_executor(None, self.translate_text_safe, item['title'])
-            content_ru = await loop.run_in_executor(None, self.translate_text_safe, item['content'])
+            # Обрезаем контент, если нужно (максимум 4000 символов для Telegram)
+            if len(content) > 3800:
+                content = self.smart_truncate(content, 3800)
             
-            # Если заголовок пустой после перевода, берем первое предложение из текста
-            if not title_ru or title_ru == "Без заголовка":
-                title_ru = self.get_first_sentence(content_ru)
+            # Формируем текст
+            message = f"📰 *{html.escape(title)}*\n\n"
+            message += f"{html.escape(content)}\n\n"
+            message += f"🔗 [Читать далее]({url})"
             
-            # Экранируем
-            title_esc = self.escape_html(title_ru)
-            content_esc = self.escape_html(content_ru)
+            if source:
+                message += f"\n\n📌 *Источник:* {html.escape(source)}"
             
-            # Формируем полный текст поста
-            full_text = f"<b>{title_esc}</b>\n\n{content_esc}"
+            # Отправляем
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=message,
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
             
-            # Максимальная длина для Telegram (1024 символа)
-            MAX_LENGTH = 1024
+            # Отмечаем как отправленное
+            self.mark_as_sent(url, title, content)
+            self.log_post(url, title)
             
-            if len(full_text) > MAX_LENGTH:
-                logger.info(f"📏 Длина текста {len(full_text)} символов, требуется обрезание")
-                
-                # Обрезаем текст умно
-                text_without_title = content_esc
-                truncated_text = self.smart_truncate(text_without_title, MAX_LENGTH - len(title_esc) - 4)
-                full_text = f"<b>{title_esc}</b>\n\n{truncated_text}"
-                
-                logger.info(f"✅ Текст обрезан до {len(full_text)} символов")
+            logger.info(f"✅ Опубликовано: {title[:50]}...")
             
-            # Скачиваем изображение (если есть)
-            image_path = None
-            if item.get('main_image'):
-                logger.info("🖼️ Скачивание изображения...")
-                image_path = await self.download_image(item['main_image'])
-            
-            # Публикуем
-            try:
-                if image_path:
-                    with open(image_path, 'rb') as photo:
-                        await run_with_timeout(
-                            self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=photo,
-                                caption=full_text,
-                                parse_mode='HTML'
-                            ),
-                            PUBLISH_TIMEOUT
-                        )
-                    os.unlink(image_path)
-                    logger.info("✅ Пост с фото опубликован")
-                else:
-                    await run_with_timeout(
-                        self.bot.send_message(
-                            chat_id=CHANNEL_ID,
-                            text=full_text,
-                            parse_mode='HTML'
-                        ),
-                        PUBLISH_TIMEOUT
-                    )
-                    logger.info("✅ Пост без фото опубликован")
-                
-                # Отмечаем как отправленное
-                self.mark_as_sent(item['link'], item['title'], item['content'])
-                self.log_post(item['link'], item['title'])
-                
-                # Сохраняем мета-информацию для публикатора на 9111.ru
-                # Очищаем заголовок от недопустимых символов для имени папки
-                safe_title = sanitize_filename(item['title'], max_length=50)
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                folder_name = f"{timestamp}_{safe_title}"
-                self.save_post_meta(item, folder_name)
-                
-                # Вычисляем время следующей публикации
-                next_delay = self.get_next_delay()
-                local_now = get_local_time()
-                self.next_post_time = local_now + timedelta(seconds=next_delay)
-                
-                # Логируем следующую публикацию
-                logger.info(f"⏰ Следующая публикация через {next_delay//60} минут")
-                logger.info(f"📅 Точное время (UTC+{TIMEZONE_OFFSET}): {format_local_time(self.next_post_time)}")
-                
-                return True
-                
-            except TelegramError as e:
-                if "Too Many Requests" in str(e):
-                    logger.warning("⚠️ Лимит Telegram")
-                else:
-                    logger.error(f"❌ Ошибка Telegram: {e}")
-                return False
-                
+        except TelegramError as e:
+            logger.error(f"❌ Ошибка Telegram: {e}")
         except Exception as e:
             logger.error(f"❌ Ошибка публикации: {e}")
-            return False
 
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
-        """Один цикл работы бота"""
-        local_start = get_local_time()
-        logger.info("="*50)
-        logger.info(f"🔍 Запуск: {format_local_time(local_start)} (UTC+{TIMEZONE_OFFSET})")
-        logger.info("="*50)
-
-        try:
-            # Собираем новости
-            news = await run_with_timeout(self.fetch_all_news(), timeout=120)
-            if not news:
-                logger.info("📭 Новых статей нет")
+        """Однократный сбор и публикация новостей"""
+        logger.info("🚀 Запуск сбора новостей...")
+        
+        # Собираем новости со всех источников
+        all_posts = []
+        
+        # AP News
+        ap_posts = await self.fetch_from_apnews()
+        all_posts.extend(ap_posts)
+        
+        # Сортируем по приоритету (можно добавить позже)
+        
+        if not all_posts:
+            logger.info("📭 Новых статей не найдено")
+            return
+        
+        # Публикуем первую подходящую
+        for post in all_posts:
+            if self.can_post_now():
+                await self.publish_post(post)
                 return
-
-            # Проверяем лимиты
-            if not self.can_post_now():
-                logger.info("⏰ Нельзя публиковать сейчас")
+            else:
+                logger.info("⏳ Пост отложен из-за ограничений")
                 return
+        
+        logger.info("✅ Обработка завершена")
 
-            # Публикуем первую статью
-            await self.create_and_publish(news[0])
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
-        finally:
-            if self.session:
-                await self.session.close()
+    async def run_forever(self):
+        """Бесконечный цикл с хаотичными интервалами"""
+        logger.info("🤖 Бот запущен в бесконечном режиме")
+        
+        while True:
+            try:
+                await self.run_once()
+                
+                # Ждем следующий интервал
+                delay = self.get_next_delay()
+                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
+                await asyncio.sleep(delay)
+                
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка: {e}")
+                await asyncio.sleep(300)  # Ждем 5 минут при ошибке
 
 # ========== ТОЧКА ВХОДА ==========
-def main():
+async def main():
     """Основная функция"""
-    if not TELEGRAM_TOKEN or not CHANNEL_ID:
-        logger.error("❌ Нет TELEGRAM_TOKEN или CHANNEL_ID")
+    # Проверяем переменные окружения
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN не задан!")
         return
     
-    # Создаем и запускаем бота
+    if not CHANNEL_ID:
+        logger.error("❌ CHANNEL_ID не задан!")
+        return
+    
     bot = NewsBot()
-    asyncio.run(bot.run_once())
+    
+    # Если запущен в GitHub Actions, выполняем один раз
+    if 'GITHUB_ACTIONS' in os.environ:
+        await bot.run_once()
+    else:
+        # Локальный запуск - бесконечный цикл
+        await bot.run_forever()
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    asyncio.run(main())
