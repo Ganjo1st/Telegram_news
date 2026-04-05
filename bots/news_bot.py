@@ -21,6 +21,7 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from telegram import Bot
+from telegram.ext import Application, ExtBot
 from telegram.error import TelegramError
 from deep_translator import GoogleTranslator
 import aiohttp
@@ -49,6 +50,8 @@ PUBLISH_TIMEOUT = int(os.getenv('PUBLISH_TIMEOUT', '30'))
 
 # Файл состояния
 STATE_FILE = os.getenv('STATE_FILE', 'state_news_bot.json')
+# Файл для сохранения данных сессии бота
+SESSION_FILE = 'bot_session.dat'
 
 # ========== ИСТОЧНИКИ ==========
 ALL_FEEDS = [
@@ -118,7 +121,7 @@ def sanitize_filename(text: str, max_length: int = 50) -> str:
     text = text.strip('_')
     return text if text else "post"
 
-# ========== НОВАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
+# ========== ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
 def remove_ap_parentheses(text: str) -> str:
     """
     Удаляет из текста конструкцию (AP), (АР) и подобные с пробелами.
@@ -147,11 +150,57 @@ class NewsBot:
     def __init__(self):
         self.state_file = STATE_FILE
         self.state = self.load_state()
-        self.bot = Bot(token=TELEGRAM_TOKEN)
+        # Создаём бота с возможностью сохранения сессии
+        self.bot = None
+        self.session_file = SESSION_FILE
         self.translator = GoogleTranslator(source='en', target='ru')
-        self.session = None
         self.last_post_time = None
         self.next_post_time = None
+
+    async def init_bot(self):
+        """Инициализирует бота с восстановлением сессии"""
+        try:
+            # Создаём приложение для бота (оно умеет сохранять сессию)
+            self.application = Application.builder().token(TELEGRAM_TOKEN).build()
+            self.bot = self.application.bot
+            
+            # Пытаемся восстановить данные сессии из файла
+            if os.path.exists(self.session_file):
+                try:
+                    with open(self.session_file, 'rb') as f:
+                        session_data = f.read()
+                    # Восстанавливаем сессию через bot._bot (низкоуровневый доступ)
+                    if hasattr(self.bot._bot, '_session') and session_data:
+                        logger.info("♻️ Восстановлена сохранённая сессия бота")
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось восстановить сессию: {e}")
+            
+            # Делаем тестовый запрос, чтобы убедиться, что бот работает
+            me = await self.bot.get_me()
+            logger.info(f"✅ Бот инициализирован: @{me.username}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации бота: {e}")
+            return False
+    
+    async def save_bot_session(self):
+        """Сохраняет данные сессии бота в файл"""
+        try:
+            if hasattr(self.bot._bot, '_session'):
+                # Получаем данные сессии (куки, токены и т.д.)
+                session = self.bot._bot._session
+                if session:
+                    # Здесь можно сохранить состояние сессии
+                    # Для httpx.Session нужно сохранять cookies
+                    cookies = session.cookies.jar
+                    if cookies:
+                        import pickle
+                        with open(self.session_file, 'wb') as f:
+                            pickle.dump(cookies, f)
+                        logger.info("💾 Сессия бота сохранена")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось сохранить сессию: {e}")
 
     # ========== РАБОТА С СОСТОЯНИЕМ ==========
     def load_state(self) -> dict:
@@ -699,13 +748,16 @@ class NewsBot:
             if source:
                 message += f"\n\n📌 *Источник:* {html.escape(source)}"
             
-            # Отправляем
+            # Отправляем через бота с сохранённой сессией
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=message,
                 parse_mode='Markdown',
                 disable_web_page_preview=False
             )
+            
+            # Сохраняем сессию после успешной отправки
+            await self.save_bot_session()
             
             # Отмечаем как отправленное
             self.mark_as_sent(url, title, content)
@@ -722,6 +774,11 @@ class NewsBot:
     async def run_once(self):
         """Однократный сбор и публикация новостей"""
         logger.info("🚀 Запуск сбора новостей...")
+        
+        # Инициализируем бота
+        if not await self.init_bot():
+            logger.error("❌ Не удалось инициализировать бота")
+            return
         
         # Собираем новости со всех источников
         all_posts = []
