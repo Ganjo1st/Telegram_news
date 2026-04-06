@@ -41,11 +41,14 @@ TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
 
 # Таймауты
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
-PUBLISH_TIMEOUT = int(os.getenv('PUBLISH_TIMEOUT', '30'))
 
 # Файлы
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
+
+# Ограничения Telegram
+MAX_CAPTION_LEN = 1000  # Подпись к фото (безопасный лимит)
+MAX_MESSAGE_LEN = 4000  # Обычное сообщение
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def fetch_with_timeout(func, timeout, *args, **kwargs):
@@ -109,7 +112,6 @@ class NewsBot:
             logger.error(f"Ошибка сохранения состояния: {e}")
 
     def load_meta(self) -> dict:
-        """Загружает мета-информацию о статьях (источник, автор, и т.д.)"""
         try:
             if os.path.exists(META_FILE):
                 with open(META_FILE, 'r', encoding='utf-8') as f:
@@ -119,9 +121,7 @@ class NewsBot:
         return {'posts': {}}
 
     def save_meta(self):
-        """Сохраняет мета-информацию, очищая записи старше 30 дней"""
         try:
-            # Очищаем старые записи (старше 30 дней)
             thirty_days_ago = get_local_time() - timedelta(days=30)
             cleaned_posts = {}
             for post_id, post_data in self.meta.get('posts', {}).items():
@@ -138,7 +138,6 @@ class NewsBot:
             logger.error(f"Ошибка сохранения мета: {e}")
 
     def add_to_meta(self, post_id: str, source: str, url: str, original_title: str):
-        """Добавляет мета-информацию о статье"""
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
@@ -234,51 +233,44 @@ class NewsBot:
         delay = int(delay * variation)
         return max(MIN_POST_INTERVAL, min(delay, MAX_POST_INTERVAL))
 
-    # ========== ОБРЕЗАНИЕ ТЕКСТА (ПО АБЗАЦАМ/ПРЕДЛОЖЕНИЯМ) ==========
-    def smart_truncate_by_paragraphs(self, text: str, max_length: int) -> str:
-        """
-        Обрезает текст до последнего помещающегося абзаца.
-        Если абзац один — обрезает до последнего предложения.
-        """
-        if len(text) <= max_length:
+    # ========== ОБРЕЗАНИЕ ТЕКСТА ==========
+    def truncate_for_caption(self, text: str, max_len: int) -> str:
+        """Обрезает текст для подписи к фото (макс 1000 символов)"""
+        if len(text) <= max_len:
             return text
         
-        # Разбиваем на абзацы
-        paragraphs = text.split('\n\n')
-        
-        # Пробуем взять целые абзацы
-        result = ""
-        for para in paragraphs:
-            if len(result) + len(para) + 2 <= max_length:
-                if result:
-                    result += "\n\n"
-                result += para
-            else:
-                # Если это первый абзац и он не помещается целиком — режем по предложениям
-                if not result:
-                    return self.truncate_by_sentences(para, max_length)
-                else:
-                    break
-        return result
-
-    def truncate_by_sentences(self, text: str, max_length: int) -> str:
-        """Обрезает текст до последнего помещающегося предложения"""
-        if len(text) <= max_length:
-            return text
-        
-        # Разбиваем на предложения
+        # Пробуем обрезать по предложению
         sentences = re.split(r'(?<=[.!?])\s+', text)
-        
         result = ""
         for sent in sentences:
-            if len(result) + len(sent) + 1 <= max_length:
+            if len(result) + len(sent) + 1 <= max_len - 3:
                 if result:
                     result += " "
                 result += sent
             else:
                 break
         
-        return result if result else text[:max_length - 3] + "..."
+        if result:
+            return result + "..."
+        return text[:max_len - 3] + "..."
+
+    def truncate_by_paragraphs(self, text: str, max_len: int) -> str:
+        """Обрезает текст до последнего помещающегося абзаца"""
+        if len(text) <= max_len:
+            return text
+        
+        paragraphs = text.split('\n\n')
+        result = ""
+        for para in paragraphs:
+            if len(result) + len(para) + 2 <= max_len:
+                if result:
+                    result += "\n\n"
+                result += para
+            else:
+                if not result:
+                    return self.truncate_for_caption(para, max_len)
+                break
+        return result
 
     # ========== ПЕРЕВОД ==========
     def translate_text(self, text: str) -> str:
@@ -408,7 +400,6 @@ class NewsBot:
             if meta_img and meta_img.get('content'):
                 main_image = meta_img['content']
             
-            # Альтернативный поиск картинки
             if not main_image:
                 img = soup.find('img', {'src': re.compile(r'\.jpg|\.png|\.jpeg')})
                 if img and img.get('src'):
@@ -475,7 +466,6 @@ class NewsBot:
 
     # ========== ПУБЛИКАЦИЯ ==========
     async def publish_post(self, post_data: dict):
-        """Публикует пост: картинка сверху, текст с обрезанием, без ссылки на источник"""
         try:
             title_en = post_data['title']
             content_en = post_data['content']
@@ -494,70 +484,91 @@ class NewsBot:
             title_esc = html.escape(title_ru)
             content_esc = html.escape(content_ru)
             
-            # Обрезаем текст по абзацам/предложениям
-            # Ограничение Telegram: 4096 символов, оставляем запас под заголовок и ссылку
-            MAX_MESSAGE_LEN = 3800
-            content_esc = self.smart_truncate_by_paragraphs(content_esc, MAX_MESSAGE_LEN)
-            
-            # Формируем сообщение (БЕЗ ссылки на источник в тексте)
-            message = f"📰 *{title_esc}*\n\n{content_esc}"
-            
-            # Сохраняем мета-информацию об источнике в отдельный файл
+            # Сохраняем мета-информацию
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self.add_to_meta(post_id, source, url, title_en)
-            logger.info(f"📄 Мета сохранена для {post_id}: источник {source}")
+            logger.info(f"📄 Мета сохранена для {post_id}")
             
-            # Публикуем с картинкой (если есть)
-            try:
-                if image_url:
-                    # Скачиваем картинку
-                    img_response = fetch_with_timeout(
-                        lambda: requests.get(image_url, timeout=10),
-                        10
+            # Формируем сообщение
+            message = f"📰 *{title_esc}*"
+            
+            # Публикуем
+            if image_url:
+                # Для фото: подпись ограничена 1000 символами
+                caption = self.truncate_by_paragraphs(content_esc, MAX_CAPTION_LEN)
+                full_caption = f"{message}\n\n{caption}"
+                
+                # Скачиваем фото
+                img_response = fetch_with_timeout(
+                    lambda: requests.get(image_url, timeout=10),
+                    10
+                )
+                if img_response and img_response.status_code == 200:
+                    await self.bot.send_photo(
+                        chat_id=CHANNEL_ID,
+                        photo=img_response.content,
+                        caption=full_caption,
+                        parse_mode='Markdown'
                     )
-                    if img_response and img_response.status_code == 200:
-                        await self.bot.send_photo(
-                            chat_id=CHANNEL_ID,
-                            photo=img_response.content,
-                            caption=message,
-                            parse_mode='Markdown'
-                        )
-                        logger.info(f"✅ Опубликовано с фото: {title_ru[:50]}...")
-                    else:
-                        await self.bot.send_message(
-                            chat_id=CHANNEL_ID,
-                            text=message,
-                            parse_mode='Markdown',
-                            disable_web_page_preview=False
-                        )
-                        logger.info(f"✅ Опубликовано без фото: {title_ru[:50]}...")
+                    logger.info(f"✅ Опубликовано с фото")
                 else:
+                    # Фото не загрузилось — отправляем текстом
+                    text_message = self.truncate_by_paragraphs(f"{message}\n\n{content_esc}", MAX_MESSAGE_LEN)
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
-                        text=message,
+                        text=text_message,
                         parse_mode='Markdown',
                         disable_web_page_preview=False
                     )
-                    logger.info(f"✅ Опубликовано: {title_ru[:50]}...")
-                
-                # Отмечаем как отправленное
-                self.mark_as_sent(url, title_en, content_en)
-                self.log_post(url, title_en)
-                
-            except TelegramError as e:
-                if "Can't parse entities" in str(e):
-                    logger.warning(f"⚠️ Ошибка Markdown, отправляем без форматирования")
-                    plain_message = f"📰 {title_ru}\n\n{content_ru}"
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=plain_message,
-                        parse_mode=None
-                    )
+                    logger.info(f"✅ Опубликовано текстом (фото не загрузилось)")
+            else:
+                # Без фото: текст до 4000 символов
+                text_message = self.truncate_by_paragraphs(f"{message}\n\n{content_esc}", MAX_MESSAGE_LEN)
+                await self.bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=text_message,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+                logger.info(f"✅ Опубликовано текстом")
+            
+            # Отмечаем как отправленное
+            self.mark_as_sent(url, title_en, content_en)
+            self.log_post(url, title_en)
+            
+        except TelegramError as e:
+            if "Can't parse entities" in str(e):
+                logger.warning(f"⚠️ Ошибка Markdown, отправляем без форматирования")
+                try:
+                    if image_url:
+                        await self.bot.send_message(
+                            chat_id=CHANNEL_ID,
+                            text=f"📰 {title_ru}\n\n{content_ru}",
+                            parse_mode=None
+                        )
+                    else:
+                        await self.bot.send_message(
+                            chat_id=CHANNEL_ID,
+                            text=f"📰 {title_ru}\n\n{content_ru}",
+                            parse_mode=None
+                        )
                     self.mark_as_sent(url, title_en, content_en)
                     self.log_post(url, title_en)
-                else:
-                    raise e
-                    
+                except Exception as e2:
+                    logger.error(f"❌ Ошибка: {e2}")
+            elif "Message caption is too long" in str(e):
+                logger.warning(f"⚠️ Подпись слишком длинная, отправляем без фото")
+                text_message = self.truncate_by_paragraphs(f"{message}\n\n{content_esc}", MAX_MESSAGE_LEN)
+                await self.bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=text_message,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+                self.mark_as_sent(url, title_en, content_en)
+                self.log_post(url, title_en)
+            else:
+                logger.error(f"❌ Ошибка Telegram: {e}")
         except Exception as e:
             logger.error(f"❌ Ошибка публикации: {e}")
 
@@ -576,7 +587,6 @@ class NewsBot:
             logger.info("📭 Новых статей не найдено")
             return
         
-        # Публикуем первую подходящую
         for post in all_posts:
             if self.can_post_now():
                 await self.publish_post(post)
