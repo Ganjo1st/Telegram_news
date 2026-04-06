@@ -50,25 +50,27 @@ jobs:
           TOTAL_BOT_TIMEOUT: '240'
         run: python bots/news_bot.py
       
-      - name: Commit and push state file
+      - name: Commit and push state and meta files
         run: |
           # Настраиваем git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Проверяем, изменился ли файл состояния
-          if [ -f "state_news_bot.json" ]; then
-            git add state_news_bot.json
-            git diff --quiet && git diff --staged --quiet || git commit -m "🤖 Update bot state [skip ci]"
+          # Добавляем файлы состояния и мета
+          git add state_news_bot.json posts_meta.json
+          
+          # Проверяем, есть ли изменения
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "✅ Нет изменений для коммита"
+          else
+            git commit -m "🤖 Update bot state and meta [skip ci]"
             
             # Пробуем запушить
             if git push; then
-              echo "✅ Файл состояния успешно обновлён в репозитории"
+              echo "✅ Файлы состояния и мета успешно обновлены в репозитории"
             else
-              echo "⚠️ Не удалось запушить, но файл сохранён локально"
+              echo "⚠️ Не удалось запушить, но файлы сохранены локально"
             fi
-          else
-            echo "⚠️ Файл состояния не найден"
           fi
       
       - name: Upload logs on failure
