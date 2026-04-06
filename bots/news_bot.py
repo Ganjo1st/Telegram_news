@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram News Bot - Автоматические публикации новостей с переводом на русский
+Telegram News Bot - Автоматические публикации новостей AP News
 """
 
 import os
@@ -43,7 +43,6 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# Ограничения Telegram
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
@@ -58,16 +57,15 @@ def remove_ap(text: str) -> str:
     if not text:
         return text
     cleaned = re.sub(r'\(\s*[AaАа][PpРр]\s*\)', '', text)
+    cleaned = re.sub(r'\(AP\s+[^)]+\)', '', cleaned)  # (AP Photo/...)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
-    """Безопасное получение URL с таймаутом"""
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         return requests.get(url, headers=headers, timeout=timeout)
     except Exception as e:
@@ -75,52 +73,70 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 
-def normalize_image_url(url: str, base_url: str = 'https://apnews.com') -> str | None:
-    """Нормализует URL изображения"""
-    if not url:
-        return None
+def extract_image_url(soup, base_url: str) -> str | None:
+    """Извлекает URL изображения из страницы"""
     
-    # Убираем параметры размера
-    url = re.sub(r'\?.*$', '', url)
-    url = re.sub(r'/reflow/.*?/', '/', url)
-    
-    # Если URL относительный
-    if url.startswith('//'):
-        return 'https:' + url
-    elif url.startswith('/'):
-        return urljoin(base_url, url)
-    elif url.startswith('http'):
+    # 1. Пробуем meta og:image
+    meta_img = soup.find('meta', property='og:image')
+    if meta_img and meta_img.get('content'):
+        url = meta_img['content']
+        if url.startswith('//'):
+            return 'https:' + url
+        if url.startswith('/'):
+            return urljoin(base_url, url)
+        if url.startswith('http'):
+            return url
+        logger.info(f"Найдено og:image: {url[:80]}...")
         return url
-    else:
-        return None
-
-
-def download_image(url: str) -> bytes | None:
-    """Скачивает изображение и возвращает бинарные данные"""
-    try:
-        # Нормализуем URL
-        img_url = normalize_image_url(url)
-        if not img_url:
-            logger.warning(f"Неверный URL изображения: {url}")
-            return None
+    
+    # 2. Ищем в article img с высоким разрешением
+    for img in soup.find_all('img', src=True):
+        src = img.get('src', '')
         
-        logger.info(f"Загрузка изображения: {img_url}")
-        response = fetch_url(img_url, timeout=10)
+        # Пропускаем логотипы и иконки
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
+            continue
         
-        if response and response.status_code == 200:
-            content_type = response.headers.get('Content-Type', '')
-            if 'image' in content_type:
-                logger.info(f"✅ Изображение загружено, размер: {len(response.content)} байт")
-                return response.content
+        # Пропускаем слишком маленькие изображения
+        width = img.get('width', '')
+        height = img.get('height', '')
+        if width and height:
+            try:
+                if int(width) < 200 and int(height) < 200:
+                    continue
+            except:
+                pass
+        
+        # Проверяем расширение
+        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if src.startswith('//'):
+                full_url = 'https:' + src
+            elif src.startswith('/'):
+                full_url = urljoin(base_url, src)
+            elif src.startswith('http'):
+                full_url = src
             else:
-                logger.warning(f"URL не ведёт на изображение: {content_type}")
-                return None
-        else:
-            logger.warning(f"Не удалось загрузить изображение: статус {response.status_code if response else 'None'}")
-            return None
-    except Exception as e:
-        logger.error(f"Ошибка скачивания изображения: {e}")
-        return None
+                continue
+            
+            logger.info(f"Найдено img: {full_url[:80]}...")
+            return full_url
+    
+    # 3. Пробуем picture source
+    picture = soup.find('picture')
+    if picture:
+        source = picture.find('source', srcset=True)
+        if source:
+            srcset = source.get('srcset', '')
+            if srcset:
+                first_url = srcset.split(',')[0].strip().split(' ')[0]
+                if first_url.startswith('//'):
+                    return 'https:' + first_url
+                if first_url.startswith('/'):
+                    return urljoin(base_url, first_url)
+                if first_url.startswith('http'):
+                    return first_url
+    
+    return None
 
 
 # ========== ОСНОВНОЙ КЛАСС ==========
@@ -131,7 +147,6 @@ class NewsBot:
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
 
-    # ---------- Работа с файлами ----------
     def _load_state(self) -> dict:
         try:
             if os.path.exists(STATE_FILE):
@@ -179,7 +194,6 @@ class NewsBot:
             self.meta['posts'] = cleaned
             with open(META_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.meta, f, ensure_ascii=False, indent=2)
-            logger.info(f"Мета сохранена, записей: {len(cleaned)}")
         except Exception as e:
             logger.error(f"Ошибка сохранения мета: {e}")
 
@@ -192,7 +206,6 @@ class NewsBot:
         }
         self._save_meta()
 
-    # ---------- Дедупликация ----------
     def _normalize_title(self, title: str) -> str:
         if not title:
             return ""
@@ -241,7 +254,6 @@ class NewsBot:
             self.state['posts_log'] = self.state['posts_log'][-100:]
         self._save_state()
 
-    # ---------- Контроль публикаций ----------
     def _can_post(self) -> bool:
         now = get_local_time()
         hour = now.hour
@@ -280,9 +292,7 @@ class NewsBot:
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
-    # ---------- Обрезание текста ----------
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
-        """Обрезает текст до последнего предложения, не превышая max_len"""
         if len(text) <= max_len:
             return text
 
@@ -301,7 +311,6 @@ class NewsBot:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         return self._truncate_to_last_sentence(text, max_len)
 
-    # ---------- Перевод ----------
     def _translate(self, text: str) -> str:
         if not text or len(text) < 10:
             return text
@@ -314,12 +323,12 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text
 
-    # ---------- Парсинг AP News ----------
+    # ========== ПАРСИНГ AP NEWS ==========
     def _get_articles_list(self) -> list:
-        """Получает список статей с главной AP News"""
         try:
             resp = fetch_url('https://apnews.com/')
             if not resp or resp.status_code != 200:
+                logger.error("Не удалось получить главную страницу AP News")
                 return []
 
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -354,19 +363,22 @@ class NewsBot:
                 if a['url'] not in seen:
                     seen.add(a['url'])
                     unique.append(a)
+            
+            logger.info(f"Найдено статей на главной: {len(unique)}")
             return unique[:10]
         except Exception as e:
             logger.error(f"Ошибка получения списка статей: {e}")
             return []
 
     def _parse_article(self, url: str) -> dict | None:
-        """Парсит одну статью AP News"""
         try:
             resp = fetch_url(url)
-            if not resp:
+            if not resp or resp.status_code != 200:
+                logger.error(f"Не удалось загрузить статью: {url}")
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
 
             # Заголовок
             title = None
@@ -380,35 +392,14 @@ class NewsBot:
             if not title:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
+            title = title.strip()
 
-            # Изображение — ищем в meta og:image и в article
-            image = None
-            
-            # Сначала пробуем og:image
-            meta_img = soup.find('meta', property='og:image')
-            if meta_img and meta_img.get('content'):
-                image = meta_img['content']
-                logger.info(f"Найдено og:image: {image[:100]}...")
-            
-            # Если нет — ищем в article
-            if not image:
-                article = soup.find('article')
-                if article:
-                    img = article.find('img', src=re.compile(r'\.jpg|\.png|\.jpeg|\.webp'))
-                    if img and img.get('src'):
-                        image = img['src']
-                        logger.info(f"Найдено img в article: {image[:100]}...")
-            
-            # Если всё ещё нет — ищем любой большой img
-            if not image:
-                for img in soup.find_all('img', src=True):
-                    src = img.get('src', '')
-                    if 'logo' in src.lower():
-                        continue
-                    if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                        image = src
-                        logger.info(f"Найдено img: {image[:100]}...")
-                        break
+            # Изображение
+            image_url = extract_image_url(soup, base_url)
+            if image_url:
+                logger.info(f"✅ Найдено изображение: {image_url[:80]}...")
+            else:
+                logger.info("❌ Изображение не найдено")
 
             # Текст статьи
             container = soup.find('article') or soup.find('main')
@@ -419,13 +410,14 @@ class NewsBot:
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 40:
+                        # Удаляем (AP Photo/...) из текста
+                        text = re.sub(r'\(AP\s+[^)]+\)', '', text)
                         paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 return None
 
             content = '\n\n'.join(paragraphs)
-            content = self._clean_text(content)
             content = remove_ap(content)
 
             if len(content) < 200:
@@ -434,41 +426,13 @@ class NewsBot:
             return {
                 'title': title,
                 'content': content,
-                'image': image
+                'image': image_url
             }
         except Exception as e:
             logger.error(f"Ошибка парсинга статьи {url}: {e}")
             return None
 
-    def _clean_text(self, text: str) -> str:
-        """Удаляет мусор из текста"""
-        if not text:
-            return text
-
-        text = re.sub(r'<[^>]+>', '', text)
-
-        patterns = [
-            r'Copyright \d+.*?(?:All rights reserved|Associated Press).*?$',
-            r'Read more at:?\s*\S+',
-            r'Follow us on.*$',
-            r'Subscribe to.*$',
-            r'Sign up for.*$',
-            r'Click here.*$',
-            r'Join the conversation.*$',
-            r'Email.*@.*$',
-            r'\(AP\)\s*',
-            r'—\s*AP\s*—?\s*',
-            r'The Associated Press$',
-            r'AP News$',
-        ]
-        for p in patterns:
-            text = re.sub(p, '', text, flags=re.IGNORECASE | re.MULTILINE)
-
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-
     async def fetch_news(self) -> list:
-        """Собирает новые статьи"""
         items = []
         articles = await asyncio.get_event_loop().run_in_executor(None, self._get_articles_list)
 
@@ -477,6 +441,7 @@ class NewsBot:
             title = article['title']
 
             if self._is_duplicate(url, title):
+                logger.info(f"Дубликат: {title[:40]}...")
                 continue
 
             logger.info(f"🔍 Парсинг: {title[:50]}...")
@@ -489,12 +454,12 @@ class NewsBot:
                     'url': url,
                     'image': data.get('image')
                 })
+                logger.info(f"✅ Добавлена статья: {data['title'][:50]}...")
 
         return items
 
-    # ---------- Публикация ----------
+    # ========== ПУБЛИКАЦИЯ ==========
     async def publish(self, post: dict):
-        """Публикует пост в Telegram"""
         try:
             title_en = post['title']
             content_en = post['content']
@@ -503,56 +468,54 @@ class NewsBot:
 
             logger.info(f"📝 Перевод: {title_en[:50]}...")
 
-            # Переводим
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
-            # Сохраняем мета-информацию
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, 'AP News', url, title_en)
-            logger.info(f"Мета сохранена: {post_id}")
 
-            # Формируем сообщение
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"📰 *{title_escaped}*\n\n{content_truncated}"
 
-            # Пробуем отправить с фото
-            image_sent = False
+            # Публикация с фото
             if image_url:
-                logger.info(f"🖼️ Пробуем загрузить изображение: {image_url[:100]}...")
-                image_data = await loop.run_in_executor(None, download_image, image_url)
+                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
+                img_response = fetch_url(image_url, timeout=15)
                 
-                if image_data:
-                    try:
-                        await self.bot.send_photo(
-                            chat_id=CHANNEL_ID,
-                            photo=image_data,
-                            caption=message,
-                            parse_mode='Markdown'
-                        )
-                        logger.info("✅ Опубликовано С ФОТО")
-                        image_sent = True
-                    except TelegramError as e:
-                        logger.warning(f"Ошибка при отправке фото: {e}")
-                        image_sent = False
+                if img_response and img_response.status_code == 200:
+                    content_type = img_response.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        try:
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID,
+                                photo=img_response.content,
+                                caption=message,
+                                parse_mode='Markdown'
+                            )
+                            logger.info("✅ Опубликовано С ФОТО")
+                            self._mark_sent(url, title_en, content_en)
+                            self._log_post(url, title_en)
+                            return
+                        except TelegramError as e:
+                            logger.warning(f"Ошибка отправки фото: {e}")
+                    else:
+                        logger.warning(f"URL не ведёт на изображение: {content_type}")
                 else:
                     logger.warning("Не удалось загрузить изображение")
-            
-            # Если фото не отправилось — отправляем текстом
-            if not image_sent:
-                logger.info("📝 Отправка текстовым сообщением (без фото)")
-                text_message = self._truncate_text(f"📰 *{title_escaped}*\n\n{content_ru}", is_caption=False)
-                await self.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=text_message,
-                    parse_mode='Markdown',
-                    disable_web_page_preview=False
-                )
-                logger.info("✅ Опубликовано ТЕКСТОМ")
 
-            # Отмечаем как отправленное
+            # Фолбэк: публикация текстом
+            logger.info("📝 Публикация текстом (без фото)")
+            text_message = self._truncate_text(f"📰 *{title_escaped}*\n\n{content_ru}", is_caption=False)
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=text_message,
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
+            logger.info("✅ Опубликовано ТЕКСТОМ")
+
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
 
@@ -571,9 +534,8 @@ class NewsBot:
         except Exception as e:
             logger.error(f"Ошибка публикации: {e}")
 
-    # ---------- Основной цикл ----------
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
-        """Один цикл работы"""
         logger.info("=" * 50)
         logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
         logger.info("=" * 50)
