@@ -14,6 +14,7 @@ import re
 import html
 import random
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -43,8 +44,8 @@ STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
 # Ограничения Telegram
-MAX_CAPTION = 1024  # Максимум для подписи к фото
-MAX_MESSAGE = 4096  # Максимум для текстового сообщения
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -56,9 +57,7 @@ def remove_ap(text: str) -> str:
     """Удаляет (AP), (АР) и подобное из текста"""
     if not text:
         return text
-    # Удаляем (AP) с любыми пробелами внутри
     cleaned = re.sub(r'\(\s*[AaАа][PpРр]\s*\)', '', text)
-    # Убираем двойные пробелы
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
@@ -66,10 +65,61 @@ def remove_ap(text: str) -> str:
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     """Безопасное получение URL с таймаутом"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+        }
         return requests.get(url, headers=headers, timeout=timeout)
     except Exception as e:
         logger.error(f"Ошибка запроса {url}: {e}")
+        return None
+
+
+def normalize_image_url(url: str, base_url: str = 'https://apnews.com') -> str | None:
+    """Нормализует URL изображения"""
+    if not url:
+        return None
+    
+    # Убираем параметры размера
+    url = re.sub(r'\?.*$', '', url)
+    url = re.sub(r'/reflow/.*?/', '/', url)
+    
+    # Если URL относительный
+    if url.startswith('//'):
+        return 'https:' + url
+    elif url.startswith('/'):
+        return urljoin(base_url, url)
+    elif url.startswith('http'):
+        return url
+    else:
+        return None
+
+
+def download_image(url: str) -> bytes | None:
+    """Скачивает изображение и возвращает бинарные данные"""
+    try:
+        # Нормализуем URL
+        img_url = normalize_image_url(url)
+        if not img_url:
+            logger.warning(f"Неверный URL изображения: {url}")
+            return None
+        
+        logger.info(f"Загрузка изображения: {img_url}")
+        response = fetch_url(img_url, timeout=10)
+        
+        if response and response.status_code == 200:
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' in content_type:
+                logger.info(f"✅ Изображение загружено, размер: {len(response.content)} байт")
+                return response.content
+            else:
+                logger.warning(f"URL не ведёт на изображение: {content_type}")
+                return None
+        else:
+            logger.warning(f"Не удалось загрузить изображение: статус {response.status_code if response else 'None'}")
+            return None
+    except Exception as e:
+        logger.error(f"Ошибка скачивания изображения: {e}")
         return None
 
 
@@ -121,7 +171,6 @@ class NewsBot:
 
     def _save_meta(self):
         try:
-            # Очищаем записи старше 30 дней
             cutoff = get_local_time() - timedelta(days=30)
             cleaned = {}
             for pid, data in self.meta.get('posts', {}).items():
@@ -221,39 +270,34 @@ class NewsBot:
             elapsed = (now - last_times[0]).total_seconds()
             if elapsed < MIN_INTERVAL:
                 wait = (MIN_INTERVAL - elapsed) // 60
-                logger.info(f"Минимальный интервал: следующий пост через {wait} минут")
+                logger.info(f"Минимальный интервал: следующий пост через {wait:.0f} минут")
                 return False
 
         return True
 
     def _next_delay(self) -> int:
         delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
-        # Вариация ±15%
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
-    # ---------- Обрезание текста (до последней точки) ----------
+    # ---------- Обрезание текста ----------
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
         """Обрезает текст до последнего предложения, не превышая max_len"""
         if len(text) <= max_len:
             return text
 
-        # Ищем последнюю точку, вопросительный или восклицательный знак в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
-            if last != -1 and last > max_len // 2:  # Нашли хороший знак препинания
+            if last != -1 and last > max_len // 2:
                 return text[:last + 1].strip()
 
-        # Если не нашли — ищем последний пробел
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             return text[:last_space].strip() + "..."
 
-        # Крайний случай — тупое обрезание
         return text[:max_len - 3].strip() + "..."
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
-        """Обрезает текст для Telegram"""
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         return self._truncate_to_last_sentence(text, max_len)
 
@@ -262,7 +306,6 @@ class NewsBot:
         if not text or len(text) < 10:
             return text
         try:
-            # Ограничиваем длину для API
             if len(text) > 3000:
                 text = text[:3000]
             result = self.translator.translate(text)
@@ -287,7 +330,6 @@ class NewsBot:
                 if '/article/' not in href:
                     continue
 
-                # Формируем полный URL
                 if href.startswith('https://'):
                     url = href
                 elif href.startswith('/'):
@@ -295,7 +337,6 @@ class NewsBot:
                 else:
                     continue
 
-                # Ищем заголовок
                 title = link.get_text(strip=True)
                 if not title or len(title) < 15:
                     parent = link.find_parent(['h1', 'h2', 'h3', 'h4'])
@@ -307,7 +348,6 @@ class NewsBot:
                 title = re.sub(r'\s+', ' ', title).strip()
                 articles.append({'url': url, 'title': title})
 
-            # Убираем дубликаты URL
             seen = set()
             unique = []
             for a in articles:
@@ -341,21 +381,36 @@ class NewsBot:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
 
-            # Изображение
+            # Изображение — ищем в meta og:image и в article
             image = None
+            
+            # Сначала пробуем og:image
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 image = meta_img['content']
+                logger.info(f"Найдено og:image: {image[:100]}...")
+            
+            # Если нет — ищем в article
             if not image:
-                img = soup.find('img', src=re.compile(r'\.jpg|\.png|\.jpeg'))
-                if img and img.get('src'):
-                    src = img['src']
-                    if src.startswith('/'):
-                        image = 'https://apnews.com' + src
-                    elif src.startswith('http'):
+                article = soup.find('article')
+                if article:
+                    img = article.find('img', src=re.compile(r'\.jpg|\.png|\.jpeg|\.webp'))
+                    if img and img.get('src'):
+                        image = img['src']
+                        logger.info(f"Найдено img в article: {image[:100]}...")
+            
+            # Если всё ещё нет — ищем любой большой img
+            if not image:
+                for img in soup.find_all('img', src=True):
+                    src = img.get('src', '')
+                    if 'logo' in src.lower():
+                        continue
+                    if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                         image = src
+                        logger.info(f"Найдено img: {image[:100]}...")
+                        break
 
-            # Текст статьи — собираем все абзацы
+            # Текст статьи
             container = soup.find('article') or soup.find('main')
             paragraphs = []
             if container:
@@ -363,7 +418,7 @@ class NewsBot:
                     tag.decompose()
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
-                    if len(text) > 40:  # Минимальная длина осмысленного абзаца
+                    if len(text) > 40:
                         paragraphs.append(text)
 
             if len(paragraphs) < 2:
@@ -390,10 +445,8 @@ class NewsBot:
         if not text:
             return text
 
-        # Удаляем HTML-теги
         text = re.sub(r'<[^>]+>', '', text)
 
-        # Удаляем служебные фразы
         patterns = [
             r'Copyright \d+.*?(?:All rights reserved|Associated Press).*?$',
             r'Read more at:?\s*\S+',
@@ -411,7 +464,6 @@ class NewsBot:
         for p in patterns:
             text = re.sub(p, '', text, flags=re.IGNORECASE | re.MULTILINE)
 
-        # Убираем лишние переносы
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
@@ -463,46 +515,42 @@ class NewsBot:
 
             # Формируем сообщение
             title_escaped = html.escape(title_ru)
+            content_truncated = self._truncate_text(content_ru, is_caption=True)
+            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
 
-            # Обрезаем контент
+            # Пробуем отправить с фото
+            image_sent = False
             if image_url:
-                # Для фото — подпись до 1024 символов
-                content_truncated = self._truncate_text(content_ru, is_caption=True)
-                message = f"📰 *{title_escaped}*\n\n{content_truncated}"
-            else:
-                # Без фото — до 4096 символов
-                content_truncated = self._truncate_text(content_ru, is_caption=False)
-                message = f"📰 *{title_escaped}*\n\n{content_truncated}"
-
-            # Публикуем
-            if image_url:
-                # Скачиваем изображение
-                img_resp = fetch_url(image_url, timeout=10)
-                if img_resp and img_resp.status_code == 200:
-                    await self.bot.send_photo(
-                        chat_id=CHANNEL_ID,
-                        photo=img_resp.content,
-                        caption=message,
-                        parse_mode='Markdown'
-                    )
-                    logger.info("✅ Опубликовано с фото")
+                logger.info(f"🖼️ Пробуем загрузить изображение: {image_url[:100]}...")
+                image_data = await loop.run_in_executor(None, download_image, image_url)
+                
+                if image_data:
+                    try:
+                        await self.bot.send_photo(
+                            chat_id=CHANNEL_ID,
+                            photo=image_data,
+                            caption=message,
+                            parse_mode='Markdown'
+                        )
+                        logger.info("✅ Опубликовано С ФОТО")
+                        image_sent = True
+                    except TelegramError as e:
+                        logger.warning(f"Ошибка при отправке фото: {e}")
+                        image_sent = False
                 else:
-                    # Фото не загрузилось — отправляем текстом
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=message,
-                        parse_mode='Markdown',
-                        disable_web_page_preview=False
-                    )
-                    logger.info("✅ Опубликовано текстом (фото не загружено)")
-            else:
+                    logger.warning("Не удалось загрузить изображение")
+            
+            # Если фото не отправилось — отправляем текстом
+            if not image_sent:
+                logger.info("📝 Отправка текстовым сообщением (без фото)")
+                text_message = self._truncate_text(f"📰 *{title_escaped}*\n\n{content_ru}", is_caption=False)
                 await self.bot.send_message(
                     chat_id=CHANNEL_ID,
-                    text=message,
+                    text=text_message,
                     parse_mode='Markdown',
                     disable_web_page_preview=False
                 )
-                logger.info("✅ Опубликовано текстом")
+                logger.info("✅ Опубликовано ТЕКСТОМ")
 
             # Отмечаем как отправленное
             self._mark_sent(url, title_en, content_en)
@@ -515,18 +563,6 @@ class NewsBot:
                     chat_id=CHANNEL_ID,
                     text=f"📰 {title_ru}\n\n{content_ru}",
                     parse_mode=None
-                )
-                self._mark_sent(url, title_en, content_en)
-                self._log_post(url, title_en)
-            elif "caption is too long" in str(e).lower():
-                logger.warning("Подпись слишком длинная, отправляем без фото")
-                content_truncated = self._truncate_text(content_ru, is_caption=False)
-                message = f"📰 *{title_escaped}*\n\n{content_truncated}"
-                await self.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=message,
-                    parse_mode='Markdown',
-                    disable_web_page_preview=False
                 )
                 self._mark_sent(url, title_en, content_en)
                 self._log_post(url, title_en)
@@ -553,11 +589,9 @@ class NewsBot:
             logger.info("⏸️ Публикация отложена (ограничения)")
             return
 
-        # Публикуем первую новость
         await self.publish(news[0])
 
     async def run_forever(self):
-        """Бесконечный цикл с хаотичными интервалами"""
         logger.info("🤖 Бот запущен в бесконечном режиме")
         while True:
             try:
@@ -570,7 +604,6 @@ class NewsBot:
                 await asyncio.sleep(300)
 
 
-# ========== ТОЧКА ВХОДА ==========
 async def main():
     if not TELEGRAM_TOKEN:
         logger.error("❌ TELEGRAM_TOKEN не задан!")
