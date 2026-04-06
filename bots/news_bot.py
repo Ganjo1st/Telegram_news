@@ -365,6 +365,7 @@ class NewsBot:
             if not title:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
+            title = title.strip()
 
             image_url = extract_image_url(soup, base_url)
 
@@ -388,7 +389,7 @@ class NewsBot:
             if len(content) < 200:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News'}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News', 'url': url}
         except Exception as e:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
@@ -416,6 +417,7 @@ class NewsBot:
 
             title = soup.find('h1')
             title = title.get_text(strip=True) if title else "Без заголовка"
+            title = title.strip()
 
             image_url = extract_image_url(soup, base_url)
 
@@ -434,7 +436,7 @@ class NewsBot:
             if len(content) < 200:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics'}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
         except Exception as e:
             logger.error(f"Ошибка парсинга InfoBrics: {e}")
             return None
@@ -462,6 +464,7 @@ class NewsBot:
 
             title = soup.find('h1')
             title = title.get_text(strip=True) if title else "Без заголовка"
+            title = title.strip()
 
             image_url = extract_image_url(soup, base_url)
 
@@ -480,7 +483,7 @@ class NewsBot:
             if len(content) < 200:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research'}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
         except Exception as e:
             logger.error(f"Ошибка парсинга Global Research: {e}")
             return None
@@ -528,24 +531,15 @@ class NewsBot:
     # ========== ПУБЛИКАЦИЯ ==========
     async def publish(self, post: dict):
         try:
-            title_en = post['title']
-            content_en = post['content']
-            url = None
+            title_en = post.get('title', '')
+            content_en = post.get('content', '')
+            url = post.get('url', '')
             source = post.get('source', '')
             image_url = post.get('image')
 
-            # URL не всегда есть в post, нужно найти
-            for source_func in [self._get_apnews_articles, self._get_infobrics_articles, self._get_globalresearch_articles]:
-                articles = source_func()
-                for a in articles:
-                    if a['title'] == title_en or a['title'][:50] == title_en[:50]:
-                        url = a['url']
-                        break
-                if url:
-                    break
-
-            if not url:
-                url = f"https://{source.lower().replace(' ', '')}.com"
+            if not title_en or not content_en:
+                logger.error("❌ Нет заголовка или содержимого")
+                return
 
             logger.info(f"📝 Перевод: {title_en[:50]}...")
 
@@ -553,11 +547,15 @@ class NewsBot:
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
+            # Сохраняем мета-информацию
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, source, url, title_en)
 
+            # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
+            
+            # Формируем сообщение (БЕЗ фигурных скобок!)
             message = f"📰 *{title_escaped}*\n\n{content_truncated}"
 
             # Публикация с фото
@@ -588,7 +586,7 @@ class NewsBot:
 
             # Фолбэк: публикация текстом
             logger.info("📝 Публикация текстом (без фото)")
-            text_message = self._truncate_text(f"📰 *{title_escaped}*\n\n{content_ru}", is_caption=False)
+            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=text_message,
@@ -601,19 +599,23 @@ class NewsBot:
             self._log_post(url, title_en)
 
         except TelegramError as e:
-            if "Can't parse entities" in str(e):
+            error_msg = str(e)
+            if "Can't parse entities" in error_msg:
                 logger.warning("Ошибка Markdown, отправляем без форматирования")
-                await self.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=f"📰 {title_ru}\n\n{content_ru}",
-                    parse_mode=None
-                )
-                self._mark_sent(url, title_en, content_en)
-                self._log_post(url, title_en)
+                try:
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=f"📰 {title_ru}\n\n{content_ru}",
+                        parse_mode=None
+                    )
+                    self._mark_sent(url, title_en, content_en)
+                    self._log_post(url, title_en)
+                except Exception as e2:
+                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
             else:
-                logger.error(f"Ошибка Telegram: {e}")
+                logger.error(f"❌ Ошибка Telegram: {e}")
         except Exception as e:
-            logger.error(f"Ошибка публикации: {e}")
+            logger.error(f"❌ Ошибка публикации: {e}")
 
     # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
@@ -642,7 +644,7 @@ class NewsBot:
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"Критическая ошибка: {e}")
+                logger.error(f"❌ Критическая ошибка: {e}")
                 await asyncio.sleep(300)
 
 
