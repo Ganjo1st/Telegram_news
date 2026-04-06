@@ -47,8 +47,8 @@ STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
 # Ограничения Telegram
-MAX_CAPTION_LEN = 1000  # Подпись к фото (безопасный лимит)
-MAX_MESSAGE_LEN = 4000  # Обычное сообщение
+MAX_CAPTION_LEN = 1000
+MAX_MESSAGE_LEN = 4000
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def fetch_with_timeout(func, timeout, *args, **kwargs):
@@ -65,7 +65,6 @@ def get_local_time() -> datetime:
     utc_now = datetime.now(timezone.utc)
     return utc_now + timedelta(hours=TIMEZONE_OFFSET)
 
-# ========== ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ (AP) ==========
 def remove_ap_parentheses(text: str) -> str:
     if not text:
         return text
@@ -82,7 +81,6 @@ class NewsBot:
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
 
-    # ========== РАБОТА С ФАЙЛАМИ ==========
     def load_state(self) -> dict:
         try:
             if os.path.exists(STATE_FILE):
@@ -146,7 +144,6 @@ class NewsBot:
         }
         self.save_meta()
 
-    # ========== ДЕДУПЛИКАЦИЯ ==========
     def normalize_title(self, title: str) -> str:
         if not title:
             return ""
@@ -196,7 +193,6 @@ class NewsBot:
             self.state['posts_log'] = self.state['posts_log'][-100:]
         self.save_state()
 
-    # ========== ХАОТИЧНЫЙ РЕЖИМ ==========
     def can_post_now(self) -> bool:
         local_now = get_local_time()
         hour = local_now.hour
@@ -233,13 +229,10 @@ class NewsBot:
         delay = int(delay * variation)
         return max(MIN_POST_INTERVAL, min(delay, MAX_POST_INTERVAL))
 
-    # ========== ОБРЕЗАНИЕ ТЕКСТА ==========
     def truncate_for_caption(self, text: str, max_len: int) -> str:
-        """Обрезает текст для подписи к фото (макс 1000 символов)"""
         if len(text) <= max_len:
             return text
         
-        # Пробуем обрезать по предложению
         sentences = re.split(r'(?<=[.!?])\s+', text)
         result = ""
         for sent in sentences:
@@ -255,7 +248,6 @@ class NewsBot:
         return text[:max_len - 3] + "..."
 
     def truncate_by_paragraphs(self, text: str, max_len: int) -> str:
-        """Обрезает текст до последнего помещающегося абзаца"""
         if len(text) <= max_len:
             return text
         
@@ -272,7 +264,6 @@ class NewsBot:
                 break
         return result
 
-    # ========== ПЕРЕВОД ==========
     def translate_text(self, text: str) -> str:
         if not text or len(text) < 10:
             return text
@@ -285,7 +276,6 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text
 
-    # ========== ОЧИСТКА СТАТЬИ ==========
     def clean_article(self, text: str) -> str:
         if not text:
             return ""
@@ -321,7 +311,6 @@ class NewsBot:
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
-    # ========== ПАРСЕР AP NEWS ==========
     def get_apnews_articles(self):
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -381,7 +370,6 @@ class NewsBot:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -394,7 +382,6 @@ class NewsBot:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
 
-            # Изображение
             main_image = None
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
@@ -409,7 +396,6 @@ class NewsBot:
                     elif src.startswith('http'):
                         main_image = src
 
-            # Текст статьи
             article_text = ""
             container = soup.find('article') or soup.find('main')
             if container:
@@ -464,7 +450,6 @@ class NewsBot:
             logger.error(f"Ошибка fetch_from_apnews: {e}")
         return items
 
-    # ========== ПУБЛИКАЦИЯ ==========
     async def publish_post(self, post_data: dict):
         try:
             title_en = post_data['title']
@@ -475,30 +460,23 @@ class NewsBot:
             
             logger.info(f"📝 Перевод: {title_en[:50]}...")
             
-            # Переводим
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, self.translate_text, title_en)
             content_ru = await loop.run_in_executor(None, self.translate_text, content_en)
             
-            # Экранируем для Markdown
             title_esc = html.escape(title_ru)
             content_esc = html.escape(content_ru)
             
-            # Сохраняем мета-информацию
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self.add_to_meta(post_id, source, url, title_en)
             logger.info(f"📄 Мета сохранена для {post_id}")
             
-            # Формируем сообщение
             message = f"📰 *{title_esc}*"
             
-            # Публикуем
             if image_url:
-                # Для фото: подпись ограничена 1000 символами
                 caption = self.truncate_by_paragraphs(content_esc, MAX_CAPTION_LEN)
                 full_caption = f"{message}\n\n{caption}"
                 
-                # Скачиваем фото
                 img_response = fetch_with_timeout(
                     lambda: requests.get(image_url, timeout=10),
                     10
@@ -512,7 +490,6 @@ class NewsBot:
                     )
                     logger.info(f"✅ Опубликовано с фото")
                 else:
-                    # Фото не загрузилось — отправляем текстом
                     text_message = self.truncate_by_paragraphs(f"{message}\n\n{content_esc}", MAX_MESSAGE_LEN)
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
@@ -520,9 +497,8 @@ class NewsBot:
                         parse_mode='Markdown',
                         disable_web_page_preview=False
                     )
-                    logger.info(f"✅ Опубликовано текстом (фото не загрузилось)")
+                    logger.info(f"✅ Опубликовано текстом")
             else:
-                # Без фото: текст до 4000 символов
                 text_message = self.truncate_by_paragraphs(f"{message}\n\n{content_esc}", MAX_MESSAGE_LEN)
                 await self.bot.send_message(
                     chat_id=CHANNEL_ID,
@@ -532,7 +508,6 @@ class NewsBot:
                 )
                 logger.info(f"✅ Опубликовано текстом")
             
-            # Отмечаем как отправленное
             self.mark_as_sent(url, title_en, content_en)
             self.log_post(url, title_en)
             
@@ -540,18 +515,11 @@ class NewsBot:
             if "Can't parse entities" in str(e):
                 logger.warning(f"⚠️ Ошибка Markdown, отправляем без форматирования")
                 try:
-                    if image_url:
-                        await self.bot.send_message(
-                            chat_id=CHANNEL_ID,
-                            text=f"📰 {title_ru}\n\n{content_ru}",
-                            parse_mode=None
-                        )
-                    else:
-                        await self.bot.send_message(
-                            chat_id=CHANNEL_ID,
-                            text=f"📰 {title_ru}\n\n{content_ru}",
-                            parse_mode=None
-                        )
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=f"📰 {title_ru}\n\n{content_ru}",
+                        parse_mode=None
+                    )
                     self.mark_as_sent(url, title_en, content_en)
                     self.log_post(url, title_en)
                 except Exception as e2:
@@ -572,13 +540,11 @@ class NewsBot:
         except Exception as e:
             logger.error(f"❌ Ошибка публикации: {e}")
 
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
         logger.info("🚀 Запуск сбора новостей...")
         
         all_posts = []
         
-        # AP News
         ap_posts = await self.fetch_from_apnews()
         all_posts.extend(ap_posts)
         logger.info(f"📊 AP News: {len(ap_posts)} новых статей")
@@ -607,7 +573,6 @@ class NewsBot:
                 logger.error(f"❌ Критическая ошибка: {e}")
                 await asyncio.sleep(300)
 
-# ========== ТОЧКА ВХОДА ==========
 async def main():
     if not TELEGRAM_TOKEN:
         logger.error("❌ TELEGRAM_TOKEN не задан!")
