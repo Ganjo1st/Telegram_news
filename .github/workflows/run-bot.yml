@@ -2,14 +2,12 @@ name: Run News Bot
 
 on:
   schedule:
-    # Каждый час в 15 минут (UTC)
-    - cron: '15 * * * *'
+    - cron: '*/30 * * * *'  # Каждые 30 минут для проверки
   workflow_dispatch:
 
 jobs:
   run-news-bot:
     runs-on: ubuntu-latest
-    # Добавляем права на запись
     permissions:
       contents: write
       
@@ -31,11 +29,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Create bots directory
-        run: |
-          mkdir -p bots
-          ls -la bots/
-      
       - name: Run News Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -45,40 +38,11 @@ jobs:
           MAX_POSTS_PER_DAY: '24'
           TIMEZONE_OFFSET: '7'
           REQUEST_TIMEOUT: '15'
-          TRANSLATION_TIMEOUT: '60'
-          PUBLISH_TIMEOUT: '30'
-          TOTAL_BOT_TIMEOUT: '240'
         run: python bots/news_bot.py
       
-      - name: Commit and push state and meta files
+      - name: Commit and push state files
         run: |
-          # Настраиваем git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Добавляем файлы состояния и мета
           git add state_news_bot.json posts_meta.json
-          
-          # Проверяем, есть ли изменения
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "✅ Нет изменений для коммита"
-          else
-            git commit -m "🤖 Update bot state and meta [skip ci]"
-            
-            # Пробуем запушить
-            if git push; then
-              echo "✅ Файлы состояния и мета успешно обновлены в репозитории"
-            else
-              echo "⚠️ Не удалось запушить, но файлы сохранены локально"
-            fi
-          fi
-      
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bot-logs
-          path: |
-            *.log
-            logs/
-          retention-days: 7
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Update state [skip ci]" && git push)
