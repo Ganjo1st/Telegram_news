@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram News Bot - Автоматические публикации новостей AP News
+Telegram News Bot - Автоматические публикации новостей
+Источники: AP News, InfoBrics, Global Research
 """
 
 import os
@@ -17,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
 import requests
+import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
@@ -57,16 +59,14 @@ def remove_ap(text: str) -> str:
     if not text:
         return text
     cleaned = re.sub(r'\(\s*[AaАа][PpРр]\s*\)', '', text)
-    cleaned = re.sub(r'\(AP\s+[^)]+\)', '', cleaned)  # (AP Photo/...)
+    cleaned = re.sub(r'\(AP\s+[^)]+\)', '', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         return requests.get(url, headers=headers, timeout=timeout)
     except Exception as e:
         logger.error(f"Ошибка запроса {url}: {e}")
@@ -76,7 +76,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 def extract_image_url(soup, base_url: str) -> str | None:
     """Извлекает URL изображения из страницы"""
     
-    # 1. Пробуем meta og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -86,42 +85,21 @@ def extract_image_url(soup, base_url: str) -> str | None:
             return urljoin(base_url, url)
         if url.startswith('http'):
             return url
-        logger.info(f"Найдено og:image: {url[:80]}...")
         return url
     
-    # 2. Ищем в article img с высоким разрешением
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
-        
-        # Пропускаем логотипы и иконки
         if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
             continue
         
-        # Пропускаем слишком маленькие изображения
-        width = img.get('width', '')
-        height = img.get('height', '')
-        if width and height:
-            try:
-                if int(width) < 200 and int(height) < 200:
-                    continue
-            except:
-                pass
-        
-        # Проверяем расширение
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
-                full_url = 'https:' + src
-            elif src.startswith('/'):
-                full_url = urljoin(base_url, src)
-            elif src.startswith('http'):
-                full_url = src
-            else:
-                continue
-            
-            logger.info(f"Найдено img: {full_url[:80]}...")
-            return full_url
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
     
-    # 3. Пробуем picture source
     picture = soup.find('picture')
     if picture:
         source = picture.find('source', srcset=True)
@@ -324,11 +302,10 @@ class NewsBot:
             return text
 
     # ========== ПАРСИНГ AP NEWS ==========
-    def _get_articles_list(self) -> list:
+    def _get_apnews_articles(self) -> list:
         try:
             resp = fetch_url('https://apnews.com/')
             if not resp or resp.status_code != 200:
-                logger.error("Не удалось получить главную страницу AP News")
                 return []
 
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -363,24 +340,20 @@ class NewsBot:
                 if a['url'] not in seen:
                     seen.add(a['url'])
                     unique.append(a)
-            
-            logger.info(f"Найдено статей на главной: {len(unique)}")
             return unique[:10]
         except Exception as e:
-            logger.error(f"Ошибка получения списка статей: {e}")
+            logger.error(f"Ошибка AP News: {e}")
             return []
 
-    def _parse_article(self, url: str) -> dict | None:
+    def _parse_apnews_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
-            if not resp or resp.status_code != 200:
-                logger.error(f"Не удалось загрузить статью: {url}")
+            if not resp:
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -392,16 +365,9 @@ class NewsBot:
             if not title:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
-            title = title.strip()
 
-            # Изображение
             image_url = extract_image_url(soup, base_url)
-            if image_url:
-                logger.info(f"✅ Найдено изображение: {image_url[:80]}...")
-            else:
-                logger.info("❌ Изображение не найдено")
 
-            # Текст статьи
             container = soup.find('article') or soup.find('main')
             paragraphs = []
             if container:
@@ -410,7 +376,6 @@ class NewsBot:
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 40:
-                        # Удаляем (AP Photo/...) из текста
                         text = re.sub(r'\(AP\s+[^)]+\)', '', text)
                         paragraphs.append(text)
 
@@ -423,39 +388,141 @@ class NewsBot:
             if len(content) < 200:
                 return None
 
-            return {
-                'title': title,
-                'content': content,
-                'image': image_url
-            }
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News'}
         except Exception as e:
-            logger.error(f"Ошибка парсинга статьи {url}: {e}")
+            logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
+    # ========== ПАРСИНГ INFOBRICS ==========
+    def _get_infobrics_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://infobrics.org/rss/en')
+            articles = []
+            for entry in feed.entries[:5]:
+                articles.append({'url': entry.link, 'title': entry.title})
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка InfoBrics RSS: {e}")
+            return []
+
+    def _parse_infobrics_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+
+            title = soup.find('h1')
+            title = title.get_text(strip=True) if title else "Без заголовка"
+
+            image_url = extract_image_url(soup, base_url)
+
+            container = soup.find('div', class_=re.compile(r'article__text|article-content'))
+            paragraphs = []
+            if container:
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30:
+                        paragraphs.append(text)
+
+            if len(paragraphs) < 2:
+                return None
+
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 200:
+                return None
+
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics'}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга InfoBrics: {e}")
+            return None
+
+    # ========== ПАРСИНГ GLOBAL RESEARCH ==========
+    def _get_globalresearch_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.globalresearch.ca/feed')
+            articles = []
+            for entry in feed.entries[:5]:
+                articles.append({'url': entry.link, 'title': entry.title})
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Global Research RSS: {e}")
+            return []
+
+    def _parse_globalresearch_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+
+            title = soup.find('h1')
+            title = title.get_text(strip=True) if title else "Без заголовка"
+
+            image_url = extract_image_url(soup, base_url)
+
+            container = soup.find('div', class_=re.compile(r'entry-content|post-content'))
+            paragraphs = []
+            if container:
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30:
+                        paragraphs.append(text)
+
+            if len(paragraphs) < 2:
+                return None
+
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 200:
+                return None
+
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research'}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Global Research: {e}")
+            return None
+
+    # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
-        articles = await asyncio.get_event_loop().run_in_executor(None, self._get_articles_list)
-
-        for article in articles[:5]:
-            url = article['url']
-            title = article['title']
-
-            if self._is_duplicate(url, title):
-                logger.info(f"Дубликат: {title[:40]}...")
+        
+        # 1. AP News
+        logger.info("📰 Парсинг AP News...")
+        ap_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
+        for article in ap_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
                 continue
-
-            logger.info(f"🔍 Парсинг: {title[:50]}...")
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_article, url)
-
-            if data and not self._is_duplicate(url, title, data['content']):
-                items.append({
-                    'title': data['title'],
-                    'content': data['content'],
-                    'url': url,
-                    'image': data.get('image')
-                })
-                logger.info(f"✅ Добавлена статья: {data['title'][:50]}...")
-
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ AP News: {data['title'][:50]}...")
+        
+        # 2. InfoBrics
+        logger.info("📰 Парсинг InfoBrics...")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for article in ib_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+        
+        # 3. Global Research
+        logger.info("📰 Парсинг Global Research...")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+        
+        logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
@@ -463,8 +530,22 @@ class NewsBot:
         try:
             title_en = post['title']
             content_en = post['content']
-            url = post['url']
+            url = None
+            source = post.get('source', '')
             image_url = post.get('image')
+
+            # URL не всегда есть в post, нужно найти
+            for source_func in [self._get_apnews_articles, self._get_infobrics_articles, self._get_globalresearch_articles]:
+                articles = source_func()
+                for a in articles:
+                    if a['title'] == title_en or a['title'][:50] == title_en[:50]:
+                        url = a['url']
+                        break
+                if url:
+                    break
+
+            if not url:
+                url = f"https://{source.lower().replace(' ', '')}.com"
 
             logger.info(f"📝 Перевод: {title_en[:50]}...")
 
@@ -473,7 +554,7 @@ class NewsBot:
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, 'AP News', url, title_en)
+            self._add_to_meta(post_id, source, url, title_en)
 
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
@@ -541,7 +622,6 @@ class NewsBot:
         logger.info("=" * 50)
 
         news = await self.fetch_news()
-        logger.info(f"📊 Найдено новых статей: {len(news)}")
 
         if not news:
             logger.info("📭 Новых статей нет")
