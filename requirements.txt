@@ -1,22 +1,6 @@
-# Основные зависимости
 requests==2.31.0
-beautifulsoup4==4.12.2
+beautifulsoup4==4.12.3
 feedparser==6.0.10
-lxml==5.1.0
-
-# Telegram
 python-telegram-bot==20.7
-
-# Перевод
 deep-translator==1.11.4
-
-# Асинхронность
-aiohttp==3.9.1
-httpx==0.25.2
-
-# Утилиты
-charset-normalizer==3.3.2
-idna==3.7
-urllib3==1.26.18
-certifi==2024.2.2
-pytz==2024.1
+lxml==4.9.4
