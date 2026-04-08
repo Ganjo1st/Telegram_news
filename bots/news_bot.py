@@ -58,7 +58,6 @@ def remove_ap(text: str) -> str:
     """Удаляет любые скобки с AP, AP News, Associated Press и т.д."""
     if not text:
         return text
-    # Удаляем (AP), (AP News), (Associated Press) и варианты на русском
     cleaned = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'\([^)]*Associated Press[^)]*\)', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\([^)]*Ассошиэйтед Пресс[^)]*\)', '', cleaned, flags=re.IGNORECASE)
@@ -286,28 +285,23 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения (.!?) в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
                 return text[:last + 1].strip()
 
-        # Если нет конца предложения, обрезаем по слову без троеточия
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             return text[:last_space].strip()
 
-        # Крайний случай: просто обрезаем
         return text[:max_len].strip()
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         truncated = self._truncate_to_last_sentence(text, max_len)
         
-        # Дополнительная проверка: если первый абзац слишком короткий, добавляем второй
         paragraphs = truncated.split('\n\n')
         if len(paragraphs) == 1 and len(paragraphs[0]) < 200 and len(paragraphs[0]) < len(text) * 0.5:
-            # Первый абзац слишком короткий - пробуем добавить второй
             second_para_start = text.find('\n\n', len(paragraphs[0]))
             if second_para_start != -1:
                 second_para_end = text.find('\n\n', second_para_start + 2)
@@ -428,23 +422,20 @@ class NewsBot:
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
-        """Получает список статей с InfoBrics через RSS с корректными заголовками"""
+        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
             for entry in feed.entries[:5]:
-                # Извлекаем реальный заголовок из entry
                 title = entry.get('title', '')
                 if not title or title == '{[title]}':
-                    # Пробуем получить заголовок из summary
                     summary = entry.get('summary', '')
                     if summary:
-                        # Извлекаем первый абзац как заголовок
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 
                 if not title or len(title) < 5:
-                    title = f"InfoBrics Article {entry.get('link', '')[-10:]}"
+                    title = f"InfoBrics Article"
                 
                 articles.append({
                     'url': entry.link, 
@@ -466,39 +457,62 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка h1
+            # РАСШИРЕННЫЙ ПОИСК ЗАГОЛОВКА
             title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
             
-            # Если не нашли, ищем в meta
-            if not title:
-                meta_title = soup.find('meta', property='og:title')
-                if meta_title and meta_title.get('content'):
-                    title = meta_title['content']
+            # 1. Пробуем meta og:title
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content']
             
+            # 2. Пробуем meta twitter:title
             if not title:
-                title = "InfoBrics Article"
+                twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
+                if twitter_title and twitter_title.get('content'):
+                    title = twitter_title['content']
+            
+            # 3. Пробуем h1
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+            
+            # 4. Пробуем h2 с классами
+            if not title:
+                for h2 in soup.find_all(['h2', 'h3']):
+                    text = h2.get_text(strip=True)
+                    if len(text) > 10 and len(text) < 200:
+                        title = text
+                        break
+            
+            # 5. Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    title = re.sub(r'\s*[|-]\s*InfoBrics.*$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'\s*[|-]\s*INFOBRICS.*$', '', title, flags=re.IGNORECASE)
+            
+            if not title or title == '{[title]}':
+                title = url.split('/')[-1].replace('-', ' ').title()
             
             title = title.strip()
-            # Удаляем возможные шаблонные заголовки
-            if title == '{[title]}' or title == '{[title]}':
-                title = "InfoBrics News"
-            
             logger.info(f"Парсинг InfoBrics: заголовок '{title[:50]}'")
 
             image_url = extract_image_url(soup, base_url)
 
             # Поиск контента
             container = None
-            for class_name in ['article__text', 'article-content', 'content', 'post-content', 'entry-content']:
+            for class_name in ['article__text', 'article-content', 'content', 'post-content', 'entry-content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     break
             
             if not container:
                 container = soup.find('article')
+            
+            if not container:
+                container = soup.find('main')
             
             paragraphs = []
             if container:
@@ -508,15 +522,6 @@ class NewsBot:
                     text = p.get_text(strip=True)
                     if len(text) > 30 and not text.startswith('Read more'):
                         paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                # Пробуем найти контент в main
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if len(text) > 30:
-                            paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 logger.warning(f"InfoBrics: недостаточно контента для {url}")
@@ -541,7 +546,7 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '')
                 if not title:
-                    title = f"Global Research Article {entry.get('link', '')[-10:]}"
+                    title = f"Global Research Article"
                 
                 articles.append({
                     'url': entry.link, 
@@ -563,16 +568,41 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка
+            # РАСШИРЕННЫЙ ПОИСК ЗАГОЛОВКА
             title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
             
+            # 1. Пробуем meta og:title
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content']
+            
+            # 2. Пробуем meta twitter:title
             if not title:
-                meta_title = soup.find('meta', property='og:title')
-                if meta_title and meta_title.get('content'):
-                    title = meta_title['content']
+                twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
+                if twitter_title and twitter_title.get('content'):
+                    title = twitter_title['content']
+            
+            # 3. Пробуем h1 с классами
+            if not title:
+                for h1 in soup.find_all('h1'):
+                    text = h1.get_text(strip=True)
+                    if len(text) > 10 and len(text) < 200:
+                        title = text
+                        break
+            
+            # 4. Пробуем entry-title класс
+            if not title:
+                entry_title = soup.find(class_=re.compile(r'entry-title|post-title|article-title'))
+                if entry_title:
+                    title = entry_title.get_text(strip=True)
+            
+            # 5. Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    title = re.sub(r'\s*[|-]\s*Global Research.*$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'\s*[|-]\s*globalresearch.*$', '', title, flags=re.IGNORECASE)
             
             if not title:
                 title = "Global Research Article"
@@ -584,13 +614,16 @@ class NewsBot:
 
             # Поиск контента
             container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content']:
+            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     break
             
             if not container:
                 container = soup.find('article')
+            
+            if not container:
+                container = soup.find('main')
             
             paragraphs = []
             if container:
@@ -600,14 +633,6 @@ class NewsBot:
                     text = p.get_text(strip=True)
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if len(text) > 30:
-                            paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 logger.warning(f"Global Research: недостаточно контента для {url}")
@@ -686,124 +711,4 @@ class NewsBot:
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
 
-            # Сохраняем мета-информацию с превью контента
-            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
-            
-            # Логируем сохранение метаданных
-            logger.info(f"💾 Метаданные сохранены для {post.get('source', 'Unknown')}: {post_id}")
-
-            # Экранируем заголовок и обрезаем текст
-            title_escaped = html.escape(title_ru)
-            content_truncated = self._truncate_text(content_ru, is_caption=True)
-            
-            # Формируем сообщение
-            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
-
-            # Публикация с фото
-            if image_url:
-                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
-                img_response = fetch_url(image_url, timeout=15)
-                
-                if img_response and img_response.status_code == 200:
-                    content_type = img_response.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en)
-                            self._log_post(url, title_en)
-                            return
-                        except TelegramError as e:
-                            logger.warning(f"Ошибка отправки фото: {e}")
-                    else:
-                        logger.warning(f"URL не ведёт на изображение: {content_type}")
-                else:
-                    logger.warning("Не удалось загрузить изображение")
-
-            # Фолбэк: публикация текстом
-            logger.info("📝 Публикация текстом (без фото)")
-            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
-            await self.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text_message,
-                parse_mode='Markdown',
-                disable_web_page_preview=False
-            )
-            logger.info("✅ Опубликовано ТЕКСТОМ")
-
-            self._mark_sent(url, title_en, content_en)
-            self._log_post(url, title_en)
-
-        except TelegramError as e:
-            error_msg = str(e)
-            if "Can't parse entities" in error_msg:
-                logger.warning("Ошибка Markdown, отправляем без форматирования")
-                try:
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=f"📰 {title_ru}\n\n{content_ru}",
-                        parse_mode=None
-                    )
-                    self._mark_sent(url, title_en, content_en)
-                    self._log_post(url, title_en)
-                except Exception as e2:
-                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
-            else:
-                logger.error(f"❌ Ошибка Telegram: {e}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка публикации: {e}")
-
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
-    async def run_once(self):
-        logger.info("=" * 50)
-        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
-        logger.info("=" * 50)
-
-        news = await self.fetch_news()
-
-        if not news:
-            logger.info("📭 Новых статей нет")
-            return
-
-        if not self._can_post():
-            logger.info("⏸️ Публикация отложена (ограничения)")
-            return
-
-        await self.publish(news[0])
-
-    async def run_forever(self):
-        logger.info("🤖 Бот запущен в бесконечном режиме")
-        while True:
-            try:
-                await self.run_once()
-                delay = self._next_delay()
-                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка: {e}")
-                await asyncio.sleep(300)
-
-
-async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан!")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан!")
-        return
-
-    bot = NewsBot()
-    if 'GITHUB_ACTIONS' in os.environ:
-        await bot.run_once()
-    else:
-        await bot.run_forever()
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+            # Сохраняем мета-информацию с
