@@ -1,11 +1,14 @@
 {
   "sent_links": [
-    "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f"
+    "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f",
+    "https://apnews.com/article/trump-iran-deadline-final-strait-hormuz-1c0894ef4a2c2feaabc326cc68571c33"
   ],
   "sent_hashes": [
-    "632c10f0015b3ab2a6229a53a51ec287"
+    "632c10f0015b3ab2a6229a53a51ec287",
+    "72a42dc3eff03852083c9f64dcb26b97"
   ],
   "sent_titles": [
+    "how trumps deadline delays threats escalated leading up 2week ceasefire iran",
     "us iran agree 2week ceasefire as trump pulls back threats"
   ],
   "posts_log": [
@@ -13,6 +16,11 @@
       "link": "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f",
       "title": "US and Iran agree to 2-week ceasefire as Trump pul",
       "time": "2026-04-08T10:53:53.360184+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/trump-iran-deadline-final-strait-hormuz-1c0894ef4a2c2feaabc326cc68571c33",
+      "title": "How Trump's deadline delays and threats escalated ",
+      "time": "2026-04-08T11:46:04.271077+00:00"
     }
   ]
 }
