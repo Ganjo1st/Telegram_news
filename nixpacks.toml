@@ -1,8 +1,17 @@
 [phases.setup]
-nixPkgs = ['python311', 'chromium', 'chromedriver', 'chromium-headless', 'openssl']
+nixPkgs = ["python311"]
 
 [phases.install]
-cmds = ['pip install -r requirements.txt']
+cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = 'python bot.py'
+cmd = "python bots/news_bot.py"
+
+[variables]
+TELEGRAM_TOKEN = ""
+CHANNEL_ID = ""
+MIN_POST_INTERVAL = "2100"
+MAX_POST_INTERVAL = "7200"
+MAX_POSTS_PER_DAY = "24"
+TIMEZONE_OFFSET = "7"
+REQUEST_TIMEOUT = "15"
