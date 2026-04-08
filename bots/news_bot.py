@@ -55,11 +55,13 @@ def get_local_time() -> datetime:
 
 
 def remove_ap(text: str) -> str:
-    """Удаляет (AP), (АР) и подобное из текста"""
+    """Удаляет любые скобки с AP, AP News, Associated Press и т.д."""
     if not text:
         return text
-    cleaned = re.sub(r'\(\s*[AaАа][PpРр]\s*\)', '', text)
-    cleaned = re.sub(r'\(AP\s+[^)]+\)', '', cleaned)
+    # Удаляем (AP), (AP News), (Associated Press) и варианты на русском
+    cleaned = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\([^)]*Associated Press[^)]*\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\([^)]*Ассошиэйтед Пресс[^)]*\)', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
@@ -175,11 +177,12 @@ class NewsBot:
         except Exception as e:
             logger.error(f"Ошибка сохранения мета: {e}")
 
-    def _add_to_meta(self, post_id: str, source: str, url: str, title: str):
+    def _add_to_meta(self, post_id: str, source: str, url: str, title: str, content_preview: str = ""):
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
             'original_title': title,
+            'original_content_preview': content_preview[:500],
             'time': get_local_time().isoformat()
         }
         self._save_meta()
@@ -271,23 +274,43 @@ class NewsBot:
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
+        """Обрезает текст до последнего предложения в пределах max_len, без троеточия"""
         if len(text) <= max_len:
             return text
 
+        # Ищем конец предложения (.!?) в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
                 return text[:last + 1].strip()
 
+        # Если нет конца предложения, обрезаем по слову без троеточия
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
-            return text[:last_space].strip() + "..."
+            return text[:last_space].strip()
 
-        return text[:max_len - 3].strip() + "..."
+        # Крайний случай: просто обрезаем
+        return text[:max_len].strip()
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        return self._truncate_to_last_sentence(text, max_len)
+        truncated = self._truncate_to_last_sentence(text, max_len)
+        
+        # Дополнительная проверка: если первый абзац слишком короткий, добавляем второй
+        paragraphs = truncated.split('\n\n')
+        if len(paragraphs) == 1 and len(paragraphs[0]) < 200 and len(paragraphs[0]) < len(text) * 0.5:
+            # Первый абзац слишком короткий - пробуем добавить второй
+            second_para_start = text.find('\n\n', len(paragraphs[0]))
+            if second_para_start != -1:
+                second_para_end = text.find('\n\n', second_para_start + 2)
+                if second_para_end == -1:
+                    second_para_end = len(text)
+                additional = text[second_para_start:second_para_end]
+                combined = truncated + '\n\n' + additional
+                if len(combined) <= max_len:
+                    return self._truncate_to_last_sentence(combined, max_len)
+        
+        return truncated
 
     def _translate(self, text: str) -> str:
         if not text or len(text) < 10:
@@ -377,8 +400,9 @@ class NewsBot:
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 40:
-                        text = re.sub(r'\(AP\s+[^)]+\)', '', text)
-                        paragraphs.append(text)
+                        text = remove_ap(text)  # Очищаем каждый абзац от AP
+                        if text:  # Если после удаления остался текст
+                            paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 return None
@@ -386,7 +410,7 @@ class NewsBot:
             content = '\n\n'.join(paragraphs)
             content = remove_ap(content)
 
-            if len(content) < 200:
+            if len(content) < 150:
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News', 'url': url}
@@ -546,9 +570,14 @@ class NewsBot:
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
-            # Сохраняем мета-информацию
+            # Дополнительная очистка от упоминаний источников
+            content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
+            content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
+            content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
+
+            # Сохраняем мета-информацию с превью контента
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en)
+            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
             # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
