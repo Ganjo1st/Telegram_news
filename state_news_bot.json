@@ -1,6 +1,18 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": []
+  "sent_links": [
+    "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f"
+  ],
+  "sent_hashes": [
+    "632c10f0015b3ab2a6229a53a51ec287"
+  ],
+  "sent_titles": [
+    "us iran agree 2week ceasefire as trump pulls back threats"
+  ],
+  "posts_log": [
+    {
+      "link": "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f",
+      "title": "US and Iran agree to 2-week ceasefire as Trump pul",
+      "time": "2026-04-08T10:53:53.360184+00:00"
+    }
+  ]
 }
