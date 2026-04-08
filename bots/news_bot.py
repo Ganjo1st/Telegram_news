@@ -169,7 +169,10 @@ class NewsBot:
             cutoff = get_local_time() - timedelta(days=30)
             cleaned = {}
             for pid, data in self.meta.get('posts', {}).items():
-                if datetime.fromisoformat(data.get('time', '')) > cutoff:
+                try:
+                    if datetime.fromisoformat(data.get('time', '')) > cutoff:
+                        cleaned[pid] = data
+                except:
                     cleaned[pid] = data
             self.meta['posts'] = cleaned
             with open(META_FILE, 'w', encoding='utf-8') as f:
@@ -178,14 +181,16 @@ class NewsBot:
             logger.error(f"Ошибка сохранения мета: {e}")
 
     def _add_to_meta(self, post_id: str, source: str, url: str, title: str, content_preview: str = ""):
+        """Сохраняет метаданные статьи в posts_meta.json"""
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
             'original_title': title,
-            'original_content_preview': content_preview[:500],
+            'original_content_preview': content_preview[:500] if content_preview else "",
             'time': get_local_time().isoformat()
         }
         self._save_meta()
+        logger.info(f"📝 Метаданные сохранены: {source} - {title[:50]}...")
 
     def _normalize_title(self, title: str) -> str:
         if not title:
@@ -204,13 +209,16 @@ class NewsBot:
 
     def _is_duplicate(self, url: str, title: str, content: str = "") -> bool:
         if url in self.state['sent_links']:
+            logger.info(f"Дубликат по URL: {url[:50]}...")
             return True
         norm_title = self._normalize_title(title)
         if norm_title and norm_title in self.state['sent_titles']:
+            logger.info(f"Дубликат по заголовку: {title[:50]}...")
             return True
         if content:
             h = self._hash_content(content)
             if h and h in self.state['sent_hashes']:
+                logger.info(f"Дубликат по содержимому: {title[:50]}...")
                 return True
         return False
 
@@ -400,8 +408,8 @@ class NewsBot:
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 40:
-                        text = remove_ap(text)  # Очищаем каждый абзац от AP
-                        if text:  # Если после удаления остался текст
+                        text = remove_ap(text)
+                        if text:
                             paragraphs.append(text)
 
             if len(paragraphs) < 2:
@@ -420,17 +428,36 @@ class NewsBot:
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
+        """Получает список статей с InfoBrics через RSS с корректными заголовками"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
             for entry in feed.entries[:5]:
-                articles.append({'url': entry.link, 'title': entry.title})
+                # Извлекаем реальный заголовок из entry
+                title = entry.get('title', '')
+                if not title or title == '{[title]}':
+                    # Пробуем получить заголовок из summary
+                    summary = entry.get('summary', '')
+                    if summary:
+                        # Извлекаем первый абзац как заголовок
+                        title = re.sub(r'<[^>]+>', '', summary)
+                        title = title.split('.')[0][:100]
+                
+                if not title or len(title) < 5:
+                    title = f"InfoBrics Article {entry.get('link', '')[-10:]}"
+                
+                articles.append({
+                    'url': entry.link, 
+                    'title': title.strip()
+                })
+                logger.info(f"InfoBrics RSS: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
             logger.error(f"Ошибка InfoBrics RSS: {e}")
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью InfoBrics"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -439,25 +466,65 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            title = soup.find('h1')
-            title = title.get_text(strip=True) if title else "Без заголовка"
+            # Поиск заголовка h1
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            
+            # Если не нашли, ищем в meta
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            
+            if not title:
+                title = "InfoBrics Article"
+            
             title = title.strip()
+            # Удаляем возможные шаблонные заголовки
+            if title == '{[title]}' or title == '{[title]}':
+                title = "InfoBrics News"
+            
+            logger.info(f"Парсинг InfoBrics: заголовок '{title[:50]}'")
 
             image_url = extract_image_url(soup, base_url)
 
-            container = soup.find('div', class_=re.compile(r'article__text|article-content'))
+            # Поиск контента
+            container = None
+            for class_name in ['article__text', 'article-content', 'content', 'post-content', 'entry-content']:
+                container = soup.find('div', class_=re.compile(class_name))
+                if container:
+                    break
+            
+            if not container:
+                container = soup.find('article')
+            
             paragraphs = []
             if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
-                    if len(text) > 30:
+                    if len(text) > 30 and not text.startswith('Read more'):
                         paragraphs.append(text)
 
             if len(paragraphs) < 2:
+                # Пробуем найти контент в main
+                main = soup.find('main')
+                if main:
+                    for p in main.find_all('p'):
+                        text = p.get_text(strip=True)
+                        if len(text) > 30:
+                            paragraphs.append(text)
+
+            if len(paragraphs) < 2:
+                logger.warning(f"InfoBrics: недостаточно контента для {url}")
                 return None
 
             content = '\n\n'.join(paragraphs)
-            if len(content) < 200:
+            if len(content) < 150:
+                logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
@@ -467,17 +534,27 @@ class NewsBot:
 
     # ========== ПАРСИНГ GLOBAL RESEARCH ==========
     def _get_globalresearch_articles(self) -> list:
+        """Получает список статей с Global Research через RSS"""
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
             for entry in feed.entries[:5]:
-                articles.append({'url': entry.link, 'title': entry.title})
+                title = entry.get('title', '')
+                if not title:
+                    title = f"Global Research Article {entry.get('link', '')[-10:]}"
+                
+                articles.append({
+                    'url': entry.link, 
+                    'title': title.strip()
+                })
+                logger.info(f"Global Research RSS: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
             logger.error(f"Ошибка Global Research RSS: {e}")
             return []
 
     def _parse_globalresearch_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью Global Research"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -486,25 +563,59 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            title = soup.find('h1')
-            title = title.get_text(strip=True) if title else "Без заголовка"
+            # Поиск заголовка
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            
+            if not title:
+                title = "Global Research Article"
+            
             title = title.strip()
+            logger.info(f"Парсинг Global Research: заголовок '{title[:50]}'")
 
             image_url = extract_image_url(soup, base_url)
 
-            container = soup.find('div', class_=re.compile(r'entry-content|post-content'))
+            # Поиск контента
+            container = None
+            for class_name in ['entry-content', 'post-content', 'content', 'article-content']:
+                container = soup.find('div', class_=re.compile(class_name))
+                if container:
+                    break
+            
+            if not container:
+                container = soup.find('article')
+            
             paragraphs = []
             if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
-                    if len(text) > 30:
+                    if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
 
             if len(paragraphs) < 2:
+                main = soup.find('main')
+                if main:
+                    for p in main.find_all('p'):
+                        text = p.get_text(strip=True)
+                        if len(text) > 30:
+                            paragraphs.append(text)
+
+            if len(paragraphs) < 2:
+                logger.warning(f"Global Research: недостаточно контента для {url}")
                 return None
 
             content = '\n\n'.join(paragraphs)
-            if len(content) < 200:
+            if len(content) < 150:
+                logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
@@ -578,6 +689,9 @@ class NewsBot:
             # Сохраняем мета-информацию с превью контента
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+            
+            # Логируем сохранение метаданных
+            logger.info(f"💾 Метаданные сохранены для {post.get('source', 'Unknown')}: {post_id}")
 
             # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
