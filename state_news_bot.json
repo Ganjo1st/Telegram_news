@@ -1,46 +1,48 @@
 {
   "sent_links": [
-    "https://infobrics.org/en/post/90330/",
-    "https://apnews.com/article/iran-us-israel-trump-lebanon-april-8-2026-38d75d5e4f1c7339a1456fc99415bb2a",
-    "https://apnews.com/article/trump-iran-deadline-final-strait-hormuz-1c0894ef4a2c2feaabc326cc68571c33",
-    "https://apnews.com/article/toddler-injury-hersheypark-zoo-wolf-pennsylvania-992d2ab64bf6808ac2abebe1648976c1",
     "https://apnews.com/article/iran-us-israel-trump-lebanon-april-7-2026-421ee64fdc9a5c26460df8119c7d1b3f",
-    "https://apnews.com/article/israel-lebanon-hezbollah-beirut-strikes-9402965418687c634d4a157c966ec6ea",
     "https://apnews.com/article/un-iran-us-strait-hormuz-bahrain-resolution-640e644b57df5c762ed9c57ef87b0427",
     "https://apnews.com/article/iran-us-israel-war-ceasefire-takeaways-e53287f7594521f125dc1d6014c03a05",
+    "https://apnews.com/article/israel-lebanon-hezbollah-beirut-strikes-9402965418687c634d4a157c966ec6ea",
+    "https://apnews.com/article/toddler-injury-hersheypark-zoo-wolf-pennsylvania-992d2ab64bf6808ac2abebe1648976c1",
+    "https://apnews.com/article/trump-iran-deadline-final-strait-hormuz-1c0894ef4a2c2feaabc326cc68571c33",
     "https://apnews.com/article/pope-leo-iran-trump-threat-unacceptable-332059536d7c4d6071c8f5abb35d8c8d",
+    "https://apnews.com/article/army-soldier-immigration-wife-d1fe382267b3fee20d68eda0dddda42a",
+    "https://apnews.com/article/iran-us-israel-trump-lebanon-april-8-2026-38d75d5e4f1c7339a1456fc99415bb2a",
     "https://infobrics.org/en/post/90316/",
     "https://infobrics.org/en/post/90174/",
+    "https://infobrics.org/en/post/90305/",
     "https://apnews.com/article/journalist-kidnapped-iraq-shelly-kittleson-3e1a3a8e96656629abd1152c098e9caf",
-    "https://apnews.com/article/army-soldier-immigration-wife-d1fe382267b3fee20d68eda0dddda42a"
+    "https://infobrics.org/en/post/90330/"
   ],
   "sent_hashes": [
-    "3660fa42608f97bf3dd3cf245952f174",
-    "a80e768a69351cf5ddd8d4f8e73c3282",
-    "b2bf668bd975eb261ab12d6c9f8bf0d3",
+    "72a42dc3eff03852083c9f64dcb26b97",
     "b18e62b2eb5f59d14a711d502bf8af91",
-    "60a92a1e3c14d487e1726d2712fdd17b",
-    "e18b79a86ef2352c42b6085832443108",
     "3e1ba28bc25ecd5c6a8843365479382c",
+    "b2bf668bd975eb261ab12d6c9f8bf0d3",
+    "a80e768a69351cf5ddd8d4f8e73c3282",
+    "3660fa42608f97bf3dd3cf245952f174",
+    "6317ad758a0b24c39ec7aab64379453d",
+    "bd800139d42f61a83d1e8ac562ec98ec",
     "fffdb393bf78cccea3958821d1555a3f",
     "632c10f0015b3ab2a6229a53a51ec287",
     "d07ef317438005166b70fb06fecf1bc2",
-    "72a42dc3eff03852083c9f64dcb26b97",
-    "bd800139d42f61a83d1e8ac562ec98ec",
-    "6317ad758a0b24c39ec7aab64379453d"
+    "b798c66de1eedc105088a7ed192f7de0",
+    "60a92a1e3c14d487e1726d2712fdd17b",
+    "e18b79a86ef2352c42b6085832443108"
   ],
   "sent_titles": [
-    "how trumps deadline delays threats escalated leading up 2week ceasefire iran",
     "wife us soldier released from federal immigration detention",
+    "least 182 killed as israel strikes central beirut after saying iran truce doesnt apply there",
+    "how trumps deadline delays threats escalated leading up 2week ceasefire iran",
     "pope says trumps threat destroy iranian civilization is truly unacceptable",
+    "parents charged after toddler slips into wolf area gets hurt hersheypark zoo",
     "american journalist shelly kittleson has been released week after kidnapping iraq rubio says",
-    "russia china veto watereddown un resolution aimed reopening strait hormuz",
     "ceasefire is threatened as israel expands lebanon strikes iran closes strait again",
     "us iran agree 2week ceasefire as trump pulls back threats",
-    "parents charged after toddler slips into wolf area gets hurt hersheypark zoo",
-    "least 182 killed as israel strikes central beirut after saying iran truce doesnt apply there",
+    "heres where things stand after tentative 2week iran ceasefire took effect",
     "brics portal",
-    "heres where things stand after tentative 2week iran ceasefire took effect"
+    "russia china veto watereddown un resolution aimed reopening strait hormuz"
   ],
   "posts_log": [
     {
@@ -107,6 +109,11 @@
       "link": "https://apnews.com/article/iran-us-israel-war-ceasefire-takeaways-e53287f7594521f125dc1d6014c03a05",
       "title": "Here's where things stand after a tentative, 2-wee",
       "time": "2026-04-09T12:30:20.611240+00:00"
+    },
+    {
+      "link": "https://infobrics.org/en/post/90305/",
+      "title": "BRICS portal",
+      "time": "2026-04-09T14:03:38.105379+00:00"
     }
   ]
 }
