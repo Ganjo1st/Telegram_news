@@ -1,7 +1,21 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": [],
-  "used_images": []
+  "sent_links": [
+    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7"
+  ],
+  "sent_hashes": [
+    "eb1c283df834a95714184541a33b6229"
+  ],
+  "sent_titles": [
+    "mexico city is sinking so quickly it can be seen from space"
+  ],
+  "posts_log": [
+    {
+      "link": "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
+      "title": "Mexico City is sinking so quickly, it can be seen ",
+      "time": "2026-05-02T20:27:51.947539+00:00"
+    }
+  ],
+  "used_images": [
+    "7c555194bb055ba839c50d7feb2c1035"
+  ]
 }
