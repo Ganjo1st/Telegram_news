@@ -1,21 +1,30 @@
 {
   "sent_links": [
+    "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
     "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7"
   ],
   "sent_hashes": [
-    "eb1c283df834a95714184541a33b6229"
+    "eb1c283df834a95714184541a33b6229",
+    "f30b5b8de034401438a0206bf90f1c60"
   ],
   "sent_titles": [
-    "mexico city is sinking so quickly it can be seen from space"
+    "mexico city is sinking so quickly it can be seen from space",
+    "king charles iii wins praise deft handling trump his us state visit"
   ],
   "posts_log": [
     {
       "link": "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
       "title": "Mexico City is sinking so quickly, it can be seen ",
       "time": "2026-05-02T20:27:51.947539+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
+      "title": "King Charles III wins praise for deft handling of ",
+      "time": "2026-05-02T21:15:36.517412+00:00"
     }
   ],
   "used_images": [
+    "635f2b307a732e9363d8df8a608210a6",
     "7c555194bb055ba839c50d7feb2c1035"
   ]
 }
