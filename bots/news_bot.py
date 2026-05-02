@@ -15,7 +15,7 @@ import re
 import html
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 import feedparser
@@ -48,6 +48,10 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
+# Для кэширования изображений
+IMAGE_CACHE = {}
+IMAGE_HASH_CACHE = set()
+
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
@@ -74,24 +78,78 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 
-def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из страницы"""
+def hash_image_url(url: str) -> str:
+    """Создает хэш URL изображения для проверки дубликатов"""
+    return hashlib.md5(url.encode('utf-8')).hexdigest()
+
+
+def is_image_duplicate(image_url: str) -> bool:
+    """Проверяет, использовалось ли это изображение ранее"""
+    if not image_url:
+        return True
+    img_hash = hash_image_url(image_url)
+    return img_hash in IMAGE_HASH_CACHE
+
+
+def mark_image_used(image_url: str):
+    """Отмечает изображение как использованное"""
+    if image_url:
+        img_hash = hash_image_url(image_url)
+        IMAGE_HASH_CACHE.add(img_hash)
+
+
+def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | None:
+    """Улучшенное извлечение URL изображения из страницы с множеством вариантов"""
     
+    # 1. Пробуем Open Graph image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
-        url = meta_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
-        return url
+        img_url = meta_img['content']
+        if img_url.startswith('//'):
+            img_url = 'https:' + img_url
+        elif img_url.startswith('/'):
+            img_url = urljoin(base_url, img_url)
+        if img_url.startswith('http'):
+            return img_url
     
+    # 2. Пробуем Twitter image
+    twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
+    if twitter_img and twitter_img.get('content'):
+        img_url = twitter_img['content']
+        if img_url.startswith('//'):
+            img_url = 'https:' + img_url
+        elif img_url.startswith('/'):
+            img_url = urljoin(base_url, img_url)
+        if img_url.startswith('http'):
+            return img_url
+    
+    # 3. Ищем article image
+    article_img = soup.find('meta', attrs={'name': 'article:image'})
+    if article_img and article_img.get('content'):
+        img_url = article_img['content']
+        if img_url.startswith('//'):
+            img_url = 'https:' + img_url
+        elif img_url.startswith('/'):
+            img_url = urljoin(base_url, img_url)
+        if img_url.startswith('http'):
+            return img_url
+    
+    # 4. Ищем большие изображения в тегах img
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
+        # Пропускаем иконки, логотипы, аватары
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'button', 'pixel']):
             continue
+        
+        # Проверяем размеры изображения, если есть
+        width = img.get('width', '')
+        height = img.get('height', '')
+        if width and height:
+            try:
+                if int(width) < 200 or int(height) < 200:
+                    continue
+            except:
+                pass
         
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
@@ -101,6 +159,20 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if src.startswith('http'):
                 return src
     
+    # 5. Ищем в figure
+    figure = soup.find('figure')
+    if figure:
+        img = figure.find('img')
+        if img and img.get('src'):
+            src = img['src']
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
+    
+    # 6. Ищем в picture
     picture = soup.find('picture')
     if picture:
         source = picture.find('source', srcset=True)
@@ -115,6 +187,23 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 if first_url.startswith('http'):
                     return first_url
     
+    # 7. Если есть URL статьи, пробуем получить изображение через другие методы
+    if url:
+        # Некоторые сайты хранят изображение в JSON-LD
+        script = soup.find('script', type='application/ld+json')
+        if script:
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict):
+                    if 'image' in data:
+                        img = data['image']
+                        if isinstance(img, str) and img.startswith('http'):
+                            return img
+                        elif isinstance(img, dict) and 'url' in img:
+                            return img['url']
+            except:
+                pass
+    
     return None
 
 
@@ -125,6 +214,21 @@ class NewsBot:
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
+        self._load_image_cache()
+
+    def _load_image_cache(self):
+        """Загружает кэш использованных изображений из state файла"""
+        global IMAGE_HASH_CACHE
+        if 'used_images' in self.state:
+            IMAGE_HASH_CACHE = set(self.state['used_images'])
+        else:
+            self.state['used_images'] = []
+            IMAGE_HASH_CACHE = set()
+
+    def _save_image_cache(self):
+        """Сохраняет кэш изображений в state"""
+        self.state['used_images'] = list(IMAGE_HASH_CACHE)
+        self._save_state()
 
     def _load_state(self) -> dict:
         try:
@@ -135,11 +239,12 @@ class NewsBot:
                         'sent_links': set(data.get('sent_links', [])),
                         'sent_hashes': set(data.get('sent_hashes', [])),
                         'sent_titles': set(data.get('sent_titles', [])),
-                        'posts_log': data.get('posts_log', [])
+                        'posts_log': data.get('posts_log', []),
+                        'used_images': data.get('used_images', [])
                     }
         except Exception as e:
             logger.error(f"Ошибка загрузки состояния: {e}")
-        return {'sent_links': set(), 'sent_hashes': set(), 'sent_titles': set(), 'posts_log': []}
+        return {'sent_links': set(), 'sent_hashes': set(), 'sent_titles': set(), 'posts_log': [], 'used_images': []}
 
     def _save_state(self):
         try:
@@ -147,7 +252,8 @@ class NewsBot:
                 'sent_links': list(self.state['sent_links']),
                 'sent_hashes': list(self.state['sent_hashes']),
                 'sent_titles': list(self.state['sent_titles']),
-                'posts_log': self.state['posts_log']
+                'posts_log': self.state['posts_log'],
+                'used_images': list(IMAGE_HASH_CACHE)
             }
             with open(STATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -221,7 +327,7 @@ class NewsBot:
                 return True
         return False
 
-    def _mark_sent(self, url: str, title: str, content: str = ""):
+    def _mark_sent(self, url: str, title: str, content: str = "", image_url: str = None):
         self.state['sent_links'].add(url)
         norm_title = self._normalize_title(title)
         if norm_title:
@@ -230,6 +336,8 @@ class NewsBot:
             h = self._hash_content(content)
             if h:
                 self.state['sent_hashes'].add(h)
+        if image_url:
+            mark_image_used(image_url)
         self._save_state()
 
     def _log_post(self, url: str, title: str):
@@ -392,7 +500,12 @@ class NewsBot:
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = title.strip()
 
-            image_url = extract_image_url(soup, base_url)
+            image_url = extract_image_url_enhanced(soup, base_url, url)
+            
+            # Проверяем уникальность изображения
+            if image_url and is_image_duplicate(image_url):
+                logger.info(f"Изображение уже использовалось, ищем другое: {image_url[:50]}...")
+                image_url = None  # Сбрасываем, чтобы бот искал другое или публиковал без фото
 
             container = soup.find('article') or soup.find('main')
             paragraphs = []
@@ -428,14 +541,22 @@ class NewsBot:
             articles = []
             for entry in feed.entries[:5]:
                 title = entry.get('title', '')
-                if not title or title == '{[title]}':
+                # Пропускаем шаблонные заголовки
+                if not title or title == '{[title]}' or title.lower() == 'brics portal':
                     summary = entry.get('summary', '')
                     if summary:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 
-                if not title or len(title) < 5:
-                    title = f"InfoBrics Article"
+                if not title or len(title) < 5 or title.lower() == 'brics portal':
+                    title = None
+                    # Пробуем получить из link
+                    link = entry.link
+                    if link:
+                        title = link.split('/')[-1].replace('-', ' ').title()
+                
+                if not title:
+                    continue
                 
                 articles.append({
                     'url': entry.link, 
@@ -490,16 +611,27 @@ class NewsBot:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[|-]\s*InfoBrics.*$', '', title, flags=re.IGNORECASE)
-                    title = re.sub(r'\s*[|-]\s*INFOBRICS.*$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal).*$', '', title, flags=re.IGNORECASE)
             
-            if not title or title == '{[title]}':
+            # 6. Проверяем на шаблонный заголовок
+            if title and (title.lower() == 'brics portal' or title == 'BRICS portal'):
+                title = None
+                # Пробуем извлечь из URL
                 title = url.split('/')[-1].replace('-', ' ').title()
+            
+            if not title:
+                logger.warning(f"InfoBrics: не удалось найти заголовок для {url}")
+                return None
             
             title = title.strip()
             logger.info(f"Парсинг InfoBrics: заголовок '{title[:50]}'")
 
-            image_url = extract_image_url(soup, base_url)
+            image_url = extract_image_url_enhanced(soup, base_url, url)
+            
+            # Проверяем уникальность изображения
+            if image_url and is_image_duplicate(image_url):
+                logger.info(f"Изображение уже использовалось: {image_url[:50]}...")
+                image_url = None
 
             # Поиск контента
             container = None
@@ -546,7 +678,10 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '')
                 if not title:
-                    title = f"Global Research Article"
+                    continue
+                
+                # Очищаем заголовок от названия сайта
+                title = re.sub(r'\s*[-|]\s*Global Research$', '', title, flags=re.IGNORECASE)
                 
                 articles.append({
                     'url': entry.link, 
@@ -582,7 +717,7 @@ class NewsBot:
                 if twitter_title and twitter_title.get('content'):
                     title = twitter_title['content']
             
-            # 3. Пробуем h1 с классами
+            # 3. Пробуем h1
             if not title:
                 for h1 in soup.find_all('h1'):
                     text = h1.get_text(strip=True)
@@ -601,16 +736,21 @@ class NewsBot:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[|-]\s*Global Research.*$', '', title, flags=re.IGNORECASE)
-                    title = re.sub(r'\s*[|-]\s*globalresearch.*$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'\s*[-|]\s*Global Research.*$', '', title, flags=re.IGNORECASE)
             
             if not title:
-                title = "Global Research Article"
+                logger.warning(f"Global Research: не удалось найти заголовок для {url}")
+                return None
             
             title = title.strip()
             logger.info(f"Парсинг Global Research: заголовок '{title[:50]}'")
 
-            image_url = extract_image_url(soup, base_url)
+            image_url = extract_image_url_enhanced(soup, base_url, url)
+            
+            # Проверяем уникальность изображения
+            if image_url and is_image_duplicate(image_url):
+                logger.info(f"Изображение уже использовалось: {image_url[:50]}...")
+                image_url = None
 
             # Поиск контента
             container = None
@@ -740,7 +880,7 @@ class NewsBot:
                                 parse_mode='Markdown'
                             )
                             logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en)
+                            self._mark_sent(url, title_en, content_en, image_url)
                             self._log_post(url, title_en)
                             return
                         except TelegramError as e:
@@ -761,7 +901,7 @@ class NewsBot:
             )
             logger.info("✅ Опубликовано ТЕКСТОМ")
 
-            self._mark_sent(url, title_en, content_en)
+            self._mark_sent(url, title_en, content_en, image_url)
             self._log_post(url, title_en)
 
         except TelegramError as e:
@@ -774,7 +914,7 @@ class NewsBot:
                         text=f"📰 {title_ru}\n\n{content_ru}",
                         parse_mode=None
                     )
-                    self._mark_sent(url, title_en, content_en)
+                    self._mark_sent(url, title_en, content_en, image_url)
                     self._log_post(url, title_en)
                 except Exception as e2:
                     logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
