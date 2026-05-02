@@ -135,10 +135,13 @@ def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | No
             return img_url
     
     # 4. Ищем большие изображения в тегах img
+    best_img = None
+    max_size = 0
+    
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
         # Пропускаем иконки, логотипы, аватары
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'button', 'pixel']):
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'button', 'pixel', '1x1', 'blank']):
             continue
         
         # Проверяем размеры изображения, если есть
@@ -146,18 +149,33 @@ def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | No
         height = img.get('height', '')
         if width and height:
             try:
-                if int(width) < 200 or int(height) < 200:
-                    continue
+                w = int(width)
+                h = int(height)
+                if w >= 400 and h >= 300:
+                    size = w * h
+                    if size > max_size:
+                        max_size = size
+                        if src.startswith('//'):
+                            best_img = 'https:' + src
+                        elif src.startswith('/'):
+                            best_img = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            best_img = src
             except:
                 pass
         
-        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+        # Если нет информации о размерах, но изображение выглядит как основное
+        if not best_img and not (width and height):
+            if 'hero' in src.lower() or 'featured' in src.lower() or 'main' in src.lower():
+                if src.startswith('//'):
+                    best_img = 'https:' + src
+                elif src.startswith('/'):
+                    best_img = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    best_img = src
+    
+    if best_img:
+        return best_img
     
     # 5. Ищем в figure
     figure = soup.find('figure')
@@ -186,10 +204,30 @@ def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | No
                     return urljoin(base_url, first_url)
                 if first_url.startswith('http'):
                     return first_url
+        
+        img = picture.find('img')
+        if img and img.get('src'):
+            src = img['src']
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
     
     # 7. Если есть URL статьи, пробуем получить изображение через другие методы
     if url:
-        # Некоторые сайты хранят изображение в JSON-LD
+        # Специально для AP News: пробуем найти изображение в data-src
+        for img in soup.find_all('img', {'data-src': re.compile(r'.*\.(jpg|jpeg|png|webp)')}):
+            src = img['data-src']
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
+        
+        # Пробуем JSON-LD
         script = soup.find('script', type='application/ld+json')
         if script:
             try:
@@ -201,6 +239,12 @@ def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | No
                             return img
                         elif isinstance(img, dict) and 'url' in img:
                             return img['url']
+                        elif isinstance(img, list) and len(img) > 0:
+                            first = img[0]
+                            if isinstance(first, str) and first.startswith('http'):
+                                return first
+                            elif isinstance(first, dict) and 'url' in first:
+                                return first['url']
             except:
                 pass
     
@@ -389,38 +433,97 @@ class NewsBot:
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
-        """Обрезает текст до последнего предложения в пределах max_len, без троеточия"""
+        """
+        Обрезает текст строго по последнему полному предложению в пределах max_len.
+        В конце всегда должен быть знак окончания предложения (.!?)
+        """
         if len(text) <= max_len:
             return text
 
+        # Ищем конец предложения в пределах max_len
+        # Начинаем с max_len и идем назад, чтобы найти максимально длинное предложение
         for punct in ['.', '!', '?']:
+            # Ищем последнее вхождение знака препинания перед max_len
             last = text.rfind(punct, 0, max_len)
-            if last != -1 and last > max_len // 2:
-                return text[:last + 1].strip()
-
+            if last != -1:
+                # Убеждаемся, что это действительно конец предложения
+                # (после точки может быть пробел, кавычка и т.д.)
+                result = text[:last + 1].strip()
+                if result and len(result) > max_len * 0.3:  # Не обрезаем слишком коротко
+                    return result
+        
+        # Если нет ни одного знака окончания предложения в пределах max_len,
+        # ищем последний пробел и обрезаем по нему (без добавления троеточия)
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
-            return text[:last_space].strip()
-
-        return text[:max_len].strip()
+            result = text[:last_space].strip()
+            # Добавляем точку, если её нет
+            if result and not result[-1] in '.!?':
+                result = result + '.'
+            return result
+        
+        # Самый крайний случай: обрезаем по символам
+        result = text[:max_len].strip()
+        if result and not result[-1] in '.!?':
+            result = result + '.'
+        return result
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
+        """
+        Обрезает текст по абзацам или предложениям.
+        Приоритет: сначала пытаемся взять целые абзацы, затем предложения.
+        """
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        truncated = self._truncate_to_last_sentence(text, max_len)
         
-        paragraphs = truncated.split('\n\n')
-        if len(paragraphs) == 1 and len(paragraphs[0]) < 200 and len(paragraphs[0]) < len(text) * 0.5:
-            second_para_start = text.find('\n\n', len(paragraphs[0]))
-            if second_para_start != -1:
-                second_para_end = text.find('\n\n', second_para_start + 2)
-                if second_para_end == -1:
-                    second_para_end = len(text)
-                additional = text[second_para_start:second_para_end]
-                combined = truncated + '\n\n' + additional
-                if len(combined) <= max_len:
-                    return self._truncate_to_last_sentence(combined, max_len)
+        # Разбиваем на абзацы
+        paragraphs = re.split(r'\n\s*\n', text)
         
-        return truncated
+        # Пробуем взять максимальное количество целых абзацев
+        result_paragraphs = []
+        current_length = 0
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # Если абзац помещается целиком
+            if current_length + len(para) + 2 <= max_len:
+                result_paragraphs.append(para)
+                current_length += len(para) + 2  # +2 за \n\n
+            else:
+                # Если не помещается целиком, пробуем обрезать текущий абзац по предложениям
+                sentences = re.split(r'(?<=[.!?])\s+', para)
+                for sent in sentences:
+                    sent = sent.strip()
+                    if not sent:
+                        continue
+                    # Добавляем знак окончания, если его нет
+                    if sent and not sent[-1] in '.!?':
+                        sent = sent + '.'
+                    
+                    if current_length + len(sent) + 2 <= max_len:
+                        result_paragraphs.append(sent)
+                        current_length += len(sent) + 2
+                    else:
+                        # Если не помещается и это первое предложение, обрезаем его по правилам
+                        if not result_paragraphs:
+                            return self._truncate_to_last_sentence(para, max_len)
+                        else:
+                            # Возвращаем то, что успели набрать
+                            if result_paragraphs:
+                                return '\n\n'.join(result_paragraphs)
+                            return self._truncate_to_last_sentence(para, max_len)
+                break
+        
+        if result_paragraphs:
+            result = '\n\n'.join(result_paragraphs)
+            # Убеждаемся, что результат не превышает лимит
+            if len(result) <= max_len:
+                return result
+        
+        # Если ничего не получилось, обрезаем по последнему предложению
+        return self._truncate_to_last_sentence(text, max_len)
 
     def _translate(self, text: str) -> str:
         if not text or len(text) < 10:
@@ -487,6 +590,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -500,13 +604,34 @@ class NewsBot:
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = title.strip()
 
-            image_url = extract_image_url_enhanced(soup, base_url, url)
+            # Изображение - улучшенный поиск для AP News
+            image_url = None
             
-            # Проверяем уникальность изображения
+            # Специально для AP News: ищем основное изображение статьи
+            # AP News часто использует figure с классом
+            figure = soup.find('figure', class_=re.compile(r'Figure|featured|lede|hero'))
+            if figure:
+                img = figure.find('img')
+                if img:
+                    src = img.get('src') or img.get('data-src')
+                    if src:
+                        if src.startswith('//'):
+                            image_url = 'https:' + src
+                        elif src.startswith('/'):
+                            image_url = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            image_url = src
+            
+            # Если не нашли, используем общую функцию
+            if not image_url:
+                image_url = extract_image_url_enhanced(soup, base_url, url)
+            
+            # Если нашли изображение, проверяем уникальность
             if image_url and is_image_duplicate(image_url):
-                logger.info(f"Изображение уже использовалось, ищем другое: {image_url[:50]}...")
-                image_url = None  # Сбрасываем, чтобы бот искал другое или публиковал без фото
-
+                logger.info(f"AP News: изображение уже использовалось, ищем другое: {image_url[:50]}...")
+                image_url = None
+            
+            # Контент
             container = soup.find('article') or soup.find('main')
             paragraphs = []
             if container:
@@ -542,15 +667,15 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '')
                 # Пропускаем шаблонные заголовки
-                if not title or title == '{[title]}' or title.lower() == 'brics portal':
+                if not title or title == '{[title]}' or title.lower() in ['brics portal', 'portal']:
                     summary = entry.get('summary', '')
                     if summary:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
+                        title = re.sub(r'\s*(?:BRICS|Portal|brics|portal)\s*$', '', title)
                 
-                if not title or len(title) < 5 or title.lower() == 'brics portal':
+                if not title or len(title) < 5:
                     title = None
-                    # Пробуем получить из link
                     link = entry.link
                     if link:
                         title = link.split('/')[-1].replace('-', ' ').title()
@@ -614,9 +739,8 @@ class NewsBot:
                     title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal).*$', '', title, flags=re.IGNORECASE)
             
             # 6. Проверяем на шаблонный заголовок
-            if title and (title.lower() == 'brics portal' or title == 'BRICS portal'):
+            if title and title.lower() in ['brics portal', 'portal', 'infobrics', 'infobrics article']:
                 title = None
-                # Пробуем извлечь из URL
                 title = url.split('/')[-1].replace('-', ' ').title()
             
             if not title:
@@ -750,224 +874,4 @@ class NewsBot:
             # Проверяем уникальность изображения
             if image_url and is_image_duplicate(image_url):
                 logger.info(f"Изображение уже использовалось: {image_url[:50]}...")
-                image_url = None
-
-            # Поиск контента
-            container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
-                container = soup.find('div', class_=re.compile(class_name))
-                if container:
-                    break
-            
-            if not container:
-                container = soup.find('article')
-            
-            if not container:
-                container = soup.find('main')
-            
-            paragraphs = []
-            if container:
-                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
-                    tag.decompose()
-                for p in container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
-                        paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                logger.warning(f"Global Research: недостаточно контента для {url}")
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            if len(content) < 150:
-                logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
-                return None
-
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
-        except Exception as e:
-            logger.error(f"Ошибка парсинга Global Research: {e}")
-            return None
-
-    # ========== СБОР НОВОСТЕЙ ==========
-    async def fetch_news(self) -> list:
-        items = []
-        
-        # 1. AP News
-        logger.info("📰 Парсинг AP News...")
-        ap_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
-        for article in ap_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ AP News: {data['title'][:50]}...")
-        
-        # 2. InfoBrics
-        logger.info("📰 Парсинг InfoBrics...")
-        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
-        
-        # 3. Global Research
-        logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ Global Research: {data['title'][:50]}...")
-        
-        logger.info(f"📊 Всего новых статей: {len(items)}")
-        return items
-
-    # ========== ПУБЛИКАЦИЯ ==========
-    async def publish(self, post: dict):
-        try:
-            title_en = post.get('title', '')
-            content_en = post.get('content', '')
-            url = post.get('url', '')
-            image_url = post.get('image')
-
-            if not title_en or not content_en:
-                logger.error("❌ Нет заголовка или содержимого")
-                return
-
-            logger.info(f"📝 Перевод: {title_en[:50]}...")
-
-            loop = asyncio.get_event_loop()
-            title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            content_ru = await loop.run_in_executor(None, self._translate, content_en)
-
-            # Дополнительная очистка от упоминаний источников
-            content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
-            content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
-            content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
-
-            # Сохраняем мета-информацию с превью контента
-            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
-            
-            logger.info(f"💾 Метаданные сохранены для {post.get('source', 'Unknown')}: {post_id}")
-
-            # Экранируем заголовок и обрезаем текст
-            title_escaped = html.escape(title_ru)
-            content_truncated = self._truncate_text(content_ru, is_caption=True)
-            
-            # Формируем сообщение
-            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
-
-            # Публикация с фото
-            if image_url:
-                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
-                img_response = fetch_url(image_url, timeout=15)
-                
-                if img_response and img_response.status_code == 200:
-                    content_type = img_response.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en, image_url)
-                            self._log_post(url, title_en)
-                            return
-                        except TelegramError as e:
-                            logger.warning(f"Ошибка отправки фото: {e}")
-                    else:
-                        logger.warning(f"URL не ведёт на изображение: {content_type}")
-                else:
-                    logger.warning("Не удалось загрузить изображение")
-
-            # Фолбэк: публикация текстом
-            logger.info("📝 Публикация текстом (без фото)")
-            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
-            await self.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text_message,
-                parse_mode='Markdown',
-                disable_web_page_preview=False
-            )
-            logger.info("✅ Опубликовано ТЕКСТОМ")
-
-            self._mark_sent(url, title_en, content_en, image_url)
-            self._log_post(url, title_en)
-
-        except TelegramError as e:
-            error_msg = str(e)
-            if "Can't parse entities" in error_msg:
-                logger.warning("Ошибка Markdown, отправляем без форматирования")
-                try:
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=f"📰 {title_ru}\n\n{content_ru}",
-                        parse_mode=None
-                    )
-                    self._mark_sent(url, title_en, content_en, image_url)
-                    self._log_post(url, title_en)
-                except Exception as e2:
-                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
-            else:
-                logger.error(f"❌ Ошибка Telegram: {e}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка публикации: {e}")
-
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
-    async def run_once(self):
-        logger.info("=" * 50)
-        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
-        logger.info("=" * 50)
-
-        news = await self.fetch_news()
-
-        if not news:
-            logger.info("📭 Новых статей нет")
-            return
-
-        if not self._can_post():
-            logger.info("⏸️ Публикация отложена (ограничения)")
-            return
-
-        await self.publish(news[0])
-
-    async def run_forever(self):
-        logger.info("🤖 Бот запущен в бесконечном режиме")
-        while True:
-            try:
-                await self.run_once()
-                delay = self._next_delay()
-                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка: {e}")
-                await asyncio.sleep(300)
-
-
-async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан!")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан!")
-        return
-
-    bot = NewsBot()
-    if 'GITHUB_ACTIONS' in os.environ:
-        await bot.run_once()
-    else:
-        await bot.run_forever()
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+               
