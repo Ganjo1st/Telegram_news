@@ -1,27 +1,30 @@
 {
   "sent_links": [
-    "https://www.globalresearch.ca/ioc-fate-national-teams/5924529",
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
-    "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
     "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
     "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
-    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7"
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
+    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
+    "https://www.globalresearch.ca/video-pfizer-has-a-criminal-record-with-the-u-s-department-of-justice-doj-yes-its-a-killer-vaccine/5924745",
+    "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
+    "https://www.globalresearch.ca/ioc-fate-national-teams/5924529"
   ],
   "sent_hashes": [
-    "eb1c283df834a95714184541a33b6229",
-    "f4e9be35dcde972b2ada870e5a747c4f",
+    "f30b5b8de034401438a0206bf90f1c60",
     "80d35cda8057048ebf4dbc68a480e46e",
     "489ae370c46f458975dbd0542c3a3d16",
-    "f30b5b8de034401438a0206bf90f1c60",
+    "eb1c283df834a95714184541a33b6229",
+    "55baf870ac6a5c4cfb33e0da0655638f",
+    "f4e9be35dcde972b2ada870e5a747c4f",
     "f5861fd9dfb479fa64994fe4be24517a"
   ],
   "sent_titles": [
-    "trump says us will reduce number troops germany lot further than withdrawal 5000",
-    "what guides international olympic committee ioc when deciding fate national teams russia is bad guy ",
-    "mexico city is sinking so quickly it can be seen from space",
     "king charles iii wins praise deft handling trump his us state visit",
-    "ukraine is hitting oil facilities deep inside russia soaring fuel prices could blunt impact",
-    "us warns shipping firms over paying iran transit strait hormuz"
+    "what guides international olympic committee ioc when deciding fate national teams russia is bad guy ",
+    "us warns shipping firms over paying iran transit strait hormuz",
+    "mexico city is sinking so quickly it can be seen from space",
+    "video pfizer has criminal record us department justice doj yes its killer vaccine global research",
+    "trump says us will reduce number troops germany lot further than withdrawal 5000",
+    "ukraine is hitting oil facilities deep inside russia soaring fuel prices could blunt impact"
   ],
   "posts_log": [
     {
@@ -53,14 +56,20 @@
       "link": "https://www.globalresearch.ca/ioc-fate-national-teams/5924529",
       "title": "What Guides the International Olympic Committee (I",
       "time": "2026-05-03T13:42:44.563961+00:00"
+    },
+    {
+      "link": "https://www.globalresearch.ca/video-pfizer-has-a-criminal-record-with-the-u-s-department-of-justice-doj-yes-its-a-killer-vaccine/5924745",
+      "title": "Video: Pfizer has a Criminal Record with the U.S. ",
+      "time": "2026-05-03T15:44:47.432834+00:00"
     }
   ],
   "used_images": [
+    "635f2b307a732e9363d8df8a608210a6",
+    "d57a17269c0b518b1239c212acdf92d0",
+    "8ed81caf97f5df7f02751d7ba933f742",
     "4c0acc67a95ae5a2ee5f9fc90fe758e3",
     "7c555194bb055ba839c50d7feb2c1035",
     "a630a7166c83583789a49acd53a6f393",
-    "635f2b307a732e9363d8df8a608210a6",
-    "8ed81caf97f5df7f02751d7ba933f742",
-    "d57a17269c0b518b1239c212acdf92d0"
+    "0ea7f739e7d71c704d2b9f571a73653a"
   ]
 }
