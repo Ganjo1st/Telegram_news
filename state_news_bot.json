@@ -1,29 +1,32 @@
 {
   "sent_links": [
-    "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
-    "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
-    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
-    "https://www.globalresearch.ca/video-pfizer-has-a-criminal-record-with-the-u-s-department-of-justice-doj-yes-its-a-killer-vaccine/5924745",
     "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
-    "https://www.globalresearch.ca/ioc-fate-national-teams/5924529"
+    "https://www.globalresearch.ca/video-pfizer-has-a-criminal-record-with-the-u-s-department-of-justice-doj-yes-its-a-killer-vaccine/5924745",
+    "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
+    "https://www.globalresearch.ca/ioc-fate-national-teams/5924529",
+    "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
+    "https://apnews.com/article/germany-whale-stranded-timmy-released-6e9e6b54a4c061314309a5b29c4666b7",
+    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7"
   ],
   "sent_hashes": [
-    "f30b5b8de034401438a0206bf90f1c60",
-    "80d35cda8057048ebf4dbc68a480e46e",
+    "93071fa5b5cee6ab7277154a3c528766",
     "489ae370c46f458975dbd0542c3a3d16",
-    "eb1c283df834a95714184541a33b6229",
-    "55baf870ac6a5c4cfb33e0da0655638f",
     "f4e9be35dcde972b2ada870e5a747c4f",
-    "f5861fd9dfb479fa64994fe4be24517a"
+    "eb1c283df834a95714184541a33b6229",
+    "f5861fd9dfb479fa64994fe4be24517a",
+    "80d35cda8057048ebf4dbc68a480e46e",
+    "55baf870ac6a5c4cfb33e0da0655638f",
+    "f30b5b8de034401438a0206bf90f1c60"
   ],
   "sent_titles": [
-    "king charles iii wins praise deft handling trump his us state visit",
-    "what guides international olympic committee ioc when deciding fate national teams russia is bad guy ",
-    "us warns shipping firms over paying iran transit strait hormuz",
-    "mexico city is sinking so quickly it can be seen from space",
     "video pfizer has criminal record us department justice doj yes its killer vaccine global research",
     "trump says us will reduce number troops germany lot further than withdrawal 5000",
+    "king charles iii wins praise deft handling trump his us state visit",
+    "us warns shipping firms over paying iran transit strait hormuz",
+    "mexico city is sinking so quickly it can be seen from space",
+    "humpback whale timmy released north sea after weeks stranded off germany",
+    "what guides international olympic committee ioc when deciding fate national teams russia is bad guy ",
     "ukraine is hitting oil facilities deep inside russia soaring fuel prices could blunt impact"
   ],
   "posts_log": [
@@ -61,15 +64,21 @@
       "link": "https://www.globalresearch.ca/video-pfizer-has-a-criminal-record-with-the-u-s-department-of-justice-doj-yes-its-a-killer-vaccine/5924745",
       "title": "Video: Pfizer has a Criminal Record with the U.S. ",
       "time": "2026-05-03T15:44:47.432834+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/germany-whale-stranded-timmy-released-6e9e6b54a4c061314309a5b29c4666b7",
+      "title": "Humpback whale 'Timmy' released in the North Sea a",
+      "time": "2026-05-03T17:01:15.810031+00:00"
     }
   ],
   "used_images": [
-    "635f2b307a732e9363d8df8a608210a6",
-    "d57a17269c0b518b1239c212acdf92d0",
-    "8ed81caf97f5df7f02751d7ba933f742",
+    "edc87d62902e0ed1d4cd1151c6f3204a",
     "4c0acc67a95ae5a2ee5f9fc90fe758e3",
     "7c555194bb055ba839c50d7feb2c1035",
-    "a630a7166c83583789a49acd53a6f393",
-    "0ea7f739e7d71c704d2b9f571a73653a"
+    "635f2b307a732e9363d8df8a608210a6",
+    "8ed81caf97f5df7f02751d7ba933f742",
+    "0ea7f739e7d71c704d2b9f571a73653a",
+    "d57a17269c0b518b1239c212acdf92d0",
+    "a630a7166c83583789a49acd53a6f393"
   ]
 }
