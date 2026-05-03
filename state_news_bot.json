@@ -1,21 +1,24 @@
 {
   "sent_links": [
     "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
+    "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
     "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
-    "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b"
+    "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c"
   ],
   "sent_hashes": [
-    "eb1c283df834a95714184541a33b6229",
+    "489ae370c46f458975dbd0542c3a3d16",
+    "f30b5b8de034401438a0206bf90f1c60",
     "f4e9be35dcde972b2ada870e5a747c4f",
     "f5861fd9dfb479fa64994fe4be24517a",
-    "f30b5b8de034401438a0206bf90f1c60"
+    "eb1c283df834a95714184541a33b6229"
   ],
   "sent_titles": [
     "ukraine is hitting oil facilities deep inside russia soaring fuel prices could blunt impact",
     "us warns shipping firms over paying iran transit strait hormuz",
-    "mexico city is sinking so quickly it can be seen from space",
-    "king charles iii wins praise deft handling trump his us state visit"
+    "trump says us will reduce number troops germany lot further than withdrawal 5000",
+    "king charles iii wins praise deft handling trump his us state visit",
+    "mexico city is sinking so quickly it can be seen from space"
   ],
   "posts_log": [
     {
@@ -37,12 +40,18 @@
       "link": "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
       "title": "Ukraine is hitting oil facilities deep inside Russ",
       "time": "2026-05-03T07:03:06.112595+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
+      "title": "Trump says US will reduce number of troops in Germ",
+      "time": "2026-05-03T11:13:33.619949+00:00"
     }
   ],
   "used_images": [
-    "8ed81caf97f5df7f02751d7ba933f742",
-    "635f2b307a732e9363d8df8a608210a6",
+    "d57a17269c0b518b1239c212acdf92d0",
+    "a630a7166c83583789a49acd53a6f393",
     "7c555194bb055ba839c50d7feb2c1035",
-    "d57a17269c0b518b1239c212acdf92d0"
+    "8ed81caf97f5df7f02751d7ba933f742",
+    "635f2b307a732e9363d8df8a608210a6"
   ]
 }
