@@ -1,18 +1,21 @@
 {
   "sent_links": [
+    "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
+    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7",
     "https://apnews.com/article/king-charles-iii-trump-state-visit-3dbe93e7c379d5ef6fe08864db2f8a2c",
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
-    "https://apnews.com/article/mexico-city-sinking-nasa-satellite-imagery-b5a70fbc2f73a789f248ab69b08c75e7"
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b"
   ],
   "sent_hashes": [
     "eb1c283df834a95714184541a33b6229",
-    "f30b5b8de034401438a0206bf90f1c60",
-    "f4e9be35dcde972b2ada870e5a747c4f"
+    "f4e9be35dcde972b2ada870e5a747c4f",
+    "f5861fd9dfb479fa64994fe4be24517a",
+    "f30b5b8de034401438a0206bf90f1c60"
   ],
   "sent_titles": [
-    "king charles iii wins praise deft handling trump his us state visit",
+    "ukraine is hitting oil facilities deep inside russia soaring fuel prices could blunt impact",
+    "us warns shipping firms over paying iran transit strait hormuz",
     "mexico city is sinking so quickly it can be seen from space",
-    "us warns shipping firms over paying iran transit strait hormuz"
+    "king charles iii wins praise deft handling trump his us state visit"
   ],
   "posts_log": [
     {
@@ -29,11 +32,17 @@
       "link": "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
       "title": "US warns shipping firms over paying Iran to transi",
       "time": "2026-05-02T22:07:24.663769+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/russia-ukraine-war-oil-drone-attacks-environment-bd5d03a3e3515f0a3b5b48031bc2c18c",
+      "title": "Ukraine is hitting oil facilities deep inside Russ",
+      "time": "2026-05-03T07:03:06.112595+00:00"
     }
   ],
   "used_images": [
-    "7c555194bb055ba839c50d7feb2c1035",
     "8ed81caf97f5df7f02751d7ba933f742",
-    "635f2b307a732e9363d8df8a608210a6"
+    "635f2b307a732e9363d8df8a608210a6",
+    "7c555194bb055ba839c50d7feb2c1035",
+    "d57a17269c0b518b1239c212acdf92d0"
   ]
 }
