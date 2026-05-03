@@ -1,30 +1,7 @@
 {
-  "sent_links": [
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
-    "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c"
-  ],
-  "sent_hashes": [
-    "489ae370c46f458975dbd0542c3a3d16",
-    "9a1093d7666a09fcc4f24c7f8a805a87"
-  ],
-  "sent_titles": [
-    "president trump says he is reviewing new iranian proposal end war",
-    "trump says us will reduce number troops germany lot further than withdrawal 5000"
-  ],
-  "posts_log": [
-    {
-      "link": "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
-      "title": "President Trump says he is reviewing a new Iranian",
-      "time": "2026-05-03T18:08:56.536108+00:00"
-    },
-    {
-      "link": "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
-      "title": "Trump says US will reduce number of troops in Germ",
-      "time": "2026-05-03T18:59:42.072539+00:00"
-    }
-  ],
-  "used_images": [
-    "a0a5f03eb05f071ad517ae824a45111a",
-    "f8d5d19394fab5cd9baaf310bde12f84"
-  ]
+  "sent_links": [],
+  "sent_hashes": [],
+  "sent_titles": [],
+  "posts_log": [],
+  "used_images": []
 }
