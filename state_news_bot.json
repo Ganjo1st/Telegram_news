@@ -1,7 +1,21 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": [],
-  "used_images": []
+  "sent_links": [
+    "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c"
+  ],
+  "sent_hashes": [
+    "489ae370c46f458975dbd0542c3a3d16"
+  ],
+  "sent_titles": [
+    "trump says us will reduce number troops germany lot further than withdrawal 5000"
+  ],
+  "posts_log": [
+    {
+      "link": "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
+      "title": "Trump says US will reduce number of troops in Germ",
+      "time": "2026-05-03T20:40:19.809190+00:00"
+    }
+  ],
+  "used_images": [
+    "a0a5f03eb05f071ad517ae824a45111a"
+  ]
 }
