@@ -35,8 +35,8 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
 # Интервалы публикации (секунды)
-MIN_INTERVAL = 2100  # 35 минут
-MAX_INTERVAL = 7200  # 2 часа
+MIN_INTERVAL = 2100
+MAX_INTERVAL = 7200
 MAX_POSTS_PER_DAY = 24
 TIMEZONE_OFFSET = 7
 
@@ -45,15 +45,35 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-MAX_CAPTION = 1024  # Максимальная длина подписи к фото в Telegram
-MAX_MESSAGE = 4096  # Максимальная длина сообщения
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096
 
-# Для кэширования изображений
+# Кэш изображений
 IMAGE_HASH_CACHE = set()
 
-# Паттерны для удаления упоминаний источников и другого мусора
+# Паттерны для удаления скобок с упоминаниями источников
+BRACKET_SOURCE_PATTERNS = [
+    # Скобки с AP, АР, Associated Press
+    r'\([^)]*AP[^)]*\)',
+    r'\([^)]*АР[^)]*\)',
+    r'\([^)]*Associated Press[^)]*\)',
+    r'\([^)]*Ассошиэйтед Пресс[^)]*\)',
+    # Скобки с AP в любом регистре внутри
+    r'\([^)]*[Aa][Pp][^)]*\)',
+    # Скобки с InfoBrics
+    r'\([^)]*InfoBrics[^)]*\)',
+    r'\([^)]*INFOBRICS[^)]*\)',
+    # Скобки с Global Research
+    r'\([^)]*Global Research[^)]*\)',
+    r'\([^)]*G\.R\.[^)]*\)',
+    # Скобки с Photo/Credit
+    r'\([^)]*Photo[^)]*\)',
+    r'\([^)]*Credit[^)]*\)',
+    r'\([^)]*Image[^)]*\)',
+]
+
+# Паттерны для удаления упоминаний источников без скобок
 SOURCE_PATTERNS = [
-    r'\(AP\)', r'\(АР\)', r'\(AP News\)', r'\(Associated Press\)', r'\(Ассошиэйтед Пресс\)',
     r'— AP News$', r'\| AP News', r'AP News —',
     r'— Global Research$', r'\| Global Research', r'Global Research —', r'– Global Research',
     r'— InfoBrics$', r'\| InfoBrics', r'InfoBrics —',
@@ -64,13 +84,30 @@ SOURCE_PATTERNS = [
 ]
 
 
+def remove_bracket_sources(text: str) -> str:
+    """Удаляет скобки вместе с их содержимым, если внутри есть упоминание источника"""
+    if not text:
+        return text
+    
+    result = text
+    for pattern in BRACKET_SOURCE_PATTERNS:
+        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+    
+    # Удаляем оставшиеся пустые скобки
+    result = re.sub(r'\(\s*\)', '', result)
+    
+    # Убираем лишние пробелы
+    result = re.sub(r'\s+', ' ', result).strip()
+    
+    return result
+
+
 def clean_title(title: str) -> str:
     """Очищает заголовок от смайлов, эмодзи и упоминаний источников"""
     if not title:
         return ""
     
-    # Удаляем эмодзи и смайлы (включая флаги, символы, иероглифы)
-    # Паттерн для удаления любых эмодзи/смайлов
+    # Удаляем все эмодзи и смайлы (включая 📰, 📢, ✅ и т.д.)
     emoji_pattern = re.compile(
         "["
         "\U0001F600-\U0001F64F"  # Эмодзи смайликов
@@ -89,11 +126,14 @@ def clean_title(title: str) -> str:
     )
     title = emoji_pattern.sub('', title)
     
+    # Удаляем скобки с источниками
+    title = remove_bracket_sources(title)
+    
     # Удаляем упоминания источников
     for pattern in SOURCE_PATTERNS:
         title = re.sub(pattern, '', title, flags=re.IGNORECASE)
     
-    # Удаляем лишние пробелы и знаки в начале/конце
+    # Удаляем лишние пробелы и знаки
     title = re.sub(r'\s+', ' ', title)
     title = title.strip(' -|:')
     
@@ -105,12 +145,15 @@ def clean_content(text: str) -> str:
     if not text:
         return text
     
+    # Удаляем скобки с источниками
+    text = remove_bracket_sources(text)
+    
+    # Удаляем упоминания источников
     for pattern in SOURCE_PATTERNS:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Удаляем строки с email, ссылками, копирайтами
+    # Удаляем строки с email, ссылками
     text = re.sub(r'\S+@\S+\.\S+', '', text)
-    text = re.sub(r'©\s*\d{4}\s+\S+', '', text)
     
     # Удаляем лишние пробелы
     text = re.sub(r'\s+', ' ', text)
@@ -291,7 +334,6 @@ class NewsBot:
             logger.error(f"Ошибка сохранения мета: {e}")
 
     def _add_to_meta(self, post_id: str, source: str, url: str, title: str, content_preview: str = ""):
-        """Сохраняет метаданные статьи в posts_meta.json"""
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
@@ -396,7 +438,6 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
@@ -404,7 +445,6 @@ class NewsBot:
                 if result and result[-1] in '.!?':
                     return result
 
-        # Если нет знака препинания, обрезаем по слову
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             result = text[:last_space].strip()
@@ -420,7 +460,7 @@ class NewsBot:
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         """Обрезает текст, сохраняя целые абзацы и предложения"""
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        max_len = max_len - 100  # Запас для заголовка и форматирования
+        max_len = max_len - 100
         
         paragraphs = re.split(r'\n\s*\n', text)
         result_paragraphs = []
@@ -442,7 +482,6 @@ class NewsBot:
         if result_paragraphs:
             result = '\n\n'.join(result_paragraphs)
             if len(result) <= max_len:
-                # Убедимся, что заканчивается на знак препинания
                 if result and not result[-1] in '.!?':
                     result = result + '.'
                 return result
@@ -514,7 +553,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -528,12 +566,10 @@ class NewsBot:
             
             title = clean_title(title)
 
-            # Изображение
             image_url = extract_image_url_enhanced(soup, base_url, url)
             if image_url and is_image_duplicate(image_url):
                 image_url = None
 
-            # Контент
             container = soup.find('article') or soup.find('main')
             paragraphs = []
             if container:
@@ -594,7 +630,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка
             title = None
             
             meta_title = soup.find('meta', property='og:title')
@@ -617,12 +652,10 @@ class NewsBot:
             
             title = clean_title(title)
 
-            # Изображение
             image_url = extract_image_url_enhanced(soup, base_url, url)
             if image_url and is_image_duplicate(image_url):
                 image_url = None
 
-            # Контент
             container = soup.find('article') or soup.find('main') or soup.find('div', class_=re.compile(r'content|article'))
             paragraphs = []
             if container:
@@ -676,7 +709,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка
             title = None
             
             meta_title = soup.find('meta', property='og:title')
@@ -699,12 +731,10 @@ class NewsBot:
             
             title = clean_title(title)
 
-            # Изображение
             image_url = extract_image_url_enhanced(soup, base_url, url)
             if image_url and is_image_duplicate(image_url):
                 image_url = None
 
-            # Контент
             container = soup.find('article') or soup.find('main') or soup.find('div', class_=re.compile(r'entry-content|post-content'))
             paragraphs = []
             if container:
@@ -733,7 +763,6 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # AP News
         logger.info("📰 Парсинг AP News...")
         ap_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
         for article in ap_articles[:3]:
@@ -744,7 +773,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ AP News: {data['title'][:50]}...")
         
-        # InfoBrics
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:3]:
@@ -755,7 +783,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
         
-        # Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:3]:
@@ -795,18 +822,17 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            # Формируем сообщение
+            # Формируем сообщение (без эмодзи в заголовке)
             title_escaped = html.escape(title_ru)
             
-            # Обрезаем текст для подписи к фото (максимум 1024 символа)
+            # Обрезаем текст
             content_for_caption = self._truncate_text(content_ru, is_caption=True)
-            message = f"📰 *{title_escaped}*\n\n{content_for_caption}"
+            message = f"*{title_escaped}*\n\n{content_for_caption}"
             
             # Проверяем длину сообщения
             if len(message) > MAX_CAPTION:
-                # Уменьшаем текст
-                content_for_caption = self._truncate_to_last_sentence(content_ru, MAX_CAPTION - len(f"📰 *{title_escaped}*\n\n") - 10)
-                message = f"📰 *{title_escaped}*\n\n{content_for_caption}"
+                content_for_caption = self._truncate_to_last_sentence(content_ru, MAX_CAPTION - len(f"*{title_escaped}*\n\n") - 10)
+                message = f"*{title_escaped}*\n\n{content_for_caption}"
 
             # Публикация с фото
             if image_url:
@@ -829,8 +855,7 @@ class NewsBot:
                             return
                         except TelegramError as e:
                             if "caption is too long" in str(e).lower():
-                                # Пробуем с еще более коротким текстом
-                                shorter_msg = f"📰 *{title_escaped}*"
+                                shorter_msg = f"*{title_escaped}*"
                                 await self.bot.send_photo(
                                     chat_id=CHANNEL_ID,
                                     photo=img_response.content,
@@ -851,11 +876,11 @@ class NewsBot:
             # Публикация текстом
             logger.info("📝 Публикация текстом")
             text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            text_message = f"*{title_escaped}*\n\n{text_content}"
             
             if len(text_message) > MAX_MESSAGE:
-                text_content = self._truncate_to_last_sentence(content_ru, MAX_MESSAGE - len(f"📰 *{title_escaped}*\n\n") - 10)
-                text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+                text_content = self._truncate_to_last_sentence(content_ru, MAX_MESSAGE - len(f"*{title_escaped}*\n\n") - 10)
+                text_message = f"*{title_escaped}*\n\n{text_content}"
             
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
@@ -875,7 +900,7 @@ class NewsBot:
                 try:
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
-                        text=f"📰 {title_ru}\n\n{content_ru}",
+                        text=f"{title_ru}\n\n{content_ru}",
                         parse_mode=None
                     )
                     self._mark_sent(url, title_en, content_en, image_url)
