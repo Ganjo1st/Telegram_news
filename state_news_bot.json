@@ -1,7 +1,21 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": [],
-  "used_images": []
+  "sent_links": [
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b"
+  ],
+  "sent_hashes": [
+    "9a1093d7666a09fcc4f24c7f8a805a87"
+  ],
+  "sent_titles": [
+    "president trump says he is reviewing new iranian proposal end war"
+  ],
+  "posts_log": [
+    {
+      "link": "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-9317c11e51ba8dfa527b424f931fe04b",
+      "title": "President Trump says he is reviewing a new Iranian",
+      "time": "2026-05-03T18:08:56.536108+00:00"
+    }
+  ],
+  "used_images": [
+    "f8d5d19394fab5cd9baaf310bde12f84"
+  ]
 }
