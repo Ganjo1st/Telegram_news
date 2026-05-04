@@ -1,21 +1,24 @@
 {
   "sent_links": [
+    "https://apnews.com/article/brazil-copacabana-shakira-169e027a205c27dd113afe75368448a3",
+    "https://apnews.com/article/hantavirus-south-africa-cruise-ship-who-4c9215a2bd7cd34a743b2a31323c7e18",
     "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-454006a0a9bb19a45a2f299c0869cefb",
     "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
-    "https://apnews.com/article/morocco-us-africom-african-lion-exercise-missing-733658c155ce6d64a740a2abb9e59e52",
-    "https://apnews.com/article/brazil-copacabana-shakira-169e027a205c27dd113afe75368448a3"
+    "https://apnews.com/article/morocco-us-africom-african-lion-exercise-missing-733658c155ce6d64a740a2abb9e59e52"
   ],
   "sent_hashes": [
-    "d83381ebe07bb27cdfe73368f573bb46",
+    "7d4bc0ff20b11bafa2442aa64e4c8c84",
     "489ae370c46f458975dbd0542c3a3d16",
-    "a19764f8bc18dd1909d9082d996779ef",
-    "2d84f982946210de1d74cf462d9d7824"
+    "d83381ebe07bb27cdfe73368f573bb46",
+    "2d84f982946210de1d74cf462d9d7824",
+    "a19764f8bc18dd1909d9082d996779ef"
   ],
   "sent_titles": [
     "uk military says bulk carrier near strait hormuz reports being attacked",
-    "trump says us will reduce number troops germany lot further than withdrawal 5000",
     "2 us service members missing after military exercises morocco",
-    "shakira thrills crowd 2 million free concert brazils copacabana beach"
+    "shakira thrills crowd 2 million free concert brazils copacabana beach",
+    "trump says us will reduce number troops germany lot further than withdrawal 5000",
+    "suspected outbreak rare hantavirus cruise ship atlantic kills 3 people"
   ],
   "posts_log": [
     {
@@ -37,12 +40,18 @@
       "link": "https://apnews.com/article/morocco-us-africom-african-lion-exercise-missing-733658c155ce6d64a740a2abb9e59e52",
       "title": "2 US service members missing after military exerci",
       "time": "2026-05-04T08:18:52.208859+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/hantavirus-south-africa-cruise-ship-who-4c9215a2bd7cd34a743b2a31323c7e18",
+      "title": "A suspected outbreak of the rare hantavirus on a c",
+      "time": "2026-05-04T11:51:25.906874+00:00"
     }
   ],
   "used_images": [
-    "bb1d6e48f5e02b75fcc3268e830fdf1e",
     "a0a5f03eb05f071ad517ae824a45111a",
-    "ae7c583858e9cd2d7b72aa03ca2f1c8e",
-    "5f92ed9994ce8ebc59f8266182287dd1"
+    "bb1d6e48f5e02b75fcc3268e830fdf1e",
+    "120636a542715dfc16fd3648aab760f9",
+    "5f92ed9994ce8ebc59f8266182287dd1",
+    "ae7c583858e9cd2d7b72aa03ca2f1c8e"
   ]
 }
