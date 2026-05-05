@@ -1,33 +1,36 @@
 {
   "sent_links": [
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-454006a0a9bb19a45a2f299c0869cefb",
-    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-a4857f28d9b47e0170b65ced19451a25",
-    "https://apnews.com/article/morocco-us-africom-african-lion-exercise-missing-733658c155ce6d64a740a2abb9e59e52",
     "https://apnews.com/article/germany-trump-troops-nato-drawdown-pistorius-merz-a93151327dcb7279a56a36dd4bbeca1c",
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-454006a0a9bb19a45a2f299c0869cefb",
     "https://apnews.com/article/hantavirus-south-africa-cruise-ship-who-4c9215a2bd7cd34a743b2a31323c7e18",
     "https://apnews.com/article/brazil-copacabana-shakira-169e027a205c27dd113afe75368448a3",
     "https://apnews.com/article/europe-us-nato-troops-trump-germany-56adb70f611da5314bba9178bd4388b1",
-    "https://apnews.com/article/russia-ukraine-drones-strike-attack-oil-port-b686081ec3f3a9da07d380413067cfd6"
+    "https://apnews.com/article/russia-ukraine-war-unilateral-truce-parade-9a686273da1f284230180a7819613719",
+    "https://apnews.com/article/morocco-us-africom-african-lion-exercise-missing-733658c155ce6d64a740a2abb9e59e52",
+    "https://apnews.com/article/russia-ukraine-drones-strike-attack-oil-port-b686081ec3f3a9da07d380413067cfd6",
+    "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-a4857f28d9b47e0170b65ced19451a25"
   ],
   "sent_hashes": [
+    "c3004ad21d75bf671c9b253aaf43d8bf",
     "489ae370c46f458975dbd0542c3a3d16",
-    "a19764f8bc18dd1909d9082d996779ef",
-    "2d84f982946210de1d74cf462d9d7824",
+    "e758f6ad401c0552b640b55d57c48fce",
     "7d4bc0ff20b11bafa2442aa64e4c8c84",
-    "d83381ebe07bb27cdfe73368f573bb46",
-    "54a074bd4a035e705f036072ab691d32",
     "78ac35f911fa7364ed62e6e9b9abf011",
-    "c3004ad21d75bf671c9b253aaf43d8bf"
+    "2d84f982946210de1d74cf462d9d7824",
+    "54a074bd4a035e705f036072ab691d32",
+    "d83381ebe07bb27cdfe73368f573bb46",
+    "a19764f8bc18dd1909d9082d996779ef"
   ],
   "sent_titles": [
-    "trump says us will reduce number troops germany lot further than withdrawal 5000",
-    "as us plans fewer troops germany europe sees need bigger role within nato",
-    "2 us service members missing after military exercises morocco",
-    "suspected outbreak rare hantavirus cruise ship atlantic kills 3 people",
-    "shakira thrills crowd 2 million free concert brazils copacabana beach",
     "ukraine hits key russian oilloading port 3 shadow fleet tankers",
+    "trump says us will reduce number troops germany lot further than withdrawal 5000",
+    "shakira thrills crowd 2 million free concert brazils copacabana beach",
+    "russia declares truce ukraine mark victory day kyiv says itll cease fire two days earlier",
     "uk military says bulk carrier near strait hormuz reports being attacked",
-    "us denies iran struck military vessel during new effort reopen strait hormuz"
+    "suspected outbreak rare hantavirus cruise ship atlantic kills 3 people",
+    "us denies iran struck military vessel during new effort reopen strait hormuz",
+    "2 us service members missing after military exercises morocco",
+    "as us plans fewer troops germany europe sees need bigger role within nato"
   ],
   "posts_log": [
     {
@@ -69,16 +72,22 @@
       "link": "https://apnews.com/article/europe-us-nato-troops-trump-germany-56adb70f611da5314bba9178bd4388b1",
       "title": "As US plans fewer troops in Germany, Europe sees n",
       "time": "2026-05-05T07:10:33.384464+00:00"
+    },
+    {
+      "link": "https://apnews.com/article/russia-ukraine-war-unilateral-truce-parade-9a686273da1f284230180a7819613719",
+      "title": "Russia declares a truce in Ukraine to mark Victory",
+      "time": "2026-05-05T10:52:31.270997+00:00"
     }
   ],
   "used_images": [
-    "ae7c583858e9cd2d7b72aa03ca2f1c8e",
+    "651d9e3a8921db990453558d6d9cc81a",
     "a2f9cf58803c74b8d15cad6fae991633",
     "0a951fe666a7dad19adece49f02fba8c",
     "120636a542715dfc16fd3648aab760f9",
     "1e5b7054a74632827536a2237dcf0138",
-    "a0a5f03eb05f071ad517ae824a45111a",
     "5f92ed9994ce8ebc59f8266182287dd1",
+    "a0a5f03eb05f071ad517ae824a45111a",
+    "ae7c583858e9cd2d7b72aa03ca2f1c8e",
     "bb1d6e48f5e02b75fcc3268e830fdf1e"
   ]
 }
