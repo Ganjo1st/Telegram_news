@@ -53,112 +53,76 @@ IMAGE_HASH_CACHE = set()
 
 # Паттерны для удаления скобок с упоминаниями источников
 BRACKET_SOURCE_PATTERNS = [
-    # Скобки с AP, АР, Associated Press
     r'\([^)]*AP[^)]*\)',
     r'\([^)]*АР[^)]*\)',
     r'\([^)]*Associated Press[^)]*\)',
     r'\([^)]*Ассошиэйтед Пресс[^)]*\)',
-    # Скобки с AP в любом регистре внутри
-    r'\([^)]*[Aa][Pp][^)]*\)',
-    # Скобки с InfoBrics
     r'\([^)]*InfoBrics[^)]*\)',
-    r'\([^)]*INFOBRICS[^)]*\)',
-    # Скобки с Global Research
     r'\([^)]*Global Research[^)]*\)',
     r'\([^)]*G\.R\.[^)]*\)',
-    # Скобки с Photo/Credit
     r'\([^)]*Photo[^)]*\)',
     r'\([^)]*Credit[^)]*\)',
-    r'\([^)]*Image[^)]*\)',
 ]
 
-# Паттерны для удаления упоминаний источников без скобок
 SOURCE_PATTERNS = [
     r'— AP News$', r'\| AP News', r'AP News —',
-    r'— Global Research$', r'\| Global Research', r'Global Research —', r'– Global Research',
+    r'— Global Research$', r'\| Global Research', r'Global Research —',
     r'— InfoBrics$', r'\| InfoBrics', r'InfoBrics —',
     r'Источник:\s*\S+', r'По материалам\s*\S+',
-    r'Photo by\s+\S+', r'Credit:\s*\S+', r'Image:\s*\S+',
-    r'Read more:', r'Read more at:', r'Continue reading:',
-    r'Click here to read more', r'View original post',
+    r'Photo by\s+\S+', r'Credit:\s*\S+',
+    r'Read more:', r'Read more at:',
 ]
 
 
 def remove_bracket_sources(text: str) -> str:
-    """Удаляет скобки вместе с их содержимым, если внутри есть упоминание источника"""
     if not text:
         return text
-    
     result = text
     for pattern in BRACKET_SOURCE_PATTERNS:
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-    
-    # Удаляем оставшиеся пустые скобки
     result = re.sub(r'\(\s*\)', '', result)
-    
-    # Убираем лишние пробелы
     result = re.sub(r'\s+', ' ', result).strip()
-    
     return result
 
 
 def clean_title(title: str) -> str:
-    """Очищает заголовок от смайлов, эмодзи и упоминаний источников"""
     if not title:
         return ""
     
-    # Удаляем все эмодзи и смайлы (включая 📰, 📢, ✅ и т.д.)
     emoji_pattern = re.compile(
         "["
-        "\U0001F600-\U0001F64F"  # Эмодзи смайликов
-        "\U0001F300-\U0001F5FF"  # Символы и пиктограммы
-        "\U0001F680-\U0001F6FF"  # Транспорт и карты
-        "\U0001F700-\U0001F77F"  # Алхимические символы
-        "\U0001F780-\U0001F7FF"  # Геометрические фигуры
-        "\U0001F800-\U0001F8FF"  # Дополнительные стрелки
-        "\U0001F900-\U0001F9FF"  # Дополнительные символы и эмодзи
-        "\U0001FA00-\U0001FA6F"  # Дополнительные пиктограммы
-        "\U0001FA70-\U0001FAFF"  # Дополнительные символы
-        "\U00002702-\U000027B0"  # Декоративные символы
-        "\U000024C2-\U0001F251"  # Зашифрованные символы
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F700-\U0001F77F"
+        "\U0001F780-\U0001F7FF"
+        "\U0001F800-\U0001F8FF"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
         "]+",
         flags=re.UNICODE
     )
     title = emoji_pattern.sub('', title)
-    
-    # Удаляем скобки с источниками
     title = remove_bracket_sources(title)
-    
-    # Удаляем упоминания источников
     for pattern in SOURCE_PATTERNS:
         title = re.sub(pattern, '', title, flags=re.IGNORECASE)
-    
-    # Удаляем лишние пробелы и знаки
     title = re.sub(r'\s+', ' ', title)
     title = title.strip(' -|:')
-    
     return title
 
 
 def clean_content(text: str) -> str:
-    """Очищает текст от упоминаний источников"""
     if not text:
         return text
-    
-    # Удаляем скобки с источниками
     text = remove_bracket_sources(text)
-    
-    # Удаляем упоминания источников
     for pattern in SOURCE_PATTERNS:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    
-    # Удаляем строки с email, ссылками
     text = re.sub(r'\S+@\S+\.\S+', '', text)
-    
-    # Удаляем лишние пробелы
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
-    
     return text
 
 
@@ -191,73 +155,115 @@ def mark_image_used(image_url: str):
 
 
 def extract_image_url_enhanced(soup, base_url: str, url: str = None) -> str | None:
-    """Извлекает URL изображения из страницы"""
+    """Извлекает URL изображения из страницы, исключая логотипы и иконки"""
     
-    # 1. Open Graph image
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        img_url = meta_img['content']
-        if img_url.startswith('//'):
-            img_url = 'https:' + img_url
-        elif img_url.startswith('/'):
-            img_url = urljoin(base_url, img_url)
-        if img_url.startswith('http'):
-            return img_url
+    # Список паттернов для исключения (логотипы, иконки)
+    exclude_patterns = [
+        'logo', 'icon', 'avatar', 'svg', 'gif', 'pixel', '1x1', 'blank',
+        'ap-logo', 'apnews_logo', 'associated-press-logo', 'brand', 'header',
+        'footer', 'button', 'badge', 'favicon', 'social', 'share', 'banner'
+    ]
     
-    # 2. Twitter image
-    twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
-    if twitter_img and twitter_img.get('content'):
-        img_url = twitter_img['content']
-        if img_url.startswith('//'):
-            img_url = 'https:' + img_url
-        elif img_url.startswith('/'):
-            img_url = urljoin(base_url, img_url)
-        if img_url.startswith('http'):
-            return img_url
+    # Приоритетные классы/атрибуты для основного изображения
+    priority_selectors = [
+        ('meta', {'property': 'og:image'}),
+        ('meta', {'name': 'twitter:image'}),
+        ('meta', {'name': 'article:image'}),
+        ('div', {'class': re.compile(r'hero|featured|main-image|lead-image|article-image')}),
+        ('figure', {'class': re.compile(r'hero|featured|main|lead')}),
+    ]
     
-    # 3. Поиск больших изображений
-    best_img = None
-    max_size = 0
+    # 1. Сначала проверяем приоритетные источники
+    for tag_name, attrs in priority_selectors:
+        elem = soup.find(tag_name, attrs=attrs)
+        if elem:
+            if tag_name == 'meta':
+                img_url = elem.get('content')
+            else:
+                img = elem.find('img')
+                if img:
+                    img_url = img.get('src') or img.get('data-src')
+                else:
+                    continue
+            
+            if img_url:
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url.startswith('/'):
+                    img_url = urljoin(base_url, img_url)
+                
+                if img_url.startswith('http'):
+                    url_lower = img_url.lower()
+                    if not any(p in url_lower for p in exclude_patterns):
+                        return img_url
     
-    for img in soup.find_all('img', src=True):
-        src = img.get('src', '')
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'pixel', '1x1']):
+    # 2. Ищем изображения в article/main контейнере
+    container = soup.find('article') or soup.find('main')
+    
+    if container:
+        best_img = None
+        max_size = 0
+        
+        for img in container.find_all('img', src=True):
+            src = img.get('src', '')
+            alt = img.get('alt', '').lower()
+            
+            # Пропускаем логотипы и иконки
+            url_lower = src.lower()
+            if any(p in url_lower for p in exclude_patterns):
+                continue
+            if any(p in alt for p in exclude_patterns):
+                continue
+            
+            width = img.get('width', '')
+            height = img.get('height', '')
+            
+            if width and height:
+                try:
+                    w = int(width)
+                    h = int(height)
+                    if w >= 400 and h >= 300:
+                        if w * h > max_size:
+                            max_size = w * h
+                            if src.startswith('//'):
+                                best_img = 'https:' + src
+                            elif src.startswith('/'):
+                                best_img = urljoin(base_url, src)
+                            else:
+                                best_img = src
+                except:
+                    pass
+            
+            if not best_img and ('hero' in url_lower or 'featured' in url_lower or 'lead' in url_lower):
+                if src.startswith('//'):
+                    best_img = 'https:' + src
+                elif src.startswith('/'):
+                    best_img = urljoin(base_url, src)
+                else:
+                    best_img = src
+        
+        if best_img:
+            return best_img
+    
+    # 3. Ищем figure с изображением вне container
+    for figure in soup.find_all('figure'):
+        figure_class = figure.get('class', [])
+        if any(p in str(figure_class).lower() for p in exclude_patterns):
             continue
         
-        width = img.get('width', '')
-        height = img.get('height', '')
-        if width and height:
-            try:
-                w = int(width)
-                h = int(height)
-                if w >= 400 and h >= 300:
-                    if w * h > max_size:
-                        max_size = w * h
-                        if src.startswith('//'):
-                            best_img = 'https:' + src
-                        elif src.startswith('/'):
-                            best_img = urljoin(base_url, src)
-                        else:
-                            best_img = src
-            except:
-                pass
-    
-    if best_img:
-        return best_img
-    
-    # 4. Figure с изображением
-    figure = soup.find('figure')
-    if figure:
         img = figure.find('img')
         if img and img.get('src'):
             src = img['src']
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+            url_lower = src.lower()
+            if not any(p in url_lower for p in exclude_patterns):
+                if src.startswith('//'):
+                    return 'https:' + src
+                if src.startswith('/'):
+                    return urljoin(base_url, src)
+                if src.startswith('http'):
+                    return src
     
+    # 4. Если ничего не нашли, возвращаем None
     return None
 
 
@@ -434,7 +440,6 @@ class NewsBot:
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
-        """Обрезает текст до последнего полного предложения"""
         if len(text) <= max_len:
             return text
 
@@ -458,7 +463,6 @@ class NewsBot:
         return result
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
-        """Обрезает текст, сохраняя целые абзацы и предложения"""
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         max_len = max_len - 100
         
@@ -784,179 +788,4 @@ class NewsBot:
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
         
         logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
-            if data:
-                items.append(data)
-                logger.info(f"✅ Global Research: {data['title'][:50]}...")
-        
-        logger.info(f"📊 Новых статей: {len(items)}")
-        return items
-
-    # ========== ПУБЛИКАЦИЯ ==========
-    async def publish(self, post: dict):
-        try:
-            title_en = post.get('title', '')
-            content_en = post.get('content', '')
-            url = post.get('url', '')
-            image_url = post.get('image')
-
-            if not title_en or not content_en:
-                logger.error("❌ Нет заголовка или содержимого")
-                return
-
-            logger.info(f"📝 Перевод: {title_en[:50]}...")
-
-            loop = asyncio.get_event_loop()
-            title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            content_ru = await loop.run_in_executor(None, self._translate, content_en)
-
-            # Очистка переведенного текста
-            title_ru = clean_title(title_ru)
-            content_ru = clean_content(content_ru)
-
-            # Сохраняем метаданные
-            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
-
-            # Формируем сообщение (без эмодзи в заголовке)
-            title_escaped = html.escape(title_ru)
-            
-            # Обрезаем текст
-            content_for_caption = self._truncate_text(content_ru, is_caption=True)
-            message = f"*{title_escaped}*\n\n{content_for_caption}"
-            
-            # Проверяем длину сообщения
-            if len(message) > MAX_CAPTION:
-                content_for_caption = self._truncate_to_last_sentence(content_ru, MAX_CAPTION - len(f"*{title_escaped}*\n\n") - 10)
-                message = f"*{title_escaped}*\n\n{content_for_caption}"
-
-            # Публикация с фото
-            if image_url:
-                logger.info(f"🖼️ Загрузка изображения...")
-                img_response = fetch_url(image_url, timeout=15)
-                
-                if img_response and img_response.status_code == 200:
-                    content_type = img_response.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en, image_url)
-                            self._log_post(url, title_en)
-                            return
-                        except TelegramError as e:
-                            if "caption is too long" in str(e).lower():
-                                shorter_msg = f"*{title_escaped}*"
-                                await self.bot.send_photo(
-                                    chat_id=CHANNEL_ID,
-                                    photo=img_response.content,
-                                    caption=shorter_msg,
-                                    parse_mode='Markdown'
-                                )
-                                logger.info("✅ Опубликовано С ФОТО (короткий текст)")
-                                self._mark_sent(url, title_en, content_en, image_url)
-                                self._log_post(url, title_en)
-                                return
-                            else:
-                                logger.warning(f"Ошибка фото: {e}")
-                    else:
-                        logger.warning(f"Не изображение: {content_type}")
-                else:
-                    logger.warning("Не удалось загрузить изображение")
-
-            # Публикация текстом
-            logger.info("📝 Публикация текстом")
-            text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"*{title_escaped}*\n\n{text_content}"
-            
-            if len(text_message) > MAX_MESSAGE:
-                text_content = self._truncate_to_last_sentence(content_ru, MAX_MESSAGE - len(f"*{title_escaped}*\n\n") - 10)
-                text_message = f"*{title_escaped}*\n\n{text_content}"
-            
-            await self.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text_message,
-                parse_mode='Markdown',
-                disable_web_page_preview=True
-            )
-            logger.info("✅ Опубликовано ТЕКСТОМ")
-
-            self._mark_sent(url, title_en, content_en, image_url)
-            self._log_post(url, title_en)
-
-        except TelegramError as e:
-            error_msg = str(e)
-            if "Can't parse entities" in error_msg:
-                logger.warning("Ошибка Markdown, отправляем без форматирования")
-                try:
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=f"{title_ru}\n\n{content_ru}",
-                        parse_mode=None
-                    )
-                    self._mark_sent(url, title_en, content_en, image_url)
-                    self._log_post(url, title_en)
-                except Exception as e2:
-                    logger.error(f"Ошибка: {e2}")
-            else:
-                logger.error(f"Ошибка Telegram: {e}")
-        except Exception as e:
-            logger.error(f"Ошибка публикации: {e}")
-
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
-    async def run_once(self):
-        logger.info("=" * 50)
-        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
-        logger.info("=" * 50)
-
-        news = await self.fetch_news()
-
-        if not news:
-            logger.info("📭 Новых статей нет")
-            return
-
-        if not self._can_post():
-            logger.info("⏸️ Публикация отложена")
-            return
-
-        await self.publish(news[0])
-
-    async def run_forever(self):
-        logger.info("🤖 Бот запущен")
-        while True:
-            try:
-                await self.run_once()
-                delay = self._next_delay()
-                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка: {e}")
-                await asyncio.sleep(300)
-
-
-async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан")
-        return
-
-    bot = NewsBot()
-    if 'GITHUB_ACTIONS' in os.environ:
-        await bot.run_once()
-    else:
-        await bot.run_forever()
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+        gr_articles = await asyncio.get_event_loop().
