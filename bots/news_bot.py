@@ -788,4 +788,171 @@ class NewsBot:
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
         
         logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data:
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+        
+        logger.info(f"📊 Новых статей: {len(items)}")
+        return items
+
+    # ========== ПУБЛИКАЦИЯ ==========
+    async def publish(self, post: dict):
+        try:
+            title_en = post.get('title', '')
+            content_en = post.get('content', '')
+            url = post.get('url', '')
+            image_url = post.get('image')
+
+            if not title_en or not content_en:
+                logger.error("❌ Нет заголовка или содержимого")
+                return
+
+            logger.info(f"📝 Перевод: {title_en[:50]}...")
+
+            loop = asyncio.get_event_loop()
+            title_ru = await loop.run_in_executor(None, self._translate, title_en)
+            content_ru = await loop.run_in_executor(None, self._translate, content_en)
+
+            title_ru = clean_title(title_ru)
+            content_ru = clean_content(content_ru)
+
+            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
+            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+
+            title_escaped = html.escape(title_ru)
+            content_for_caption = self._truncate_text(content_ru, is_caption=True)
+            message = f"*{title_escaped}*\n\n{content_for_caption}"
+            
+            if len(message) > MAX_CAPTION:
+                content_for_caption = self._truncate_to_last_sentence(content_ru, MAX_CAPTION - len(f"*{title_escaped}*\n\n") - 10)
+                message = f"*{title_escaped}*\n\n{content_for_caption}"
+
+            if image_url:
+                logger.info(f"🖼️ Загрузка изображения...")
+                img_response = fetch_url(image_url, timeout=15)
+                
+                if img_response and img_response.status_code == 200:
+                    content_type = img_response.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        try:
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID,
+                                photo=img_response.content,
+                                caption=message,
+                                parse_mode='Markdown'
+                            )
+                            logger.info("✅ Опубликовано С ФОТО")
+                            self._mark_sent(url, title_en, content_en, image_url)
+                            self._log_post(url, title_en)
+                            return
+                        except TelegramError as e:
+                            if "caption is too long" in str(e).lower():
+                                shorter_msg = f"*{title_escaped}*"
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=img_response.content,
+                                    caption=shorter_msg,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info("✅ Опубликовано С ФОТО (короткий текст)")
+                                self._mark_sent(url, title_en, content_en, image_url)
+                                self._log_post(url, title_en)
+                                return
+                            else:
+                                logger.warning(f"Ошибка фото: {e}")
+                    else:
+                        logger.warning(f"Не изображение: {content_type}")
+                else:
+                    logger.warning("Не удалось загрузить изображение")
+
+            logger.info("📝 Публикация текстом")
+            text_content = self._truncate_text(content_ru, is_caption=False)
+            text_message = f"*{title_escaped}*\n\n{text_content}"
+            
+            if len(text_message) > MAX_MESSAGE:
+                text_content = self._truncate_to_last_sentence(content_ru, MAX_MESSAGE - len(f"*{title_escaped}*\n\n") - 10)
+                text_message = f"*{title_escaped}*\n\n{text_content}"
+            
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=text_message,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
+            )
+            logger.info("✅ Опубликовано ТЕКСТОМ")
+
+            self._mark_sent(url, title_en, content_en, image_url)
+            self._log_post(url, title_en)
+
+        except TelegramError as e:
+            error_msg = str(e)
+            if "Can't parse entities" in error_msg:
+                logger.warning("Ошибка Markdown, отправляем без форматирования")
+                try:
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=f"{title_ru}\n\n{content_ru}",
+                        parse_mode=None
+                    )
+                    self._mark_sent(url, title_en, content_en, image_url)
+                    self._log_post(url, title_en)
+                except Exception as e2:
+                    logger.error(f"Ошибка: {e2}")
+            else:
+                logger.error(f"Ошибка Telegram: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка публикации: {e}")
+
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
+    async def run_once(self):
+        logger.info("=" * 50)
+        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
+        logger.info("=" * 50)
+
+        news = await self.fetch_news()
+
+        if not news:
+            logger.info("📭 Новых статей нет")
+            return
+
+        if not self._can_post():
+            logger.info("⏸️ Публикация отложена")
+            return
+
+        await self.publish(news[0])
+
+    async def run_forever(self):
+        logger.info("🤖 Бот запущен")
+        while True:
+            try:
+                await self.run_once()
+                delay = self._next_delay()
+                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
+                await asyncio.sleep(delay)
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка: {e}")
+                await asyncio.sleep(300)
+
+
+async def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN не задан")
+        return
+    if not CHANNEL_ID:
+        logger.error("❌ CHANNEL_ID не задан")
+        return
+
+    bot = NewsBot()
+    if 'GITHUB_ACTIONS' in os.environ:
+        await bot.run_once()
+    else:
+        await bot.run_forever()
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
