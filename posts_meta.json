@@ -1,12 +1,5 @@
 {
   "posts": {
-    "a0d2ff27de1c2ee1": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/hungary-election-orban-magyar-0d0cafc08176a001218837254bc0c2a4",
-      "original_title": "Magyar wants to take over as Hungary's prime minister as early as May 5",
-      "original_content_preview": "Hungarian voters have ousted long-serving Prime Minister Viktor Orbán after 16 years in power, rejecting the authoritarian policies and global far-right movement that he embodied in favor of a pro-European challenger in a bombshell election result with global repercussions. In a speech to tens of thousands of jubilant supporters at a victory party along the Danube River on Sunday in Budapest, Péter Magyar said his voters had rewritten Hungarian history. Many residents of the Hungarian capital Bu",
-      "time": "2026-04-14T17:41:47.059421+00:00"
-    },
     "b881d613f4b00171": {
       "source": "InfoBrics",
       "url": "https://infobrics.org/en/post/91176/",
@@ -1476,6 +1469,13 @@
       "original_title": "Gunfire breaks out in Philippine Senate where authorities tried to arrest a senator",
       "original_content_preview": "A burst of gunfire rang out Wednesday night in the Philippine Senate, where authorities have tried to arrest a senator who is wanted by the International Criminal Court for a charge of crime against humanity, an Associated Press journalist and other witnesses said. A burst of gunfire rang out Wednesday night in the Philippine Senate, where authorities have tried to arrest a senator, who is wanted by the International Criminal Court for a charge of crime against humanity, an Associated Press jour",
       "time": "2026-05-14T16:57:31.042016+00:00"
+    },
+    "c71619e380d63dad": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/morocco-united-states-soldiers-remains-recovered-1f53adf0633974fa5da4a8f0b6ef68ce",
+      "original_title": "Remains of 2nd US soldier who went missing during military exercises in Morocco have been recovered",
+      "original_content_preview": "U.S and Moroccan military forces take part in the 20th edition of the African Lion military exercise, in Tantan, south of Agadir, Morocco, Friday, May 31, 2024. CASABLANCA, Morocco — The remains of the second U.S. Army soldier who went missing during military exercises in Morocco have been recovered, the Army said Wednesday, ending a multinational search operation that deployed air, naval and artificial intelligence assets. The soldier was identified as Spc. Mariyah Symone Collington of Taveres,",
+      "time": "2026-05-14T18:54:01.328275+00:00"
     }
   }
 }
