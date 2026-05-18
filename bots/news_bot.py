@@ -310,7 +310,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'):
@@ -323,32 +322,26 @@ class NewsBot:
                 return None
             title = clean_text(title)
 
-            # Изображение
             image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
                 image = None
 
-            # Контент - полный текст статьи
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
-            # Удаляем мусорные элементы
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'figure']):
                 tag.decompose()
 
-            # Собираем все параграфы подряд, без разрывов
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                # Фильтруем короткие и подписи к фото
                 if len(text) > 60 and not text.startswith('FILE -') and not text.startswith('This photo'):
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                # Останавливаемся после 8-10 параграфов (достаточно для перевода)
                 if len(paragraphs) >= 8:
                     break
 
@@ -505,7 +498,8 @@ class NewsBot:
         items = []
         
         logger.info("📰 AP News...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles):
+        ap_list = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
+        for a in ap_list:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, a['url'])
                 if data:
@@ -513,7 +507,8 @@ class NewsBot:
                     logger.info(f"✅ AP: {data['title'][:40]}...")
 
         logger.info("📰 InfoBrics...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles):
+        ib_list = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for a in ib_list:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
                 if data:
@@ -521,7 +516,8 @@ class NewsBot:
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
         logger.info("📰 Global Research...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles):
+        gr_list = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for a in gr_list:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
                 if data:
@@ -547,17 +543,22 @@ class NewsBot:
             title_ru = clean_text(await loop.run_in_executor(None, self._translate, title_en))
             content_ru = clean_text(await loop.run_in_executor(None, self._translate, content_en))
 
-            # Сохраняем мета
             pid = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(pid, post['source'], url, title_en, content_en[:300])
 
+            title_escaped = html.escape(title_ru)
+            
             # Формируем пост
             msg_text = self._truncate_text(content_ru, is_caption=True)
-            message = f"*{html.escape(title_ru)}*\n\n{msg_text}"
+            message = f"*{title_escaped}*\n\n{msg_text}"
 
+            # Проверяем длину подписи
             if len(message) > MAX_CAPTION:
-                msg_text = self._truncate_sentence(content_ru, MAX_CAPTION - len(f"*{title_ru}*\n\n") - 10)
-                message = f"*{html.escape(title_ru)}*\n\n{msg_text}"
+                # Вычисляем доступное место для текста
+                title_len = len(f"*{title_escaped}*\n\n")
+                max_text_len = MAX_CAPTION - title_len - 5
+                msg_text = self._truncate_sentence(content_ru, max_text_len)
+                message = f"*{title_escaped}*\n\n{msg_text}"
 
             # Публикация с фото
             if img:
@@ -565,14 +566,25 @@ class NewsBot:
                 resp = fetch_url(img, timeout=15)
                 if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
                     try:
-                        await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=message, parse_mode='Markdown')
+                        await self.bot.send_photo(
+                            chat_id=CHANNEL_ID, 
+                            photo=resp.content, 
+                            caption=message, 
+                            parse_mode='Markdown'
+                        )
                         logger.info("✅ С ФОТО")
                         self._mark_sent(url, title_en, content_en, img)
                         self._log_post(url, title_en)
                         return
                     except TelegramError as e:
                         if "caption is too long" in str(e).lower():
-                            await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=f"*{html.escape(title_ru)}*", parse_mode='Markdown')
+                            # Публикуем только заголовок с фото
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID, 
+                                photo=resp.content, 
+                                caption=f"*{title_escaped}*", 
+                                parse_mode='Markdown'
+                            )
                             logger.info("✅ ФОТО (коротко)")
                             self._mark_sent(url, title_en, content_en, img)
                             self._log_post(url, title_en)
@@ -581,21 +593,35 @@ class NewsBot:
                             logger.warning(f"Ошибка фото: {e}")
 
             # Без фото
-            text_msg = f"*{html.escape(title_ru)}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
-            if len(text_msg) > MAX_MESSAGE:
-                text_msg = f"*{html.escape(title_ru)}*\n\n{self._truncate_sentence(content_ru, MAX_MESSAGE - len(f"*{title_ru}*\n\n") - 10)}"
-            await self.bot.send_message(chat_id=CHANNEL_ID, text=text_msg, parse_mode='Markdown')
+            text_content = self._truncate_text(content_ru, is_caption=False)
+            text_message = f"*{title_escaped}*\n\n{text_content}"
+            
+            if len(text_message) > MAX_MESSAGE:
+                title_len = len(f"*{title_escaped}*\n\n")
+                max_text_len = MAX_MESSAGE - title_len - 10
+                text_content = self._truncate_sentence(content_ru, max_text_len)
+                text_message = f"*{title_escaped}*\n\n{text_content}"
+            
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID, 
+                text=text_message, 
+                parse_mode='Markdown'
+            )
             logger.info("✅ ТЕКСТОМ")
             self._mark_sent(url, title_en, content_en, img)
             self._log_post(url, title_en)
 
         except TelegramError as e:
             if "Can't parse entities" in str(e):
-                await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
+                await self.bot.send_message(
+                    chat_id=CHANNEL_ID, 
+                    text=f"{title_ru}\n\n{content_ru}", 
+                    parse_mode=None
+                )
             else:
                 logger.error(f"Ошибка: {e}")
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Ошибка публикации: {e}")
 
     async def run_once(self):
         logger.info("=" * 40)
