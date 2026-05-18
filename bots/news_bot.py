@@ -80,19 +80,87 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner']
+    """Улучшенное извлечение изображений для AP News и других сайтов"""
+    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner', 'avatar', 'button']
     
+    # 1. Open Graph image (самый надежный)
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
         if img.startswith('//'):
             img = 'https:' + img
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
+            logger.info(f"Найдено og:image: {img[:80]}...")
             return img
     
+    # 2. Twitter image
+    meta = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta and meta.get('content'):
+        img = meta['content']
+        if img.startswith('//'):
+            img = 'https:' + img
+        if img.startswith('http') and not any(x in img.lower() for x in exclude):
+            logger.info(f"Найдено twitter:image: {img[:80]}...")
+            return img
+    
+    # 3. Поиск в article/main контейнере
     container = soup.find('article') or soup.find('main')
     if container:
+        best_img = None
+        max_size = 0
+        
         for img in container.find_all('img'):
+            src = img.get('src') or img.get('data-src')
+            if not src:
+                continue
+            
+            if src.startswith('//'):
+                src = 'https:' + src
+            elif src.startswith('/'):
+                src = urljoin(base_url, src)
+            
+            if not src.startswith('http'):
+                continue
+            
+            # Пропускаем мусор
+            if any(x in src.lower() for x in exclude):
+                continue
+            
+            # Проверяем размеры
+            w = img.get('width', '')
+            h = img.get('height', '')
+            
+            if w and h:
+                try:
+                    w_int = int(w)
+                    h_int = int(h)
+                    # Берем изображения больше 400x300
+                    if w_int >= 400 and h_int >= 300 and w_int * h_int > max_size:
+                        max_size = w_int * h_int
+                        best_img = src
+                except:
+                    pass
+            
+            # Если нет информации о размерах, но классы указывают на главное изображение
+            if not best_img:
+                classes = img.get('class', [])
+                class_str = ' '.join(classes).lower()
+                if 'hero' in class_str or 'featured' in class_str or 'lead' in class_str or 'main' in class_str:
+                    best_img = src
+            
+            # Если нашли подходящее, возвращаем
+            if best_img and max_size > 0:
+                logger.info(f"Найдено изображение по размеру: {best_img[:80]}...")
+                return best_img
+        
+        if best_img:
+            logger.info(f"Найдено изображение по классу: {best_img[:80]}...")
+            return best_img
+    
+    # 4. Поиск во всех figure
+    for figure in soup.find_all('figure'):
+        img = figure.find('img')
+        if img:
             src = img.get('src') or img.get('data-src')
             if src:
                 if src.startswith('//'):
@@ -100,16 +168,28 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 elif src.startswith('/'):
                     src = urljoin(base_url, src)
                 if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                    w = img.get('width', '')
-                    h = img.get('height', '')
-                    if w and h:
-                        try:
-                            if int(w) >= 400 and int(h) >= 300:
-                                return src
-                        except:
-                            pass
-                    elif 'hero' in src.lower() or 'featured' in src.lower():
+                    logger.info(f"Найдено изображение в figure: {src[:80]}...")
+                    return src
+    
+    # 5. Поиск по data-src (для lazy loading)
+    for img in soup.find_all('img', {'data-src': re.compile(r'\.(jpg|jpeg|png|webp)')}):
+        src = img['data-src']
+        if src.startswith('//'):
+            src = 'https:' + src
+        elif src.startswith('/'):
+            src = urljoin(base_url, src)
+        if src.startswith('http') and not any(x in src.lower() for x in exclude):
+            w = img.get('width', '')
+            h = img.get('height', '')
+            if w and h:
+                try:
+                    if int(w) >= 400 and int(h) >= 300:
+                        logger.info(f"Найдено data-src: {src[:80]}...")
                         return src
+                except:
+                    pass
+    
+    logger.warning("Изображение не найдено")
     return None
 
 
@@ -310,6 +390,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base = f'https://{url.split("/")[2]}'
 
+            # Заголовок
             title = None
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'):
@@ -321,37 +402,50 @@ class NewsBot:
             if not title:
                 return None
             title = clean_text(title)
+            logger.info(f"Заголовок: {title[:60]}...")
 
+            # Изображение
             image = extract_image_url(soup, base)
-            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                image = None
+            if image:
+                img_hash = hashlib.md5(image.encode()).hexdigest()
+                if img_hash in IMAGE_HASH_CACHE:
+                    logger.info(f"Изображение уже использовалось, пропускаем")
+                    image = None
+                else:
+                    logger.info(f"Найдено новое изображение")
 
+            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
+            # Удаляем мусор
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'figure']):
                 tag.decompose()
 
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
+                # Фильтруем короткие параграфы и подписи
                 if len(text) > 60 and not text.startswith('FILE -') and not text.startswith('This photo'):
                     text = clean_text(text)
-                    if text:
+                    if text and len(text) > 40:
                         paragraphs.append(text)
                 if len(paragraphs) >= 8:
                     break
 
             if len(paragraphs) < 2:
+                logger.warning(f"Недостаточно параграфов: {len(paragraphs)}")
                 return None
 
             content = '\n\n'.join(paragraphs)
             if len(content) < 200:
+                logger.warning(f"Контент слишком короткий: {len(content)} символов")
                 return None
 
+            logger.info(f"Контент: {len(content)} символов, {len(paragraphs)} параграфов")
             return {'title': title, 'content': content, 'image': image, 'source': 'AP News', 'url': url}
         except Exception as e:
             logger.error(f"AP News парсинг {url}: {e}")
@@ -536,6 +630,7 @@ class NewsBot:
             img = post.get('image')
 
             if not title_en or not content_en:
+                logger.error("Нет заголовка или контента")
                 return
 
             logger.info(f"📝 Перевод: {title_en[:40]}...")
@@ -554,7 +649,6 @@ class NewsBot:
 
             # Проверяем длину подписи
             if len(message) > MAX_CAPTION:
-                # Вычисляем доступное место для текста
                 title_len = len(f"*{title_escaped}*\n\n")
                 max_text_len = MAX_CAPTION - title_len - 5
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
@@ -562,37 +656,45 @@ class NewsBot:
 
             # Публикация с фото
             if img:
-                logger.info(f"🖼️ Загрузка...")
+                logger.info(f"🖼️ Загрузка изображения: {img[:80]}...")
                 resp = fetch_url(img, timeout=15)
-                if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
-                    try:
-                        await self.bot.send_photo(
-                            chat_id=CHANNEL_ID, 
-                            photo=resp.content, 
-                            caption=message, 
-                            parse_mode='Markdown'
-                        )
-                        logger.info("✅ С ФОТО")
-                        self._mark_sent(url, title_en, content_en, img)
-                        self._log_post(url, title_en)
-                        return
-                    except TelegramError as e:
-                        if "caption is too long" in str(e).lower():
-                            # Публикуем только заголовок с фото
+                if resp and resp.status_code == 200:
+                    content_type = resp.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        try:
                             await self.bot.send_photo(
                                 chat_id=CHANNEL_ID, 
                                 photo=resp.content, 
-                                caption=f"*{title_escaped}*", 
+                                caption=message, 
                                 parse_mode='Markdown'
                             )
-                            logger.info("✅ ФОТО (коротко)")
+                            logger.info("✅ Опубликовано С ФОТО")
                             self._mark_sent(url, title_en, content_en, img)
                             self._log_post(url, title_en)
                             return
-                        else:
-                            logger.warning(f"Ошибка фото: {e}")
+                        except TelegramError as e:
+                            if "caption is too long" in str(e).lower():
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID, 
+                                    photo=resp.content, 
+                                    caption=f"*{title_escaped}*", 
+                                    parse_mode='Markdown'
+                                )
+                                logger.info("✅ Опубликовано С ФОТО (только заголовок)")
+                                self._mark_sent(url, title_en, content_en, img)
+                                self._log_post(url, title_en)
+                                return
+                            else:
+                                logger.warning(f"Ошибка отправки фото: {e}")
+                    else:
+                        logger.warning(f"Не изображение: {content_type}")
+                else:
+                    logger.warning(f"Не удалось загрузить изображение, статус: {resp.status_code if resp else 'None'}")
+            else:
+                logger.info("📷 Изображение не найдено для этой статьи")
 
-            # Без фото
+            # Публикация без фото
+            logger.info("📝 Публикация текстом")
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
@@ -607,40 +709,42 @@ class NewsBot:
                 text=text_message, 
                 parse_mode='Markdown'
             )
-            logger.info("✅ ТЕКСТОМ")
+            logger.info("✅ Опубликовано ТЕКСТОМ")
             self._mark_sent(url, title_en, content_en, img)
             self._log_post(url, title_en)
 
         except TelegramError as e:
             if "Can't parse entities" in str(e):
+                logger.warning("Ошибка Markdown, отправляем без форматирования")
                 await self.bot.send_message(
                     chat_id=CHANNEL_ID, 
                     text=f"{title_ru}\n\n{content_ru}", 
                     parse_mode=None
                 )
             else:
-                logger.error(f"Ошибка: {e}")
+                logger.error(f"Ошибка Telegram: {e}")
         except Exception as e:
             logger.error(f"Ошибка публикации: {e}")
 
     async def run_once(self):
         logger.info("=" * 40)
-        logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
+        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
         news = await self.fetch_news()
         if not news:
-            logger.info("📭 Нет статей")
+            logger.info("📭 Новых статей нет")
             return
         if not self._can_post():
-            logger.info("⏸️ Отложено")
+            logger.info("⏸️ Публикация отложена (ограничения)")
             return
         await self.publish(news[0])
 
     async def run_forever(self):
+        logger.info("🤖 Бот запущен в бесконечном режиме")
         while True:
             try:
                 await self.run_once()
                 delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
-                logger.info(f"⏰ Следующий через {delay // 60} мин")
+                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
                 logger.error(f"Критическая ошибка: {e}")
