@@ -1,12 +1,5 @@
 {
   "posts": {
-    "7db2a2083a38afbd": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/germany-iran-crown-prince-reza-pahlavi-liquid-0c2412ac58bb8e1b538c5e4f12abe381",
-      "original_title": "Iran’s exiled crown prince Reza Pahlavi splattered with red liquid in Berlin",
-      "original_content_preview": "Iran’s exiled Crown Prince Reza Pahlavi was splattered with red liquid as he left a building after a news conference in Berlin. Pahlavi was leaving Germany’s federal press conference building on Thursday when the incident occurred. Iran’s Reza Pahlavi, exiled son of Shah Reza Pahlavi, is protected by security after he was attacked with a red fluid, following a news conference in Berlin, Germany, Thursday, April 23, 2026. Iran’s Reza Pahlavi, exiled son of Shah Reza Pahlavi, waves to supporters a",
-      "time": "2026-04-24T10:53:33.951888+00:00"
-    },
     "c603cfc3e290283b": {
       "source": "AP News",
       "url": "https://apnews.com/article/lebanon-israel-hezbollah-us-talks-ceasefire-washington-e7f26e207fc7543fe1f25a5318ff9ce3",
@@ -1147,6 +1140,13 @@
       "original_title": "Trump says a deal with Iran and opening of Strait of Hormuz are 'largely negotiated'",
       "preview": "U.S. Secretary of State Marco Rubio said Saturday that some progress had been made on negotiations with Iran and that a diplomatic solution remained Washington’s preferred outcome.\n\nIran’s President Masoud Pezeshkian and Foreign Minister Abbas Araghchi met on Saturday with Pakistan’s army chief Asim",
       "time": "2026-05-24T07:14:28.677453+00:00"
+    },
+    "c4351dad5d52c219": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/ebola-congo-tents-treatment-fire-e6fb1898865ba6848aa1567aebe7ba30",
+      "original_title": "A second Ebola treatment center is set ablaze in eastern Congo, with 18 suspected cases fleeing",
+      "preview": "An incident manager on the Democratic Republic of the Congo’s national Ebola response team said on Friday that suspected Ebola patients have mixed with the general population at the region’s general hospitals.\n\nAs the second of three Ebola treatment centers was burned in eastern Congo on Saturday, C",
+      "time": "2026-05-24T11:41:32.316967+00:00"
     }
   }
 }
