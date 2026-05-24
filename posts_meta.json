@@ -1,12 +1,5 @@
 {
   "posts": {
-    "147a30c92bc66842": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/us-iran-war-hormuz-israel-pakistan-ceasefire-april-23-2026-368b922ae2f4c874df8a133491eeffe8",
-      "original_title": "Trump orders US military to 'shoot and kill' Iranian small boats choking Strait of Hormuz",
-      "original_content_preview": "U.S. President Donald Trump said Thursday he has ordered the U.S. military to “shoot and kill” small Iranian boats that deploy mines to choke traffic through the Strait of Hormuz. The U.S. military on Thursday seized another tanker associated with the smuggling of Iranian oil, ratcheting up a standoff with Iran a day after its paramilitary Revolutionary Guards took control of two vessels in the crucial Strait of Hormuz. Iran’s exiled Crown Prince Reza Pahlavi was splattered with red liquid as he",
-      "time": "2026-04-24T07:05:06.620733+00:00"
-    },
     "7db2a2083a38afbd": {
       "source": "AP News",
       "url": "https://apnews.com/article/germany-iran-crown-prince-reza-pahlavi-liquid-0c2412ac58bb8e1b538c5e4f12abe381",
@@ -1147,6 +1140,13 @@
       "original_title": "Deadliest coal mine explosion in China in years kills 90 people, state media say",
       "preview": "In this photo released by Xinhua News Agency, medical staff attend to an injured worker at a hospital in the aftermath of an explosion at Changzhi city’s Liushenyu coal mine in Qinyuan county, northern China’s Shanxi Province on Saturday, May 23, 2026.\n\nIn this photo released by Xinhua News Agency, ",
       "time": "2026-05-23T22:33:38.537118+00:00"
+    },
+    "7531730870d8d311": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/iran-united-states-war-ceasefire-negotiations-hormuz-1c283f26d037102cc5e6f798546d0e59",
+      "original_title": "Trump says a deal with Iran and opening of Strait of Hormuz are 'largely negotiated'",
+      "preview": "U.S. Secretary of State Marco Rubio said Saturday that some progress had been made on negotiations with Iran and that a diplomatic solution remained Washington’s preferred outcome.\n\nIran’s President Masoud Pezeshkian and Foreign Minister Abbas Araghchi met on Saturday with Pakistan’s army chief Asim",
+      "time": "2026-05-24T07:14:28.677453+00:00"
     }
   }
 }
