@@ -1,12 +1,5 @@
 {
   "posts": {
-    "09970afb9a22f715": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/king-charles-iii-us-state-visit-trump-dae21842f51459be5fc8c22ef86db296",
-      "original_title": "King Charles III arrives at the White House on a delicate mission to restore the UK-US relationship",
-      "original_content_preview": "King Charles III and Queen Camilla arrived at the White House Monday for a four-day U.S. visit celebrating America’s 250th anniversary. President Donald Trump and first lady Melania Trump welcomed the royal couple for tea and a look at a new White House beehive. King Charles III and Queen Camilla arrived in the U.S. Monday for a four-day state visit marking America’s 250th anniversary. The trip comes amid strained ties, including disagreements between the U.K. government and President Donald Tru",
-      "time": "2026-04-28T08:18:52.350589+00:00"
-    },
     "9a3fb4babacd6521": {
       "source": "AP News",
       "url": "https://apnews.com/article/carney-canada-sovereign-wealth-fund-4be2e01a820382f42dcf7af7cc4f90c1",
@@ -1035,6 +1028,13 @@
       "original_title": "China executes man for poisoning gaming tycoon linked to Netflix's '3 Body Problem'",
       "preview": "TAIPEI, Taiwan — Chinese authorities have executed a man convicted of using poison to kill a billionaire gaming tycoon linked to the Netflix adaptation of “The Three-Body Problem” over a professional dispute, local media reported Tuesday.\n\nXu Yao was found guilty of killing Lin Qi, the founder of th",
       "time": "2026-05-27T22:39:03.826413+00:00"
+    },
+    "c28e4d39927cc7e8": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/mexico-cubans-deported-venezuelans-human-rights-trump-9a3bbf41ad33384675983cbf748c330a",
+      "original_title": "US has deported thousands of Cubans and Venezuelans to danger in Mexico, Human Rights Watch says",
+      "preview": "MEXICO CITY — The Trump administration has deported nearly 13,000Cubans,Venezuelansand other nationals to Mexico, where they are vulnerable to cartel violence in an unfamiliar country, a report byHuman Rights Watchreleased Wednesday said.\n\nWhile Mexico hasaccepted these types of deportations for yea",
+      "time": "2026-05-28T09:47:18.533570+00:00"
     }
   }
 }
