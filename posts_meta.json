@@ -1,12 +1,5 @@
 {
   "posts": {
-    "b75249e11cbd171a": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/iran-us-war-ceasefire-negotiations-strait-a4857f28d9b47e0170b65ced19451a25",
-      "original_title": "US denies Iran struck a military vessel during new effort to reopen Strait of Hormuz",
-      "original_content_preview": "Cargo ships are seen at sea near the Strait of Hormuz, as viewed from a rocky shoreline near Khor Fakkan, United Arab Emirates, Friday, May 1, 2026. Vehicles drive past a billboard with graphic showing Strait of Hormuz and sewn lips of U.S. President Donald Trump in a square in downtown Tehran, Iran, Saturday, May 2, 2026. A man stands in the water, appearing to fish, as bulk carriers, cargo ships, and service vessels line the horizon in the Strait of Hormuz off Bandar Abbas, Iran, Monday, April",
-      "time": "2026-05-04T19:06:09.098562+00:00"
-    },
     "ca8c1970120fea89": {
       "source": "AP News",
       "url": "https://apnews.com/article/europe-us-nato-troops-trump-germany-56adb70f611da5314bba9178bd4388b1",
@@ -937,6 +930,13 @@
       "original_title": "A bear injures 4 people in a residential area of Japan as attacks rise",
       "preview": "A bear has injured four people in a Japanese residential area in the latest case of attacks by the animals in the region. (Produced by Elaine Carroll)\n\nA bear walks on the premises of an office in Fukushima, Japan, Tuesday, June 2, 2026.\n\nThis image made from the security camera footage provided by ",
       "time": "2026-06-03T17:13:41.277473+00:00"
+    },
+    "33e51d26af3af9a8": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/iran-us-israel-lebanon-war-kuwait-ceasefire-3-june-2026-de2d1814c0f38252bf0383be859c870b",
+      "original_title": "Iran strikes Kuwait's main airport and kills 1 as ceasefire is tested again",
+      "preview": "The U.S. military said Tuesday that Iran fired missiles at Kuwait and Bahrain that failed or were shot down, and that the U.S. launched strikes on an Iranian facility in response.\n\nPeople gather on paddleboards in shallow water as cargo and service vessels are anchored in the Strait of Hormuz off Ba",
+      "time": "2026-06-03T22:06:34.559355+00:00"
     }
   }
 }
