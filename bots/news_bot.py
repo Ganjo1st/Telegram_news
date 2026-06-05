@@ -40,7 +40,7 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# Слова для фильтрации не-новостей (биографии, описания, фотосессии)
+# Слова для фильтрации не-новостей
 NON_NEWS_KEYWORDS = [
     'позирует фотографам', 'позёр', 'photo session', 'red carpet',
     'прибывают на показ', 'arrives at the premiere', 'poses for photographers',
@@ -49,7 +49,6 @@ NON_NEWS_KEYWORDS = [
     'умер в возрасте', 'passed away at age', 'career highlights',
 ]
 
-# Слова для определения актуальных новостей
 NEWS_KEYWORDS = [
     'заявил', 'сообщил', 'подчеркнул', 'отметил', 'рассказал', 'добавил',
     'нанес удар', 'атаковал', 'взорвался', 'убил', 'ранен', 'погиб',
@@ -74,9 +73,27 @@ SOURCE_PATTERNS = [
 ]
 
 
+def decode_html_entities(text: str) -> str:
+    """Декодирует HTML-сущности типа &quot; &amp; &lt; &gt; &apos;"""
+    if not text:
+        return text
+    # Заменяем основные HTML-сущности
+    text = text.replace('&quot;', '"')
+    text = text.replace('&amp;', '&')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&apos;', "'")
+    text = text.replace('&#39;', "'")
+    # Удаляем оставшиеся сущности (числовые)
+    text = re.sub(r'&#\d+;', '', text)
+    return text
+
+
 def clean_text(text: str) -> str:
     if not text:
         return ""
+    # Сначала декодируем HTML-сущности
+    text = decode_html_entities(text)
     for pattern in BRACKET_SOURCE_PATTERNS:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     for pattern in SOURCE_PATTERNS:
@@ -86,19 +103,17 @@ def clean_text(text: str) -> str:
 
 
 def is_news_content(text: str) -> bool:
-    """Проверяет, является ли текст новостью, а не биографией/описанием"""
+    """Проверяет, является ли текст новостью"""
     if not text:
         return False
     
     text_lower = text.lower()
     
-    # Проверяем на не-новости
     for keyword in NON_NEWS_KEYWORDS:
         if keyword.lower() in text_lower:
             logger.info(f"Фильтр: обнаружен не-новостной контент ('{keyword}')")
             return False
     
-    # Проверяем, есть ли хоть один новостной маркер
     has_news_marker = False
     for keyword in NEWS_KEYWORDS:
         if keyword.lower() in text_lower:
@@ -106,7 +121,6 @@ def is_news_content(text: str) -> bool:
             break
     
     if not has_news_marker and len(text_lower.split()) > 50:
-        # Если нет явных маркеров, но текст длинный, проверяем наличие событийных глаголов
         event_words = ['удар', 'атака', 'взрыв', 'пожар', 'смерть', 'погиб', 'ранен']
         for word in event_words:
             if word in text_lower:
@@ -130,30 +144,25 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлечение изображений — приоритет большим и релевантным"""
+    """Извлечение изображений"""
     exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner', 'avatar', 'button', 'profile']
     
-    # 1. Open Graph image
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
         if img.startswith('//'):
             img = 'https:' + img
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
-            logger.info(f"Найдено og:image")
             return img
     
-    # 2. Twitter image
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta and meta.get('content'):
         img = meta['content']
         if img.startswith('//'):
             img = 'https:' + img
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
-            logger.info(f"Найдено twitter:image")
             return img
     
-    # 3. Поиск в article/main
     container = soup.find('article') or soup.find('main')
     if container:
         for img in container.find_all('img'):
@@ -171,18 +180,15 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if any(x in src.lower() for x in exclude):
                 continue
             
-            # Проверяем размеры
             w = img.get('width', '')
             h = img.get('height', '')
             if w and h:
                 try:
                     if int(w) >= 400 and int(h) >= 300:
-                        logger.info(f"Найдено изображение {w}x{h}")
                         return src
                 except:
                     pass
     
-    # 4. Поиск в figure
     for figure in soup.find_all('figure'):
         img = figure.find('img')
         if img:
@@ -194,10 +200,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
                     src = urljoin(base_url, src)
                 if src.startswith('http') and not any(x in src.lower() for x in exclude):
                     if 'logo' not in src.lower() and 'icon' not in src.lower():
-                        logger.info(f"Найдено изображение в figure")
                         return src
     
-    logger.warning("Изображение не найдено")
     return None
 
 
@@ -378,9 +382,8 @@ class NewsBot:
                         if parent:
                             title = parent.get_text(strip=True)
                     if title and len(title) > 15:
-                        # Фильтруем по заголовку
-                        if not any(x in title.lower() for x in ['died at', 'dies at', 'passed away', 'obituary', 'biography']):
-                            articles.append({'url': url, 'title': clean_text(title)})
+                        title = clean_text(title)
+                        articles.append({'url': url, 'title': title})
             seen = set()
             unique = []
             for a in articles:
@@ -400,7 +403,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'):
@@ -412,23 +414,15 @@ class NewsBot:
             if not title:
                 return None
             
-            # Пропускаем некрологи и биографии
-            title_lower = title.lower()
-            if any(x in title_lower for x in ['dies', 'died', 'passed away', 'obituary', 'biography', 'career']):
-                logger.info(f"Пропущен некролог/биография: {title[:50]}")
-                return None
-            
             title = clean_text(title)
             logger.info(f"Заголовок: {title[:60]}...")
 
-            # Изображение
             image = extract_image_url(soup, base)
             if image:
                 img_hash = hashlib.md5(image.encode()).hexdigest()
                 if img_hash in IMAGE_HASH_CACHE:
                     image = None
 
-            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
@@ -442,7 +436,6 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 60:
-                    # Пропускаем подписи к фото
                     if text.startswith('FILE -') or text.startswith('This photo') or 'poses for' in text.lower():
                         continue
                     text = clean_text(text)
@@ -455,11 +448,7 @@ class NewsBot:
                 return None
 
             content = '\n\n'.join(paragraphs)
-            
-            # Финальная проверка на новостной характер
-            if not is_news_content(content):
-                logger.info(f"Пропущен не-новостной контент: {title[:40]}")
-                return None
+            content = clean_text(content)
             
             if len(content) < 200:
                 return None
@@ -482,8 +471,8 @@ class NewsBot:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 if title and len(title) > 10:
-                    if not any(x in title.lower() for x in ['obituary', 'dies', 'biography']):
-                        articles.append({'url': entry.link, 'title': clean_text(title)})
+                    title = clean_text(title)
+                    articles.append({'url': entry.link, 'title': title})
             return articles
         except Exception as e:
             logger.error(f"InfoBrics RSS: {e}")
@@ -506,9 +495,6 @@ class NewsBot:
                 if h1:
                     title = h1.get_text(strip=True)
             if not title or title.lower() in ['brics portal', 'portal']:
-                return None
-            
-            if any(x in title.lower() for x in ['obituary', 'dies', 'biography']):
                 return None
             
             title = clean_text(title)
@@ -536,9 +522,7 @@ class NewsBot:
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
-            
-            if not is_news_content(content):
-                return None
+            content = clean_text(content)
             
             if len(content) < 150:
                 return None
@@ -557,8 +541,8 @@ class NewsBot:
                 title = entry.get('title', '')
                 if title:
                     title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
-                    if not any(x in title.lower() for x in ['obituary', 'dies', 'biography']):
-                        articles.append({'url': entry.link, 'title': clean_text(title)})
+                    title = clean_text(title)
+                    articles.append({'url': entry.link, 'title': title})
             return articles
         except Exception as e:
             logger.error(f"GR RSS: {e}")
@@ -581,9 +565,6 @@ class NewsBot:
                 if h1:
                     title = h1.get_text(strip=True)
             if not title:
-                return None
-            
-            if any(x in title.lower() for x in ['obituary', 'dies', 'biography']):
                 return None
             
             title = clean_text(title)
@@ -611,9 +592,7 @@ class NewsBot:
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
-            
-            if not is_news_content(content):
-                return None
+            content = clean_text(content)
             
             if len(content) < 150:
                 return None
@@ -684,7 +663,6 @@ class NewsBot:
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
-            # Публикация с фото
             if img:
                 logger.info(f"🖼️ Загрузка...")
                 resp = fetch_url(img, timeout=15)
@@ -705,7 +683,6 @@ class NewsBot:
                         else:
                             logger.warning(f"Ошибка: {e}")
 
-            # Без фото
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
