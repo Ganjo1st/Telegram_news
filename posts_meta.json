@@ -1,12 +1,5 @@
 {
   "posts": {
-    "fd3ca732330ae565": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/hantavirus-cruise-ship-timeline-events-b9eb3985b547758b1e42dbab6ceb3887",
-      "original_title": "A timeline of the cruise ship hantavirus outbreak and when passengers fell sick",
-      "original_content_preview": "Giulia Gallo, Postdoctoral Scientist in the Viral Glycoproteins Group at The Pirbright Institute told The Associated Press that “the most important thing is not to create panic” as the transmission rate for the virus is very low. Three passengers have died and several others have been sickened by hantavirus on board the Dutch-flagged MV Hondius cruise ship, which is stuck off the coast of Cape Verde with nearly 150 people on board and was waiting Wednesday to head to Spain’s Canary Islands. An a",
-      "time": "2026-05-08T19:07:00.198040+00:00"
-    },
     "bbf79c786415b715": {
       "source": "AP News",
       "url": "https://apnews.com/article/iran-us-israel-war-may-8-2026-6490db55a65880a61a6233eff7acc68b",
@@ -972,6 +965,13 @@
       "original_title": "What to know about the ongoing protests and arrests outside a New Jersey detention center",
       "preview": "Clashes between demonstrators and law enforcement outside a New Jersey immigration detention center since late May have become the latest flashpoint for protests against President Donald Trump’s immigration crackdown. More than 80 people have been arrested following a series of protests at Delaney H",
       "time": "2026-06-07T17:55:01.706968+00:00"
+    },
+    "3eae85f48b3fb97c": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/jamaica-power-blackout-electricity-storm-1c537742e280fe88f6be884d32e1bf88",
+      "original_title": "Jamaica scrambles to restore power after rare islandwide blackout",
+      "preview": "PORT OF SPAIN, Trinidad — Jamaica’s national electricity provider said it was racing to restore service early Saturday, after an outage left the entire island without power overnight. The sole energy supplier in the country, Jamaica Public Service Company, confirmed the outage that began just after ",
+      "time": "2026-06-07T19:18:09.449268+00:00"
     }
   }
 }
