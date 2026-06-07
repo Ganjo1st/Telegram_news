@@ -1,12 +1,5 @@
 {
   "posts": {
-    "bbf79c786415b715": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/iran-us-israel-war-may-8-2026-6490db55a65880a61a6233eff7acc68b",
-      "original_title": "US says it fires on and disables 2 Iranian tankers trying to evade blockade",
-      "original_content_preview": "President Donald Trump told reporters in Washington that the ceasefire with Iran was holding. Trump also said Iran “trifled with us,” after the U.S. military said it intercepted Iranian attacks on three Navy ships in the Strait of Hormuz and “targeted Iranian military facilities responsible for attacking U.S. forces.” Iranian state media said Thursday that the country’s armed forces exchanged fire with “enemy units” on Qeshm Island in the Strait of Hormuz. No other details were reported. The U.S",
-      "time": "2026-05-08T21:18:39.776004+00:00"
-    },
     "812a0437fcb5c577": {
       "source": "AP News",
       "url": "https://apnews.com/article/britain-elections-labour-starmer-reform-farage-f17a122a0cfcc3595ef01f142517b0b6",
@@ -972,6 +965,13 @@
       "original_title": "Jamaica scrambles to restore power after rare islandwide blackout",
       "preview": "PORT OF SPAIN, Trinidad — Jamaica’s national electricity provider said it was racing to restore service early Saturday, after an outage left the entire island without power overnight. The sole energy supplier in the country, Jamaica Public Service Company, confirmed the outage that began just after ",
       "time": "2026-06-07T19:18:09.449268+00:00"
+    },
+    "2d9057c88469fee6": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/cuba-raul-castro-us-indictment-61ce86e4c1b45f0c79f5ebb767783b30",
+      "original_title": "Cuba ex-President Raúl Castro makes first appearance since US charges to celebrate birthday",
+      "preview": "Former Cuban President Raul Castro appeared for the first time in public since he was indicted by the U.S. Justice Department. He attended a ceremony at the Interior Ministry in Havana on Friday where government officials and high-ranking military officers celebrated Castro after his 95th birthday o",
+      "time": "2026-06-07T21:23:42.055897+00:00"
     }
   }
 }
