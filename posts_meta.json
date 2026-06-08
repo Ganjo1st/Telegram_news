@@ -1,26 +1,5 @@
 {
   "posts": {
-    "964caf0679be9638": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/alabama-redistricting-map-congress-voting-rights-trump-81f6a232ea75a9d62efe3e40f14f8488",
-      "original_title": "Alabama lawmakers pass plan for new US House primary if courts allow different districts",
-      "original_content_preview": "Protestors fill the halls in the Louisiana Legislature in Baton Rouge during a Senate committee hearing Friday, May 8, 2026 on redistricting. A demonstrator holds up a sign outside the Alabama Statehouse in Montgomery, Ala., on Thursday, May, 7 2026. Rep. Justin J. Pearson, D-Memphis, speaks during a rally after a special session of the state legislature to redraw U.S. Congressional voting maps Thursday, May 7, 2026, in Nashville, Tenn. Alabama state Sen. J. T. Waggoner listens to debate on SB 1",
-      "time": "2026-05-09T13:21:55.004322+00:00"
-    },
-    "351e4109b9919913": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/hantavirus-cruise-ship-e5b35d12be9dc30213d7a2b8b4955a88",
-      "original_title": "Spain readies for evacuations as a hantavirus-hit cruise ship heads for the Canary Islands",
-      "original_content_preview": "Despite a cruise ship outbreak of a rare rodent-borne illness, global health officials say the risk to the general public remains low because hantavirus germs do not easily spread between people. The U.S. agreed to send a plane to repatriate and quarantine about 17 Americans who are still on the ship who were on board the hantavirus-stricken cruise ship headed for the Canary Islands. An isolated staging area was being built at Tenerife’s Granadilla Port ahead of the arrival of the more than 140 ",
-      "time": "2026-05-09T15:20:22.745921+00:00"
-    },
-    "e8e28a74f6e3e265": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/russia-ukraine-war-moscow-parade-ceasefire-cde7ec7a0fb10a3e2563171b931485e8",
-      "original_title": "What Russia’s low‑key Victory Day celebrations reveal about Putin and the war in Ukraine",
-      "original_content_preview": "Ukrainian army officers lay flowers at a monument to pilots to mark Victory Day in World War II, in Kyiv, Ukraine, Friday, May 8, 2026, as the Russian attack on Ukraine continues. Actors attend a historical reenactment depicting the arrival of trains after the end of the war as a part of celebrations ahead of the 81st anniversary of the Soviet Union’s victory over Nazi Germany during World War II, at the Baltiysky railway station in St. Petersburg, Russia, Thursday, May 7, 2026. People lays flow",
-      "time": "2026-05-09T16:48:44.010770+00:00"
-    },
     "ea85c15afc3d80d6": {
       "source": "AP News",
       "url": "https://apnews.com/article/michigan-kids-soccer-shooting-acf3b28edc0ba652843b5dcd0d24d5c6",
@@ -972,6 +951,13 @@
       "original_title": "A 7.8 magnitude earthquake in the southern Philippines causes 4 deaths, damage and a tsunami",
       "preview": "A magnitude 7.8 earthquake has shaken part of the southern Philippines, and a tsunami was possible on some regional coasts. Power outages were reported and people were urged to go to higher ground. No further information on damage or casualties was immediately available. A magnitude 7.8 earthquake s",
       "time": "2026-06-08T12:03:48.159853+00:00"
+    },
+    "118da3954e6644f3": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/iran-us-ceasefire-hezbollah-israel-c16dc4917512f7436a3921a4b044b98b",
+      "original_title": "Israel and Iran trade strikes, threatening to drag region back to full-scale war",
+      "preview": "Israel struck Iran on Monday after being targeted by missiles, while a U.S. military base in Saudi Arabia came under fire in the most serious exchange of hostilities since an April ceasefire, raising the possibility of a return to heavy fighting and complicating mediation efforts to end the war. A l",
+      "time": "2026-06-08T16:57:23.216167+00:00"
     }
   }
 }
