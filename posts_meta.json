@@ -1,12 +1,5 @@
 {
   "posts": {
-    "812a0437fcb5c577": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/britain-elections-labour-starmer-reform-farage-f17a122a0cfcc3595ef01f142517b0b6",
-      "original_title": "Starmer says he won't quit after local elections deliver losses for Labour and wins for Reform UK",
-      "original_content_preview": "Britain’s Prime Minister Sir Keir Starmer meets Labour Party members at Kingsdown Methodist Church Hall, in Ealing, west London, Friday May 8, 2026, a day after the local elections. Reform UK leader Nigel Farage poses for a photo during a visit to Havering Town Hall, in Romford, England, Friday May 8, 2026, a day after the local elections. Britain’s Conservative Party leader Kemi Badenoch meets supporters in Westminster after the Tories took control of Westminster City Council from Labour in the",
-      "time": "2026-05-08T22:55:32.452073+00:00"
-    },
     "926683524ab8ca6b": {
       "source": "AP News",
       "url": "https://apnews.com/article/trump-doge-humanities-funding-cuts-dda1383436c41be08da3bbf7cc08818e",
@@ -972,6 +965,13 @@
       "original_title": "Cuba ex-President Raúl Castro makes first appearance since US charges to celebrate birthday",
       "preview": "Former Cuban President Raul Castro appeared for the first time in public since he was indicted by the U.S. Justice Department. He attended a ceremony at the Interior Ministry in Havana on Friday where government officials and high-ranking military officers celebrated Castro after his 95th birthday o",
       "time": "2026-06-07T21:23:42.055897+00:00"
+    },
+    "c244ea12b3174b7e": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/iran-us-ceasefire-hezbollah-israel-28d80744e192ae0d5cce73a5a08af906",
+      "original_title": "Israel says Iran launched missiles at it in first such bombardment since fragile ceasefire",
+      "preview": "Missiles were seen over the occupied West Bank Sunday after Israel said Iran has launched missiles at it in the first such bombardment since a fragile ceasefire took effect in early April, complicating mediation efforts for a deal to end the war. Israel struck Beirut’s southern suburbs without warni",
+      "time": "2026-06-08T07:03:38.913741+00:00"
     }
   }
 }
