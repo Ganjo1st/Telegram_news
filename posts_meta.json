@@ -1,12 +1,5 @@
 {
   "posts": {
-    "926683524ab8ca6b": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/trump-doge-humanities-funding-cuts-dda1383436c41be08da3bbf7cc08818e",
-      "original_title": "Judge rules Trump administration's cancellation of humanities grants was unconstitutional",
-      "original_content_preview": "President Donald Trump, right, speaks during a news conference with Elon Musk in the Oval Office of the White House, May 30, 2025, in Washington. The Trump administration’s cancellation of more than $100 million inhumanities grantsto scholars, writers, research groups and other organizations was unconstitutional, and the Department of Government Efficiency had no authority to end the funding, a federal judge in New York ruled on Thursday. U.S. District Judge Colleen McMahon in Manhattan sided wi",
-      "time": "2026-05-09T07:12:07.848166+00:00"
-    },
     "964caf0679be9638": {
       "source": "AP News",
       "url": "https://apnews.com/article/alabama-redistricting-map-congress-voting-rights-trump-81f6a232ea75a9d62efe3e40f14f8488",
@@ -972,6 +965,13 @@
       "original_title": "Israel says Iran launched missiles at it in first such bombardment since fragile ceasefire",
       "preview": "Missiles were seen over the occupied West Bank Sunday after Israel said Iran has launched missiles at it in the first such bombardment since a fragile ceasefire took effect in early April, complicating mediation efforts for a deal to end the war. Israel struck Beirut’s southern suburbs without warni",
       "time": "2026-06-08T07:03:38.913741+00:00"
+    },
+    "de9a94f3b4a09d2b": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/philippines-earthquake-mindanao-6e489739402863eaf40cbfd30a1b1cc7",
+      "original_title": "A 7.8 magnitude earthquake in the southern Philippines causes 4 deaths, damage and a tsunami",
+      "preview": "A magnitude 7.8 earthquake has shaken part of the southern Philippines, and a tsunami was possible on some regional coasts. Power outages were reported and people were urged to go to higher ground. No further information on damage or casualties was immediately available. A magnitude 7.8 earthquake s",
+      "time": "2026-06-08T12:03:48.159853+00:00"
     }
   }
 }
