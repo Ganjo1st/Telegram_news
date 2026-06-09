@@ -1,12 +1,5 @@
 {
   "posts": {
-    "1e3bde9089470991": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/uk-elections-starmer-labour-what-to-know-eb11ff39b1b74bbaf9f4ef6abfd60f64",
-      "original_title": "What to know about British elections that hammered Starmer's Labour Party",
-      "original_content_preview": "British Prime Minister Sir Keir Starmer speaking to the media after meeting Labour Party members during a visit to AFC Wimbledon in south London, Saturday May 9, 2026. British Prime Minister Sir Keir Starmer and Foreign Secretary David Lammy meeting Labour Party members during a visit to AFC Wimbledon in south London, Saturday May 9, 2026. Reform UK leader Nigel Farage speaks to supporters at Chelmsford City Racecourse, Friday May 8, 2026, in Essex, England, following the 2026 local election res",
-      "time": "2026-05-10T08:24:10.554917+00:00"
-    },
     "cc29f383597d7a24": {
       "source": "AP News",
       "url": "https://apnews.com/article/iran-us-war-0c25b2ca53ee90bc19bfbf6c44a66e6e",
@@ -944,6 +937,13 @@
       "original_title": "A flesh-eating cattle parasite spreads beyond Texas as new screwworm cases are found",
       "preview": "A ranchers arrivse for a news conference with U.S. Agriculture Secretary Brooke Rollins at the Knipling-Bushland U.S. Livestock Insects Research Laboratory in Kerrville, Texas, Monday, June 8, 2026. U.S. Agriculture Secretary Brooke Rollins, center, holds a news conference with ranchers, researchers",
       "time": "2026-06-09T07:18:50.044095+00:00"
+    },
+    "eb75ca8d88d2ffd6": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/cuba-embargo-blockade-fuel-old-cars-b3ac1b1ed82fe3c3d1999351ad31d67d",
+      "original_title": "Cuba's iconic antique cars sit idle as US energy blockade deepens fuel crisis",
+      "preview": "A worsening fuel crisis across Cuba is testing the island’s famed “almendrones,” the vintage American cars that serve as vital shared taxis and embody the island’s ingenuity and endurance. These days, many of the iconic gas-guzzling antique cars sit idle, casualties of fuel shortages that have gripp",
+      "time": "2026-06-09T11:41:03.849385+00:00"
     }
   }
 }
