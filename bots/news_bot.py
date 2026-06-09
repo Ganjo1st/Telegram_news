@@ -40,51 +40,30 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# Слова для фильтрации не-новостей
-NON_NEWS_KEYWORDS = [
-    'позирует фотографам', 'позёр', 'photo session', 'red carpet',
-    'прибывают на показ', 'arrives at the premiere', 'poses for photographers',
-    'walks the red carpet', 'attends the screening', 'biography', 'биография',
-    'родился', 'родилась', 'born in', 'died at age', 'скончалась в возрасте',
-    'умер в возрасте', 'passed away at age', 'career highlights',
+# Запрещенные темы (пропускаем)
+SKIP_TITLES = [
+    'died', 'dies', 'dead', 'killed', 'murdered', 'assassinated',
+    'passed away', 'obituary', 'death of', 'умер', 'скончался',
+    'biography', 'биография', 'birthday', 'родился', 'родилась',
+    'memorial', 'funeral', 'похороны', 'necrology',
 ]
 
-NEWS_KEYWORDS = [
-    'заявил', 'сообщил', 'подчеркнул', 'отметил', 'рассказал', 'добавил',
-    'нанес удар', 'атаковал', 'взорвался', 'убил', 'ранен', 'погиб',
-    'заключили сделку', 'подписали соглашение', 'объявил о', 'представил',
-    'обвинил', 'осудил', 'призвал', 'предупредил', 'угрожал',
-    'начались переговоры', 'достигнута договоренность', 'прекращение огня',
-    'военные', 'правительство', 'президент', 'министр', 'выборы',
-]
-
-# Паттерны для удаления мусора
-BRACKET_SOURCE_PATTERNS = [
-    r'\([^)]*AP[^)]*\)', r'\([^)]*АР[^)]*\)',
-    r'\([^)]*Associated Press[^)]*\)', r'\([^)]*InfoBrics[^)]*\)',
-    r'\([^)]*Global Research[^)]*\)', r'\([^)]*Photo[^)]*\)',
-]
-
-SOURCE_PATTERNS = [
-    r'— AP News$', r'\| AP News', r'AP News —',
-    r'— Global Research$', r'— InfoBrics$',
-    r'Источник:\s*\S+', r'По материалам\s*\S+',
-    r'Read more:', r'Click here',
+SKIP_CONTENT_KEYWORDS = [
+    'позирует фотографам', 'photo session', 'red carpet',
+    'arrives at the premiere', 'poses for photographers',
+    'attends the screening', 'прибывают на показ',
 ]
 
 
 def decode_html_entities(text: str) -> str:
-    """Декодирует HTML-сущности типа &quot; &amp; &lt; &gt; &apos;"""
     if not text:
         return text
-    # Заменяем основные HTML-сущности
     text = text.replace('&quot;', '"')
     text = text.replace('&amp;', '&')
     text = text.replace('&lt;', '<')
     text = text.replace('&gt;', '>')
     text = text.replace('&apos;', "'")
     text = text.replace('&#39;', "'")
-    # Удаляем оставшиеся сущности (числовые)
     text = re.sub(r'&#\d+;', '', text)
     return text
 
@@ -92,42 +71,50 @@ def decode_html_entities(text: str) -> str:
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    # Сначала декодируем HTML-сущности
     text = decode_html_entities(text)
-    for pattern in BRACKET_SOURCE_PATTERNS:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    for pattern in SOURCE_PATTERNS:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*АР[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Associated Press[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'— AP News$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 
-def is_news_content(text: str) -> bool:
-    """Проверяет, является ли текст новостью"""
-    if not text:
+def is_valid_news(title: str, content: str) -> bool:
+    """Проверяет, является ли статья действительно новостью (не некролог, не биография)"""
+    if not title:
         return False
     
-    text_lower = text.lower()
+    title_lower = title.lower()
     
-    for keyword in NON_NEWS_KEYWORDS:
-        if keyword.lower() in text_lower:
-            logger.info(f"Фильтр: обнаружен не-новостной контент ('{keyword}')")
+    # Пропускаем некрологи и биографии
+    for word in SKIP_TITLES:
+        if word in title_lower:
+            logger.info(f"Пропуск (заголовок содержит '{word}'): {title[:60]}")
             return False
     
-    has_news_marker = False
-    for keyword in NEWS_KEYWORDS:
-        if keyword.lower() in text_lower:
-            has_news_marker = True
-            break
+    # Проверяем контент
+    if content:
+        content_lower = content.lower()
+        for word in SKIP_CONTENT_KEYWORDS:
+            if word in content_lower:
+                logger.info(f"Пропуск (контент содержит '{word}'): {title[:60]}")
+                return False
     
-    if not has_news_marker and len(text_lower.split()) > 50:
-        event_words = ['удар', 'атака', 'взрыв', 'пожар', 'смерть', 'погиб', 'ранен']
-        for word in event_words:
-            if word in text_lower:
-                has_news_marker = True
-                break
+    # Новость должна содержать событийные маркеры
+    event_markers = ['заявил', 'сообщил', 'нанес удар', 'атаковал', 'обвинил',
+                     'подписали', 'заключили', 'выборы', 'президент', 'правительство',
+                     'военные', 'суд', 'приговор', 'арест', 'освобожден']
     
-    return has_news_marker
+    has_event = any(marker in content.lower() for marker in event_markers) if content else False
+    
+    if not has_event and len(content) > 200:
+        # Дополнительная проверка на событийные глаголы
+        action_words = ['удар', 'атака', 'взрыв', 'пожар', 'погиб', 'ранен']
+        has_event = any(word in content.lower() for word in action_words)
+    
+    return has_event
 
 
 def get_local_time() -> datetime:
@@ -143,10 +130,12 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 
-def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлечение изображений"""
-    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner', 'avatar', 'button', 'profile']
+def extract_image_url(soup, base_url: str, url: str = None) -> str | None:
+    """Улучшенный поиск изображений для всех источников"""
+    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 
+               'banner', 'avatar', 'button', 'profile', 'placeholder']
     
+    # 1. Open Graph (самый надежный)
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -155,6 +144,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
             return img
     
+    # 2. Twitter image
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta and meta.get('content'):
         img = meta['content']
@@ -163,7 +153,11 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
             return img
     
-    container = soup.find('article') or soup.find('main')
+    # 3. Поиск в статье
+    container = soup.find('article')
+    if not container:
+        container = soup.find('main')
+    
     if container:
         for img in container.find_all('img'):
             src = img.get('src') or img.get('data-src')
@@ -180,6 +174,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if any(x in src.lower() for x in exclude):
                 continue
             
+            # Проверяем размеры, если есть
             w = img.get('width', '')
             h = img.get('height', '')
             if w and h:
@@ -189,6 +184,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 except:
                     pass
     
+    # 4. Поиск в figure
     for figure in soup.find_all('figure'):
         img = figure.find('img')
         if img:
@@ -199,8 +195,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 elif src.startswith('/'):
                     src = urljoin(base_url, src)
                 if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                    if 'logo' not in src.lower() and 'icon' not in src.lower():
-                        return src
+                    return src
     
     return None
 
@@ -390,7 +385,7 @@ class NewsBot:
                 if a['url'] not in seen:
                     seen.add(a['url'])
                     unique.append(a)
-            return unique[:5]
+            return unique[:7]  # Больше статей для фильтрации
         except Exception as e:
             logger.error(f"AP News список: {e}")
             return []
@@ -415,9 +410,12 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            logger.info(f"Заголовок: {title[:60]}...")
+            
+            # Фильтр по заголовку
+            if not is_valid_news(title, ''):
+                return None
 
-            image = extract_image_url(soup, base)
+            image = extract_image_url(soup, base, url)
             if image:
                 img_hash = hashlib.md5(image.encode()).hexdigest()
                 if img_hash in IMAGE_HASH_CACHE:
@@ -436,12 +434,13 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 60:
-                    if text.startswith('FILE -') or text.startswith('This photo') or 'poses for' in text.lower():
+                    # Пропускаем подписи к фото
+                    if any(x in text.lower() for x in ['file -', 'this photo', 'poses for', 'arrives at']):
                         continue
                     text = clean_text(text)
                     if text and len(text) > 40:
                         paragraphs.append(text)
-                if len(paragraphs) >= 8:
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
@@ -449,6 +448,10 @@ class NewsBot:
 
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+            
+            # Финальная проверка
+            if not is_valid_news(title, content):
+                return None
             
             if len(content) < 200:
                 return None
@@ -498,8 +501,11 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
+            
+            if not is_valid_news(title, ''):
+                return None
 
-            image = extract_image_url(soup, base)
+            image = extract_image_url(soup, base, url)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
                 image = None
 
@@ -516,13 +522,16 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 6:
+                if len(paragraphs) >= 5:
                     break
 
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+            
+            if not is_valid_news(title, content):
+                return None
             
             if len(content) < 150:
                 return None
@@ -568,8 +577,11 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
+            
+            if not is_valid_news(title, ''):
+                return None
 
-            image = extract_image_url(soup, base)
+            image = extract_image_url(soup, base, url)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
                 image = None
 
@@ -586,13 +598,16 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 6:
+                if len(paragraphs) >= 5:
                     break
 
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+            
+            if not is_valid_news(title, content):
+                return None
             
             if len(content) < 150:
                 return None
@@ -663,26 +678,34 @@ class NewsBot:
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
+            # Публикация с фото (приоритет)
             if img:
                 logger.info(f"🖼️ Загрузка...")
                 resp = fetch_url(img, timeout=15)
-                if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
-                    try:
-                        await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=message, parse_mode='Markdown')
-                        logger.info("✅ С ФОТО")
-                        self._mark_sent(url, title_en, content_en, img)
-                        self._log_post(url, title_en)
-                        return
-                    except TelegramError as e:
-                        if "caption is too long" in str(e).lower():
-                            await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=f"*{title_escaped}*", parse_mode='Markdown')
-                            logger.info("✅ ФОТО (коротко)")
+                if resp and resp.status_code == 200:
+                    content_type = resp.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        try:
+                            await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=message, parse_mode='Markdown')
+                            logger.info("✅ С ФОТО")
                             self._mark_sent(url, title_en, content_en, img)
                             self._log_post(url, title_en)
                             return
-                        else:
-                            logger.warning(f"Ошибка: {e}")
+                        except TelegramError as e:
+                            if "caption is too long" in str(e).lower():
+                                await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=f"*{title_escaped}*", parse_mode='Markdown')
+                                logger.info("✅ ФОТО (коротко)")
+                                self._mark_sent(url, title_en, content_en, img)
+                                self._log_post(url, title_en)
+                                return
+                            else:
+                                logger.warning(f"Ошибка фото: {e}")
+                    else:
+                        logger.warning(f"Не изображение: {content_type}")
+                else:
+                    logger.warning(f"Не удалось загрузить: {img[:80]}")
 
+            # Публикация без фото
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
@@ -699,11 +722,12 @@ class NewsBot:
 
         except TelegramError as e:
             if "Can't parse entities" in str(e):
+                logger.warning("Ошибка Markdown, отправка без форматирования")
                 await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
             else:
-                logger.error(f"Ошибка: {e}")
+                logger.error(f"Ошибка Telegram: {e}")
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Ошибка публикации: {e}")
 
     async def run_once(self):
         logger.info("=" * 40)
