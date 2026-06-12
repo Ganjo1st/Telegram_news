@@ -9,6 +9,8 @@ import hashlib
 import re
 import html
 import random
+import signal
+import sys
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -16,21 +18,38 @@ import requests
 import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.error import TelegramError
-from deep_translator import GoogleTranslator
+from telegram.error import TelegramError, TimedOut
+from deep_translator import GoogleTranslator, exceptions as translator_exceptions
 
 # ========== НАСТРОЙКА ==========
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger('news_bot')
+
+# Добавляем перехват сигналов для корректного завершения
+def signal_handler(signum, frame):
+    logger.info(f"Получен сигнал {signum}, завершаем работу...")
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
+# Интервалы публикации
 MIN_INTERVAL = 2100
 MAX_INTERVAL = 7200
 MAX_POSTS_PER_DAY = 24
 TIMEZONE_OFFSET = 7
-REQUEST_TIMEOUT = 15
+
+# ТАЙМАУТЫ - КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
+REQUEST_TIMEOUT = 15  # Таймаут для HTTP запросов
+TRANSLATION_TIMEOUT = 30  # Таймаут для перевода
+PARSE_TIMEOUT = 45  # Таймаут на парсинг одной статьи
 
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
@@ -40,33 +59,28 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# Запрещенные темы (пропускаем)
+# Запрещенные темы
 SKIP_TITLES = [
     'died', 'dies', 'dead', 'killed', 'murdered', 'assassinated',
     'passed away', 'obituary', 'death of', 'умер', 'скончался',
-    'biography', 'биография', 'birthday', 'родился', 'родилась',
-    'memorial', 'funeral', 'похороны', 'necrology',
+    'biography', 'биография', 'birthday', 'memorial', 'funeral',
 ]
 
 SKIP_CONTENT_KEYWORDS = [
     'позирует фотографам', 'photo session', 'red carpet',
     'arrives at the premiere', 'poses for photographers',
-    'attends the screening', 'прибывают на показ',
+    'attends the screening',
 ]
 
-
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def decode_html_entities(text: str) -> str:
     if not text:
         return text
-    text = text.replace('&quot;', '"')
-    text = text.replace('&amp;', '&')
-    text = text.replace('&lt;', '<')
-    text = text.replace('&gt;', '>')
-    text = text.replace('&apos;', "'")
-    text = text.replace('&#39;', "'")
+    text = text.replace('&quot;', '"').replace('&amp;', '&')
+    text = text.replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&apos;', "'").replace('&#39;', "'")
     text = re.sub(r'&#\d+;', '', text)
     return text
-
 
 def clean_text(text: str) -> str:
     if not text:
@@ -74,139 +88,106 @@ def clean_text(text: str) -> str:
     text = decode_html_entities(text)
     text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*АР[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*Associated Press[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'— AP News$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'—\s*AP\s*News.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-
-def is_valid_news(title: str, content: str) -> bool:
-    """Проверяет, является ли статья действительно новостью (не некролог, не биография)"""
+def is_valid_news(title: str, content: str = "") -> bool:
     if not title:
         return False
-    
     title_lower = title.lower()
-    
-    # Пропускаем некрологи и биографии
     for word in SKIP_TITLES:
         if word in title_lower:
-            logger.info(f"Пропуск (заголовок содержит '{word}'): {title[:60]}")
+            logger.debug(f"Пропуск по заголовку: '{word}' в '{title[:50]}'")
             return False
-    
-    # Проверяем контент
+    # Для контента проверяем только если он есть
     if content:
         content_lower = content.lower()
         for word in SKIP_CONTENT_KEYWORDS:
             if word in content_lower:
-                logger.info(f"Пропуск (контент содержит '{word}'): {title[:60]}")
+                logger.debug(f"Пропуск по контенту: '{word}'")
                 return False
-    
-    # Новость должна содержать событийные маркеры
-    event_markers = ['заявил', 'сообщил', 'нанес удар', 'атаковал', 'обвинил',
-                     'подписали', 'заключили', 'выборы', 'президент', 'правительство',
-                     'военные', 'суд', 'приговор', 'арест', 'освобожден']
-    
-    has_event = any(marker in content.lower() for marker in event_markers) if content else False
-    
-    if not has_event and len(content) > 200:
-        # Дополнительная проверка на событийные глаголы
-        action_words = ['удар', 'атака', 'взрыв', 'пожар', 'погиб', 'ранен']
-        has_event = any(word in content.lower() for word in action_words)
-    
-    return has_event
-
+    return True
 
 def get_local_time() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
 
-
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
+    """Функция с таймаутом"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        return requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response
+    except requests.exceptions.Timeout:
+        logger.error(f"Таймаут при запросе {url[:80]}")
+        return None
     except Exception as e:
-        logger.error(f"Ошибка {url}: {e}")
+        logger.error(f"Ошибка запроса {url[:80]}: {e}")
         return None
 
-
-def extract_image_url(soup, base_url: str, url: str = None) -> str | None:
-    """Улучшенный поиск изображений для всех источников"""
-    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 
-               'banner', 'avatar', 'button', 'profile', 'placeholder']
+def extract_image_url(soup, base_url: str) -> str | None:
+    """Поиск изображения"""
+    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner', 'avatar']
     
-    # 1. Open Graph (самый надежный)
+    # 1. Open Graph
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
         if img.startswith('//'):
             img = 'https:' + img
+        elif img.startswith('/'):
+            img = urljoin(base_url, img)
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
             return img
     
-    # 2. Twitter image
+    # 2. Twitter
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta and meta.get('content'):
         img = meta['content']
         if img.startswith('//'):
             img = 'https:' + img
+        elif img.startswith('/'):
+            img = urljoin(base_url, img)
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
             return img
     
     # 3. Поиск в статье
-    container = soup.find('article')
-    if not container:
-        container = soup.find('main')
-    
+    container = soup.find('article') or soup.find('main')
     if container:
         for img in container.find_all('img'):
             src = img.get('src') or img.get('data-src')
             if not src:
                 continue
-            
             if src.startswith('//'):
                 src = 'https:' + src
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
-            
-            if not src.startswith('http'):
-                continue
-            if any(x in src.lower() for x in exclude):
-                continue
-            
-            # Проверяем размеры, если есть
-            w = img.get('width', '')
-            h = img.get('height', '')
-            if w and h:
-                try:
-                    if int(w) >= 400 and int(h) >= 300:
-                        return src
-                except:
-                    pass
-    
-    # 4. Поиск в figure
-    for figure in soup.find_all('figure'):
-        img = figure.find('img')
-        if img:
-            src = img.get('src') or img.get('data-src')
-            if src:
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif src.startswith('/'):
-                    src = urljoin(base_url, src)
-                if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                    return src
-    
+            if src.startswith('http') and not any(x in src.lower() for x in exclude):
+                return src
     return None
 
-
+# ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
         self.state = self._load_state()
         self.meta = self._load_meta()
-        self.bot = Bot(token=TELEGRAM_TOKEN)
-        self.translator = GoogleTranslator(source='en', target='ru')
+        self.bot = Bot(token=TELEGRAM_TOKEN, request_timeout=REQUEST_TIMEOUT)
+        # Инициализация переводчика будет ленивой (при первом использовании)
+        self._translator = None
         self._load_image_cache()
+
+    @property
+    def translator(self):
+        """Ленивая инициализация переводчика с обработкой ошибок"""
+        if self._translator is None:
+            try:
+                self._translator = GoogleTranslator(source='en', target='ru')
+            except Exception as e:
+                logger.error(f"Не удалось инициализировать переводчик: {e}")
+                self._translator = None
+        return self._translator
 
     def _load_image_cache(self):
         global IMAGE_HASH_CACHE
@@ -225,7 +206,7 @@ class NewsBot:
                         'used_images': data.get('used_images', [])
                     }
         except Exception as e:
-            logger.error(f"Ошибка загрузки: {e}")
+            logger.error(f"Ошибка загрузки состояния: {e}")
         return {'sent_links': set(), 'sent_hashes': set(), 'sent_titles': set(), 'posts_log': [], 'used_images': []}
 
     def _save_state(self):
@@ -240,7 +221,7 @@ class NewsBot:
             with open(STATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"Ошибка сохранения: {e}")
+            logger.error(f"Ошибка сохранения состояния: {e}")
 
     def _load_meta(self) -> dict:
         try:
@@ -248,7 +229,7 @@ class NewsBot:
                 with open(META_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            logger.error(f"Ошибка мета: {e}")
+            logger.error(f"Ошибка загрузки мета: {e}")
         return {'posts': {}}
 
     def _save_meta(self):
@@ -265,7 +246,7 @@ class NewsBot:
             with open(META_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.meta, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Ошибка сохранения мета: {e}")
 
     def _add_to_meta(self, post_id: str, source: str, url: str, title: str, preview: str = ""):
         self.meta['posts'][post_id] = {
@@ -350,47 +331,56 @@ class NewsBot:
         return self._truncate_sentence(text, limit)
 
     def _translate(self, text: str) -> str:
+        """Безопасная функция перевода с таймаутом и обработкой ошибок"""
         if not text or len(text) < 10:
             return text
+        
+        translator_instance = self.translator
+        if translator_instance is None:
+            logger.warning("Переводчик недоступен, возвращаем оригинальный текст")
+            return text[:2000]
+        
         try:
-            result = self.translator.translate(text[:3000])
-            return clean_text(result) if result else text
+            # Запускаем перевод с таймаутом через asyncio
+            result = asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: translator_instance.translate(text[:3000])
+            )
+            # Устанавливаем таймаут на операцию
+            result = asyncio.wait_for(result, timeout=TRANSLATION_TIMEOUT)
+            # Обрабатываем результат синхронно в этом контексте
+            # (для совместимости с существующим кодом)
+            translated = asyncio.get_event_loop().run_until_complete(result)
+            return clean_text(translated) if translated else text[:2000]
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут перевода ({TRANSLATION_TIMEOUT} сек)")
+            return text[:2000]
+        except translator_exceptions.TranslationError as e:
+            logger.error(f"Ошибка API перевода: {e}")
+            return text[:2000]
         except Exception as e:
-            logger.error(f"Ошибка перевода: {e}")
-            return text
+            logger.error(f"Непредвиденная ошибка перевода: {e}")
+            return text[:2000]
 
-    # ========== AP NEWS ==========
-    def _get_apnews_articles(self) -> list:
+    # ========== ПАРСИНГ AP NEWS ==========
+    async def _parse_apnews_article(self, url: str) -> dict | None:
+        """Парсинг с принудительным таймаутом"""
         try:
-            resp = fetch_url('https://apnews.com/hub/world-news')
-            if not resp or resp.status_code != 200:
-                return []
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            articles = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if '/article/' in href:
-                    url = href if href.startswith('https') else 'https://apnews.com' + href
-                    title = a.get_text(strip=True)
-                    if len(title) < 20:
-                        parent = a.find_parent(['h2', 'h3'])
-                        if parent:
-                            title = parent.get_text(strip=True)
-                    if title and len(title) > 15:
-                        title = clean_text(title)
-                        articles.append({'url': url, 'title': title})
-            seen = set()
-            unique = []
-            for a in articles:
-                if a['url'] not in seen:
-                    seen.add(a['url'])
-                    unique.append(a)
-            return unique[:7]  # Больше статей для фильтрации
+            # Запускаем парсинг в executor с таймаутом
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._parse_apnews_article_sync, url),
+                timeout=PARSE_TIMEOUT
+            )
+            return result
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут парсинга AP News: {url[:80]}")
+            return None
         except Exception as e:
-            logger.error(f"AP News список: {e}")
-            return []
+            logger.error(f"Ошибка парсинга AP News: {e}")
+            return None
 
-    def _parse_apnews_article(self, url: str) -> dict | None:
+    def _parse_apnews_article_sync(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -398,6 +388,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base = f'https://{url.split("/")[2]}'
 
+            # Заголовок
             title = None
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'):
@@ -410,35 +401,32 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            
-            # Фильтр по заголовку
-            if not is_valid_news(title, ''):
+            if not is_valid_news(title):
                 return None
 
-            image = extract_image_url(soup, base, url)
-            if image:
-                img_hash = hashlib.md5(image.encode()).hexdigest()
-                if img_hash in IMAGE_HASH_CACHE:
-                    image = None
+            # Изображение
+            image = extract_image_url(soup, base)
+            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                image = None
 
+            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'figure']):
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                if len(text) > 60:
-                    # Пропускаем подписи к фото
-                    if any(x in text.lower() for x in ['file -', 'this photo', 'poses for', 'arrives at']):
+                if len(text) > 50:
+                    if any(x in text.lower() for x in ['file -', 'this photo', 'poses for']):
                         continue
                     text = clean_text(text)
-                    if text and len(text) > 40:
+                    if text:
                         paragraphs.append(text)
                 if len(paragraphs) >= 6:
                     break
@@ -446,14 +434,10 @@ class NewsBot:
             if len(paragraphs) < 2:
                 return None
 
-            content = '\n\n'.join(paragraphs)
+            content = '\n\n'.join(paragraphs[:4])  # Не больше 4 параграфов
             content = clean_text(content)
             
-            # Финальная проверка
-            if not is_valid_news(title, content):
-                return None
-            
-            if len(content) < 200:
+            if len(content) < 150:
                 return None
 
             return {'title': title, 'content': content, 'image': image, 'source': 'AP News', 'url': url}
@@ -461,27 +445,23 @@ class NewsBot:
             logger.error(f"AP News парсинг: {e}")
             return None
 
-    # ========== INFOBRICS ==========
-    def _get_infobrics_articles(self) -> list:
+    # ========== ПАРСИНГ INFOBRICS ==========
+    async def _parse_infobrics_article(self, url: str) -> dict | None:
         try:
-            feed = feedparser.parse('https://infobrics.org/rss/en')
-            articles = []
-            for entry in feed.entries[:5]:
-                title = entry.get('title', '')
-                if not title or title in ['{[title]}', 'BRICS portal']:
-                    summary = entry.get('summary', '')
-                    if summary:
-                        title = re.sub(r'<[^>]+>', '', summary)
-                        title = title.split('.')[0][:100]
-                if title and len(title) > 10:
-                    title = clean_text(title)
-                    articles.append({'url': entry.link, 'title': title})
-            return articles
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._parse_infobrics_article_sync, url),
+                timeout=PARSE_TIMEOUT
+            )
+            return result
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут InfoBrics: {url[:80]}")
+            return None
         except Exception as e:
-            logger.error(f"InfoBrics RSS: {e}")
-            return []
+            logger.error(f"Ошибка InfoBrics: {e}")
+            return None
 
-    def _parse_infobrics_article(self, url: str) -> dict | None:
+    def _parse_infobrics_article_sync(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -501,11 +481,10 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            
-            if not is_valid_news(title, ''):
+            if not is_valid_news(title):
                 return None
 
-            image = extract_image_url(soup, base, url)
+            image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
                 image = None
 
@@ -522,16 +501,13 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 5:
+                if len(paragraphs) >= 4:
                     break
 
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
-            
-            if not is_valid_news(title, content):
-                return None
             
             if len(content) < 150:
                 return None
@@ -541,23 +517,23 @@ class NewsBot:
             logger.error(f"InfoBrics парсинг: {e}")
             return None
 
-    # ========== GLOBAL RESEARCH ==========
-    def _get_globalresearch_articles(self) -> list:
+    # ========== ПАРСИНГ GLOBAL RESEARCH ==========
+    async def _parse_globalresearch_article(self, url: str) -> dict | None:
         try:
-            feed = feedparser.parse('https://www.globalresearch.ca/feed')
-            articles = []
-            for entry in feed.entries[:5]:
-                title = entry.get('title', '')
-                if title:
-                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
-                    title = clean_text(title)
-                    articles.append({'url': entry.link, 'title': title})
-            return articles
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, self._parse_globalresearch_article_sync, url),
+                timeout=PARSE_TIMEOUT
+            )
+            return result
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут Global Research: {url[:80]}")
+            return None
         except Exception as e:
-            logger.error(f"GR RSS: {e}")
-            return []
+            logger.error(f"Ошибка Global Research: {e}")
+            return None
 
-    def _parse_globalresearch_article(self, url: str) -> dict | None:
+    def _parse_globalresearch_article_sync(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -577,11 +553,10 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            
-            if not is_valid_news(title, ''):
+            if not is_valid_news(title):
                 return None
 
-            image = extract_image_url(soup, base, url)
+            image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
                 image = None
 
@@ -598,7 +573,7 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 5:
+                if len(paragraphs) >= 4:
                     break
 
             if len(paragraphs) < 2:
@@ -606,44 +581,91 @@ class NewsBot:
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
             
-            if not is_valid_news(title, content):
-                return None
-            
             if len(content) < 150:
                 return None
 
             return {'title': title, 'content': content, 'image': image, 'source': 'Global Research', 'url': url}
         except Exception as e:
-            logger.error(f"GR парсинг: {e}")
+            logger.error(f"Global Research парсинг: {e}")
             return None
 
-    # ========== СБОР ==========
+    # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
         
+        # AP News
         logger.info("📰 AP News...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles):
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ AP: {data['title'][:40]}...")
+        try:
+            resp = await asyncio.get_event_loop().run_in_executor(None, fetch_url, 'https://apnews.com/hub/world-news')
+            if resp and resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                articles = []
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '/article/' in href:
+                        url = href if href.startswith('https') else 'https://apnews.com' + href
+                        title = a.get_text(strip=True)
+                        if len(title) < 20:
+                            parent = a.find_parent(['h2', 'h3'])
+                            if parent:
+                                title = parent.get_text(strip=True)
+                        if title and len(title) > 15:
+                            title = clean_text(title)
+                            articles.append({'url': url, 'title': title})
+                
+                seen = set()
+                unique = []
+                for a in articles:
+                    if a['url'] not in seen:
+                        seen.add(a['url'])
+                        unique.append(a)
+                
+                for a in unique[:5]:
+                    if not self._is_duplicate(a['url'], a['title']):
+                        data = await self._parse_apnews_article(a['url'])
+                        if data:
+                            items.append(data)
+                            logger.info(f"✅ AP: {data['title'][:40]}...")
+        except Exception as e:
+            logger.error(f"Ошибка сбора AP News: {e}")
 
+        # InfoBrics
         logger.info("📰 InfoBrics...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles):
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
+        try:
+            feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, 'https://infobrics.org/rss/en')
+            for entry in feed.entries[:5]:
+                title = entry.get('title', '')
+                if not title or title in ['{[title]}', 'BRICS portal']:
+                    summary = entry.get('summary', '')
+                    if summary:
+                        title = re.sub(r'<[^>]+>', '', summary)
+                        title = title.split('.')[0][:100]
+                if title and len(title) > 10:
+                    title = clean_text(title)
+                    if not self._is_duplicate(entry.link, title):
+                        data = await self._parse_infobrics_article(entry.link)
+                        if data:
+                            items.append(data)
+                            logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
+        except Exception as e:
+            logger.error(f"Ошибка сбора InfoBrics: {e}")
 
+        # Global Research
         logger.info("📰 Global Research...")
-        for a in await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles):
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ GR: {data['title'][:40]}...")
+        try:
+            feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, 'https://www.globalresearch.ca/feed')
+            for entry in feed.entries[:5]:
+                title = entry.get('title', '')
+                if title:
+                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
+                    title = clean_text(title)
+                    if not self._is_duplicate(entry.link, title):
+                        data = await self._parse_globalresearch_article(entry.link)
+                        if data:
+                            items.append(data)
+                            logger.info(f"✅ GR: {data['title'][:40]}...")
+        except Exception as e:
+            logger.error(f"Ошибка сбора Global Research: {e}")
 
         logger.info(f"📊 Новостей: {len(items)}")
         return items
@@ -657,13 +679,25 @@ class NewsBot:
             img = post.get('image')
 
             if not title_en or not content_en:
+                logger.error("Нет заголовка или контента")
                 return
 
-            logger.info(f"📝 Перевод...")
-            loop = asyncio.get_event_loop()
-            title_ru = clean_text(await loop.run_in_executor(None, self._translate, title_en))
-            content_ru = clean_text(await loop.run_in_executor(None, self._translate, content_en))
+            logger.info(f"📝 Перевод: {title_en[:40]}...")
+            
+            # Переводим с таймаутом
+            title_ru = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, self._translate, title_en),
+                timeout=TRANSLATION_TIMEOUT
+            )
+            content_ru = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, self._translate, content_en),
+                timeout=TRANSLATION_TIMEOUT
+            )
 
+            title_ru = clean_text(title_ru)
+            content_ru = clean_text(content_ru)
+
+            # Сохраняем мета
             pid = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(pid, post['source'], url, title_en, content_en[:300])
 
@@ -678,34 +712,40 @@ class NewsBot:
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
-            # Публикация с фото (приоритет)
+            # Публикация
             if img:
-                logger.info(f"🖼️ Загрузка...")
-                resp = fetch_url(img, timeout=15)
-                if resp and resp.status_code == 200:
-                    content_type = resp.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=message, parse_mode='Markdown')
-                            logger.info("✅ С ФОТО")
+                logger.info(f"🖼️ Загрузка изображения...")
+                resp = await asyncio.get_event_loop().run_in_executor(None, fetch_url, img)
+                if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
+                    try:
+                        await self.bot.send_photo(
+                            chat_id=CHANNEL_ID, 
+                            photo=resp.content, 
+                            caption=message, 
+                            parse_mode='Markdown'
+                        )
+                        logger.info("✅ С ФОТО")
+                        self._mark_sent(url, title_en, content_en, img)
+                        self._log_post(url, title_en)
+                        return
+                    except TelegramError as e:
+                        if "caption is too long" in str(e).lower():
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID, 
+                                photo=resp.content, 
+                                caption=f"*{title_escaped}*", 
+                                parse_mode='Markdown'
+                            )
+                            logger.info("✅ ФОТО (коротко)")
                             self._mark_sent(url, title_en, content_en, img)
                             self._log_post(url, title_en)
                             return
-                        except TelegramError as e:
-                            if "caption is too long" in str(e).lower():
-                                await self.bot.send_photo(chat_id=CHANNEL_ID, photo=resp.content, caption=f"*{title_escaped}*", parse_mode='Markdown')
-                                logger.info("✅ ФОТО (коротко)")
-                                self._mark_sent(url, title_en, content_en, img)
-                                self._log_post(url, title_en)
-                                return
-                            else:
-                                logger.warning(f"Ошибка фото: {e}")
-                    else:
-                        logger.warning(f"Не изображение: {content_type}")
+                        else:
+                            logger.warning(f"Ошибка фото: {e}")
                 else:
-                    logger.warning(f"Не удалось загрузить: {img[:80]}")
+                    logger.warning("Не удалось загрузить изображение")
 
-            # Публикация без фото
+            # Без фото
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
@@ -720,28 +760,40 @@ class NewsBot:
             self._mark_sent(url, title_en, content_en, img)
             self._log_post(url, title_en)
 
+        except asyncio.TimeoutError:
+            logger.error("Таймаут при публикации")
         except TelegramError as e:
             if "Can't parse entities" in str(e):
-                logger.warning("Ошибка Markdown, отправка без форматирования")
-                await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
+                logger.warning("Ошибка Markdown, отправляем без форматирования")
+                try:
+                    await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
+                except Exception as e2:
+                    logger.error(f"Критическая ошибка при отправке: {e2}")
             else:
                 logger.error(f"Ошибка Telegram: {e}")
         except Exception as e:
             logger.error(f"Ошибка публикации: {e}")
 
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
         logger.info("=" * 40)
         logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
-        news = await self.fetch_news()
-        if not news:
-            logger.info("📭 Нет новостей")
-            return
-        if not self._can_post():
-            logger.info("⏸️ Отложено")
-            return
-        await self.publish(news[0])
+        try:
+            news = await asyncio.wait_for(self.fetch_news(), timeout=120)
+            if not news:
+                logger.info("📭 Нет новостей")
+                return
+            if not self._can_post():
+                logger.info("⏸️ Отложено")
+                return
+            await asyncio.wait_for(self.publish(news[0]), timeout=60)
+        except asyncio.TimeoutError:
+            logger.error("Таймаут выполнения run_once")
+        except Exception as e:
+            logger.error(f"Ошибка в run_once: {e}")
 
     async def run_forever(self):
+        logger.info("🤖 Бот запущен")
         while True:
             try:
                 await self.run_once()
