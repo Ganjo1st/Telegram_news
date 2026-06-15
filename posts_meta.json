@@ -1,19 +1,5 @@
 {
   "posts": {
-    "e58c05ac9066c1f0": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/poland-us-troop-reduction-deployment-europe-34138e62c7afc0b83ab7c7cc8fa60071",
-      "original_title": "Pentagon halts deployments to Poland and Germany to cut troop numbers in Europe, AP sources say",
-      "original_content_preview": "Defense Secretary Pete Hegseth testifies at a House Appropriations subcommittee budget hearing for the Department of Defense, Tuesday, May 12, 2026, in Washington, as Chairman of the Joint Chiefs of Staff Gen. Dan Caine listens. Gen. Christopher LaNeve, acting Army chief of staff, testifies before the House Armed Services Committee hearing on the budget request of the Department of the Army, on Capitol Hill, Friday, May 15, 2026, in Washington. WASHINGTON — The Pentagon is drawing down thousands",
-      "time": "2026-05-16T11:59:55.966640+00:00"
-    },
-    "9268083fa20ce754": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/congo-ebola-outbreak-ituri-province-63c078e0e43edfcb8b33e440a5c26ef9",
-      "original_title": "A new Ebola outbreak is confirmed in a remote Congo province, with 65 deaths recorded",
-      "original_content_preview": "Africa’s top public health body has confirmed a new Ebola outbreak in Congo’s Ituri province. There have been 246 suspected cases and 65 deaths so far. Uganda has also reported one death from a case it says was imported from neighboring Congo. Health workers walk with a boy suspected of having the Ebola virus at an Ebola treatment center in Beni, eastern Congo, Sept 9, 2018. A health worker sprays disinfectant on his colleague after working at an Ebola treatment center in Beni, eastern Congo, Se",
-      "time": "2026-05-16T14:21:03.713785+00:00"
-    },
     "46b9e7261068dd64": {
       "source": "AP News",
       "url": "https://apnews.com/article/ebola-congo-ituri-africa-virus-d59a194e6032e1783b6085b56d84b0f0",
@@ -811,6 +797,13 @@
       "original_title": "A tentative deal is reached to end the Iran war and Trump orders a stop to the US naval blockade",
       "preview": "The United States and Iran have reached an agreement to end the war and open the Strait of Hormuz. This offers relief to the global economy more than three months since fighting began. A woman waves an Iranian flags as she chants slogans against Iran and U.S. talks at the Islamic Revolution square i",
       "time": "2026-06-15T09:03:41.554490+00:00"
+    },
+    "db5385961c3d3efe": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/brazil-rio-helicopter-collision-dc3e059c8dcc4fbd84f714dd3c5ab2c8",
+      "original_title": "Helicopter with singer Oliver Tree on passenger list collides with another in Brazil, killing 6",
+      "preview": "Two helicopters collided over Rio de Janeiro on Sunday morning and crashed in the city’s western zone, killing all six people aboard, firefighters said. People comfort each other near the site where two helicopters reportedly collided in midair and crashed into a car dealership parking lot in Rio de",
+      "time": "2026-06-15T14:40:55.200073+00:00"
     }
   }
 }
