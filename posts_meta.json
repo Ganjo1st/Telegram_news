@@ -1,19 +1,5 @@
 {
   "posts": {
-    "52907d66e47c0ed2": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/cuba-us-meeting-cia-john-9a3e7946460f8e5e48424f3a59df3fe8",
-      "original_title": "CIA Director John Ratcliffe met with Raul Castro's grandson in Havana, US and Cuban officials say",
-      "original_content_preview": "CIA Director John Ratcliffe, accompanied by President Donald Trump, speaks with reporters in the James Brady Press Briefing Room at the White House in Washington, April 6, 2026, File) CIA Director John Ratcliffe listens during a Cabinet meeting at the White House in Washington, March 26, 2026. HAVANA —CIA Director John Ratcliffemet with Cuban officials including Raúl Castro’s grandson during a high-level visit to the island Thursday, Cuban and U.S. officials said. Ratcliffe met with Raúl Guiller",
-      "time": "2026-05-15T22:31:52.542731+00:00"
-    },
-    "db58b77e772e15a3": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/raul-castro-cuba-doj-indictment-trump-40939c6644185652649bc90d4e445394",
-      "original_title": "Trump administration prepares to seek Raúl Castro indictment as it pressures Cuba, AP sources say",
-      "original_content_preview": "FILE - In this Nov. 29, 2016, file photo, Cuba President Raul Castro speaks during a rally in Havana, Cuba. Former Cuban President Raul Castro looks at the Cuban flag during his speech at the event celebrating the 65th anniversary of the triumph of the revolution in Santiago, Cuba, Jan. 1, 2024. The U.S. Department of Justice logo is seen on a podium before a news conference at the Justice Department in Washington, on May 6, 2025. MIAMI — The Justice Department is preparing to seek an indictment",
-      "time": "2026-05-16T08:20:52.517083+00:00"
-    },
     "e58c05ac9066c1f0": {
       "source": "AP News",
       "url": "https://apnews.com/article/poland-us-troop-reduction-deployment-europe-34138e62c7afc0b83ab7c7cc8fa60071",
@@ -818,6 +804,13 @@
       "original_title": "Early results show Swiss voters reject right-wing's bid to cap population at 10 million",
       "preview": "Members of the Federal Parliament and other representatives of civic organizations, celebrate during a get together of a cross-party alliance against the SVP’s popular initiative “No 10-Million Switzerland” which the people and the cantons voted on this election Sunday, June 14, 2026, in Bern, Switz",
       "time": "2026-06-14T21:34:19.100846+00:00"
+    },
+    "e1e0609acde08817": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/iran-us-war-ceasefire-deal-e0a9e4e1152ea8da10ea066ad174a23a",
+      "original_title": "A tentative deal is reached to end the Iran war and Trump orders a stop to the US naval blockade",
+      "preview": "The United States and Iran have reached an agreement to end the war and open the Strait of Hormuz. This offers relief to the global economy more than three months since fighting began. A woman waves an Iranian flags as she chants slogans against Iran and U.S. talks at the Islamic Revolution square i",
+      "time": "2026-06-15T09:03:41.554490+00:00"
     }
   }
 }
