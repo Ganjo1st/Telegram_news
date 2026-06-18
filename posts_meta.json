@@ -1,12 +1,5 @@
 {
   "posts": {
-    "635db72e3dae787f": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/voting-rights-native-american-supreme-court-6238745b461e0c7b4a9cc7a784800711",
-      "original_title": "Supreme Court sends closely watched Native American voting rights decision back to lower court",
-      "preview": "WASHINGTON — The Supreme Court acted in a Voting Rights Act case brought by Native American tribes on Monday, saying a closely watched ruling needs to be reconsidered after a high court ruling that weakened the Civil Rights-era law.\n\nThe justices ordered lower courts to take another look atthe lower",
-      "time": "2026-05-19T15:04:09.021001+00:00"
-    },
     "eda8ea94b67308d9": {
       "source": "AP News",
       "url": "https://apnews.com/article/greenland-us-landry-visit-nielsen-bbece2f899116788fe45525dcfe7d030",
@@ -846,6 +839,13 @@
       "original_title": "G7 leaders back Trump's deal to end Iran war as more details of it emerge",
       "preview": "President Donald Trump expressed uncertainty Wednesday about whether his much-touted US-Iran agreement will be signed Friday, cautioning, “You never know with deals.” Still, he said he expects the “very strong” accord will be signed in Switzerland. Leaders at the Group of Seven summit on Wednesday t",
       "time": "2026-06-18T12:05:37.907260+00:00"
+    },
+    "8eeb481c7ca7abec": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/latin-america-crime-immigration-backlash-politics-a4c4534f11ba474c9df3ba5ca492b4b1",
+      "original_title": "As crime surges in some Latin American countries, a far-right backlash is brewing",
+      "preview": "At the start of this decade, Latin America leaned left as progressive politicians gained power amid public outrage over inequities worsened by the pandemic. Now, a political backlash is brewing. Rising crime and extortion have fueled support for conservative populists using strong-arm tactics agains",
+      "time": "2026-06-18T16:47:53.220484+00:00"
     }
   }
 }
