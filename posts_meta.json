@@ -1,19 +1,5 @@
 {
   "posts": {
-    "60d547b82c4077ee": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/italy-maldives-divers-bodies-24c0b6546c425811c6185e86fe47194a",
-      "original_title": "Italy's foreign minister says divers found bodies of 4 Italians in Maldives sea cave",
-      "preview": "This undated handout picture released by Greenpeace Italia on Friday, May 15, 2026 shows Monica Montefalcone one of the five Italian scuba divers who died near Alimathaa in the Maldives archipelago while exploring an underwater cave.\n\nThis image released by the Maldives President’s Media Division, s",
-      "time": "2026-05-19T07:19:02.401931+00:00"
-    },
-    "e1ec35f389ff255c": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/russia-ukraine-war-moscow-attack-drone-a3be2f260ff6d436409281246e2bb0e4",
-      "original_title": "Ukraine's attack on Moscow is another sign the war is not so distant anymore for Russians",
-      "preview": "Rescue workers stand in the yard of an apartment building heavily damaged after a Russian strike on residential neighbourhood in Kyiv, Ukraine, on Friday, May 15, 2026.\n\nRussian President Vladimir Putin waits to greet heads of foreign delegations attend a reception marking the 81st anniversary of th",
-      "time": "2026-05-19T11:37:04.421297+00:00"
-    },
     "635db72e3dae787f": {
       "source": "AP News",
       "url": "https://apnews.com/article/voting-rights-native-american-supreme-court-6238745b461e0c7b4a9cc7a784800711",
@@ -853,6 +839,13 @@
       "original_title": "US-Iran deal takes 'immediate effect' after both sides sign, Pakistan premier says",
       "preview": "President Donald Trump expressed uncertainty Wednesday about whether his much-touted US-Iran agreement will be signed Friday, cautioning, “You never know with deals.” Still, he said he expects the “very strong” accord will be signed in Switzerland. Speaking at a news conference as the G7 comes to a ",
       "time": "2026-06-18T07:01:47.468479+00:00"
+    },
+    "2070587052711b83": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/trump-g7-iran-france-india-2b13227bfc63d5c7c92c64488e3e2753",
+      "original_title": "G7 leaders back Trump's deal to end Iran war as more details of it emerge",
+      "preview": "President Donald Trump expressed uncertainty Wednesday about whether his much-touted US-Iran agreement will be signed Friday, cautioning, “You never know with deals.” Still, he said he expects the “very strong” accord will be signed in Switzerland. Leaders at the Group of Seven summit on Wednesday t",
+      "time": "2026-06-18T12:05:37.907260+00:00"
     }
   }
 }
