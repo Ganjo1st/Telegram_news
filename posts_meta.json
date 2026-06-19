@@ -1,19 +1,5 @@
 {
   "posts": {
-    "23d90b5915d12ef3": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/san-diego-islamic-center-shooting-af934ee29b397fba1495baf2529c49f8",
-      "original_title": "Teenage gunmen open fire on San Diego mosque, killing 3 men and then themselves",
-      "preview": "A shooting at a San Diego mosque on Monday killed three men, and two teenage suspects are also dead, the police chief said.\n\nSan Diego police are responding to an active shooter at the Islamic Center of San Diego. Officer Anthony Carrasco says they believe people have been shot.\n\nThe two suspects in",
-      "time": "2026-05-19T21:14:17.680687+00:00"
-    },
-    "c2bd82b265002cc3": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/congo-ebola-deadly-virus-bundibugyo-health-emergency-3c97cacf44e007127df5739199f32517",
-      "original_title": "WHO chief concerned over 'scale and speed' of Ebola outbreak as Congo reports 134 dead",
-      "preview": "BUNIA, Congo — The head of the World Health Organization on Tuesday expressed concern over the “scale and speed” of anoutbreak of a rare type of Ebolaknown as Bundibugyo in eastern Congo, where authorities reported 134 suspected deaths and more than 500 suspected cases.\n\nThe virus spread undetected ",
-      "time": "2026-05-20T08:33:47.797516+00:00"
-    },
     "4673a07d26b33cec": {
       "source": "AP News",
       "url": "https://apnews.com/article/elephants-depressed-south-africa-zoo-animals-b51351f150291087609c5c6ed9106ffb",
@@ -846,6 +832,13 @@
       "original_title": "Pentagon chief lashes out at NATO allies and announces a review of US forces in Europe",
       "preview": "U.S. Defense Secretary Pete Hegseth lashed out at NATO allies on Thursday, announcing a six-month Pentagon review of American forces in Europe that will depend on how fast they take responsibility for their own security. United States Defense Secretary Pete Hegseth, right, speaks during a meeting of",
       "time": "2026-06-18T19:48:48.463968+00:00"
+    },
+    "de58e6bf187ddba1": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/russia-ukraine-war-moscow-refinery-attack-oil-0ee97c720e770c392067418f9cabcbba",
+      "original_title": "Ukrainian drones set a Moscow refinery ablaze in a major attack on the Russian capital",
+      "preview": "Ukraine hit a major Moscow oil refinery for a second time in a week and disrupted commercial flights at Moscow airports in one of its biggest drone attacks since the start of the conflict more than four years ago, Russian officials said Thursday. From left, European Council President Antonio Costa, ",
+      "time": "2026-06-19T09:20:48.462950+00:00"
     }
   }
 }
