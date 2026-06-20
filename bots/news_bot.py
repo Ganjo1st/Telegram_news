@@ -53,16 +53,12 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
+# Фильтры для пропуска некрологов
 SKIP_TITLES = [
     'died', 'dies', 'dead', 'killed', 'murdered', 'assassinated',
     'passed away', 'obituary', 'death of', 'умер', 'скончался',
     'biography', 'биография', 'birthday', 'memorial', 'funeral',
-]
-
-SKIP_CONTENT_KEYWORDS = [
-    'позирует фотографам', 'photo session', 'red carpet',
-    'arrives at the premiere', 'poses for photographers',
-    'attends the screening',
+    'obituary:', 'in memoriam', 'remembering',
 ]
 
 
@@ -80,10 +76,9 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     text = decode_html_entities(text)
-    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*АР[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'—\s*AP\s*News.*$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -96,11 +91,6 @@ def is_valid_news(title: str, content: str = "") -> bool:
         if word in title_lower:
             logger.info(f"Пропуск (не новость): {title[:50]}")
             return False
-    if content:
-        content_lower = content.lower()
-        for word in SKIP_CONTENT_KEYWORDS:
-            if word in content_lower:
-                return False
     return True
 
 
@@ -120,8 +110,9 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'ap-logo', 'favicon', 'banner', 'avatar']
+    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'favicon', 'banner', 'avatar', 'placeholder']
     
+    # 1. Open Graph
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -132,6 +123,18 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img.startswith('http') and not any(x in img.lower() for x in exclude):
             return img
     
+    # 2. Twitter image
+    meta = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta and meta.get('content'):
+        img = meta['content']
+        if img.startswith('//'):
+            img = 'https:' + img
+        elif img.startswith('/'):
+            img = urljoin(base_url, img)
+        if img.startswith('http') and not any(x in img.lower() for x in exclude):
+            return img
+    
+    # 3. Поиск в статье
     container = soup.find('article') or soup.find('main')
     if container:
         for img in container.find_all('img'):
@@ -143,7 +146,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
             if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                return src
+                if 'logo' not in src.lower():
+                    return src
     return None
 
 
@@ -151,7 +155,6 @@ class NewsBot:
     def __init__(self):
         self.state = self._load_state()
         self.meta = self._load_meta()
-        # ВАЖНО: убираем request_timeout — он не поддерживается в этой версии
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self._translator = None
         self._load_image_cache()
@@ -263,8 +266,11 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
-        if 23 <= now.hour or now.hour < 7:
+        # По выходным публикуем всегда, без ночных ограничений
+        is_weekend = now.weekday() >= 5  # 5=суббота, 6=воскресенье
+        if not is_weekend and (23 <= now.hour or now.hour < 7):
             return False
+        
         today_posts = sum(1 for p in self.state['posts_log'] 
                          if datetime.fromisoformat(p['time']).date() == now.date())
         if today_posts >= MAX_POSTS_PER_DAY:
@@ -320,8 +326,30 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text[:2000]
 
-    # ========== AP NEWS ==========
-    def _parse_apnews_article(self, url: str) -> dict | None:
+    # ========== REUTERS (НОВЫЙ ИСТОЧНИК) ==========
+    def _get_reuters_articles(self) -> list:
+        """Получает список статей с Reuters через RSS"""
+        try:
+            feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
+            articles = []
+            for entry in feed.entries[:8]:
+                title = entry.get('title', '')
+                if not title:
+                    continue
+                # Пропускаем некрологи и биографии
+                if any(word in title.lower() for word in SKIP_TITLES):
+                    continue
+                articles.append({
+                    'url': entry.link,
+                    'title': clean_text(title)
+                })
+            return articles
+        except Exception as e:
+            logger.error(f"Reuters RSS ошибка: {e}")
+            return []
+
+    def _parse_reuters_article(self, url: str) -> dict | None:
+        """Парсит статью Reuters"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -329,6 +357,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base = f'https://{url.split("/")[2]}'
 
+            # Заголовок
             title = None
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'):
@@ -344,16 +373,21 @@ class NewsBot:
             if not is_valid_news(title):
                 return None
 
+            # Изображение
             image = extract_image_url(soup, base)
-            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                image = None
+            if image:
+                img_hash = hashlib.md5(image.encode()).hexdigest()
+                if img_hash in IMAGE_HASH_CACHE:
+                    image = None
 
+            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
+            # Удаляем мусор
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
@@ -361,8 +395,6 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 50:
-                    if any(x in text.lower() for x in ['file -', 'this photo', 'poses for']):
-                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
@@ -378,12 +410,32 @@ class NewsBot:
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image, 'source': 'AP News', 'url': url}
+            return {'title': title, 'content': content, 'image': image, 'source': 'Reuters', 'url': url}
         except Exception as e:
-            logger.error(f"AP News ошибка: {e}")
+            logger.error(f"Reuters парсинг ошибка: {e}")
             return None
 
     # ========== INFOBRICS ==========
+    def _get_infobrics_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://infobrics.org/rss/en')
+            articles = []
+            for entry in feed.entries[:5]:
+                title = entry.get('title', '')
+                if not title or title in ['{[title]}', 'BRICS portal']:
+                    summary = entry.get('summary', '')
+                    if summary:
+                        title = re.sub(r'<[^>]+>', '', summary)
+                        title = title.split('.')[0][:100]
+                if title and len(title) > 10:
+                    if any(word in title.lower() for word in SKIP_TITLES):
+                        continue
+                    articles.append({'url': entry.link, 'title': clean_text(title)})
+            return articles
+        except Exception as e:
+            logger.error(f"InfoBrics RSS: {e}")
+            return []
+
     def _parse_infobrics_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
@@ -441,6 +493,22 @@ class NewsBot:
             return None
 
     # ========== GLOBAL RESEARCH ==========
+    def _get_globalresearch_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.globalresearch.ca/feed')
+            articles = []
+            for entry in feed.entries[:5]:
+                title = entry.get('title', '')
+                if title:
+                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
+                    if any(word in title.lower() for word in SKIP_TITLES):
+                        continue
+                    articles.append({'url': entry.link, 'title': clean_text(title)})
+            return articles
+        except Exception as e:
+            logger.error(f"GR RSS: {e}")
+            return []
+
     def _parse_globalresearch_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
@@ -494,86 +562,42 @@ class NewsBot:
 
             return {'title': title, 'content': content, 'image': image, 'source': 'Global Research', 'url': url}
         except Exception as e:
-            logger.error(f"Global Research ошибка: {e}")
+            logger.error(f"GR ошибка: {e}")
             return None
 
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
         
-        # AP News
-        logger.info("📰 AP News...")
-        try:
-            resp = fetch_url('https://apnews.com/hub/world-news')
-            if resp and resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                articles = []
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    if '/article/' in href:
-                        url = href if href.startswith('https') else 'https://apnews.com' + href
-                        title = a.get_text(strip=True)
-                        if len(title) < 20:
-                            parent = a.find_parent(['h2', 'h3'])
-                            if parent:
-                                title = parent.get_text(strip=True)
-                        if title and len(title) > 15:
-                            title = clean_text(title)
-                            articles.append({'url': url, 'title': title})
-                
-                seen = set()
-                unique = []
-                for a in articles:
-                    if a['url'] not in seen:
-                        seen.add(a['url'])
-                        unique.append(a)
-                
-                for a in unique[:5]:
-                    if not self._is_duplicate(a['url'], a['title']):
-                        data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, a['url'])
-                        if data:
-                            items.append(data)
-                            logger.info(f"✅ AP: {data['title'][:40]}...")
-        except Exception as e:
-            logger.error(f"Ошибка AP News: {e}")
+        # 1. Reuters (новый источник)
+        logger.info("📰 Reuters...")
+        reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
+        for a in reuters_articles[:5]:
+            if not self._is_duplicate(a['url'], a['title']):
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
+                if data:
+                    items.append(data)
+                    logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # InfoBrics
+        # 2. InfoBrics
         logger.info("📰 InfoBrics...")
-        try:
-            feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, 'https://infobrics.org/rss/en')
-            for entry in feed.entries[:5]:
-                title = entry.get('title', '')
-                if not title or title in ['{[title]}', 'BRICS portal']:
-                    summary = entry.get('summary', '')
-                    if summary:
-                        title = re.sub(r'<[^>]+>', '', summary)
-                        title = title.split('.')[0][:100]
-                if title and len(title) > 10:
-                    title = clean_text(title)
-                    if not self._is_duplicate(entry.link, title):
-                        data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, entry.link)
-                        if data:
-                            items.append(data)
-                            logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
-        except Exception as e:
-            logger.error(f"Ошибка InfoBrics: {e}")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for a in ib_articles[:3]:
+            if not self._is_duplicate(a['url'], a['title']):
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
+                if data:
+                    items.append(data)
+                    logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # Global Research
+        # 3. Global Research
         logger.info("📰 Global Research...")
-        try:
-            feed = await asyncio.get_event_loop().run_in_executor(None, feedparser.parse, 'https://www.globalresearch.ca/feed')
-            for entry in feed.entries[:5]:
-                title = entry.get('title', '')
-                if title:
-                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
-                    title = clean_text(title)
-                    if not self._is_duplicate(entry.link, title):
-                        data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, entry.link)
-                        if data:
-                            items.append(data)
-                            logger.info(f"✅ GR: {data['title'][:40]}...")
-        except Exception as e:
-            logger.error(f"Ошибка Global Research: {e}")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for a in gr_articles[:3]:
+            if not self._is_duplicate(a['url'], a['title']):
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
+                if data:
+                    items.append(data)
+                    logger.info(f"✅ GR: {data['title'][:40]}...")
 
         logger.info(f"📊 Новостей: {len(items)}")
         return items
