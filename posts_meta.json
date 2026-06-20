@@ -1,12 +1,5 @@
 {
   "posts": {
-    "2c2e9889b418aceb": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/congo-ebola-who-spread-bunia-bundibugyo-6b0bd445b991dd381ae8a585a9b6179a",
-      "original_title": "Ebola fears surge on the ground in Congo over rapid spread of a rare type",
-      "preview": "The new outbreak of a rare Ebola type in Congo and Uganda poses low global risk, the World Health Organization said Wednesday, but responders on the ground described being underprotected and undertrained for a rapidly spreading virus with no approved medicine or vaccine. The risk assessment came as ",
-      "time": "2026-05-21T09:55:43.334657+00:00"
-    },
     "c2002d934ba2084a": {
       "source": "AP News",
       "url": "https://apnews.com/article/iran-us-israel-war-missiles-rifle-training-tehran-df66b19c69074ca4f4195f9eca262020",
@@ -839,6 +832,13 @@
       "original_title": "US push to get Iran talks started hits an early bump. Vance stays at home, for now",
       "preview": "Vice President JD Vance has embraced the role of being the chief defender of the agreement he and President Donald Trump signed with Iran over the weekend. Talks planned for Friday in Switzerland between Iran and the United States, which Vice President JD Vance had been scheduled to attend, were pos",
       "time": "2026-06-20T08:32:53.953721+00:00"
+    },
+    "231e9483b991fe78": {
+      "source": "AP News",
+      "url": "https://apnews.com/article/obama-presidential-center-chicago-juneteenth-7f655b125d3cc28dcee91e1645842782",
+      "original_title": "Barack and Michelle Obama surprise first visitors to newly opened presidential center",
+      "preview": "Former President Barack Obama formally opened his presidential center in Chicago on Thursday with a call to defend democracy as three former presidents joined him on stage in an extraordinary event featuring politicians, A-list celebrities, athletes and other internationally known figures. Former Pr",
+      "time": "2026-06-20T13:01:27.420320+00:00"
     }
   }
 }
