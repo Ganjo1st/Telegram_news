@@ -100,7 +100,11 @@ def get_local_time() -> datetime:
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        }
         response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
         return response
@@ -146,7 +150,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
             if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                if 'logo' not in src.lower():
+                if 'logo' not in src.lower() and 'icon' not in src.lower():
                     return src
     return None
 
@@ -267,7 +271,7 @@ class NewsBot:
     def _can_post(self) -> bool:
         now = get_local_time()
         # По выходным публикуем всегда, без ночных ограничений
-        is_weekend = now.weekday() >= 5  # 5=суббота, 6=воскресенье
+        is_weekend = now.weekday() >= 5
         if not is_weekend and (23 <= now.hour or now.hour < 7):
             return False
         
@@ -326,11 +330,11 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text[:2000]
 
-    # ========== REUTERS (НОВЫЙ ИСТОЧНИК) ==========
-    def _get_reuters_articles(self) -> list:
-        """Получает список статей с Reuters через RSS"""
+    # ========== BBC NEWS (НОВЫЙ ОСНОВНОЙ ИСТОЧНИК) ==========
+    def _get_bbc_articles(self) -> list:
+        """Получает список статей с BBC News через RSS"""
         try:
-            feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
+            feed = feedparser.parse('https://feeds.bbci.co.uk/news/rss.xml')
             articles = []
             for entry in feed.entries[:8]:
                 title = entry.get('title', '')
@@ -345,11 +349,11 @@ class NewsBot:
                 })
             return articles
         except Exception as e:
-            logger.error(f"Reuters RSS ошибка: {e}")
+            logger.error(f"BBC RSS ошибка: {e}")
             return []
 
-    def _parse_reuters_article(self, url: str) -> dict | None:
-        """Парсит статью Reuters"""
+    def _parse_bbc_article(self, url: str) -> dict | None:
+        """Парсит статью BBC News"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -388,6 +392,88 @@ class NewsBot:
                 return None
 
             # Удаляем мусор
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
+            paragraphs = []
+            for p in article.find_all('p'):
+                text = p.get_text(strip=True)
+                if len(text) > 50:
+                    text = clean_text(text)
+                    if text:
+                        paragraphs.append(text)
+                if len(paragraphs) >= 5:
+                    break
+
+            if len(paragraphs) < 2:
+                return None
+
+            content = '\n\n'.join(paragraphs)
+            content = clean_text(content)
+            
+            if len(content) < 150:
+                return None
+
+            return {'title': title, 'content': content, 'image': image, 'source': 'BBC News', 'url': url}
+        except Exception as e:
+            logger.error(f"BBC парсинг ошибка: {e}")
+            return None
+
+    # ========== REUTERS (РЕЗЕРВНЫЙ) ==========
+    def _get_reuters_articles(self) -> list:
+        """Получает список статей с Reuters через RSS"""
+        try:
+            feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
+            articles = []
+            for entry in feed.entries[:5]:
+                title = entry.get('title', '')
+                if not title:
+                    continue
+                if any(word in title.lower() for word in SKIP_TITLES):
+                    continue
+                articles.append({
+                    'url': entry.link,
+                    'title': clean_text(title)
+                })
+            return articles
+        except Exception as e:
+            logger.error(f"Reuters RSS ошибка: {e}")
+            return []
+
+    def _parse_reuters_article(self, url: str) -> dict | None:
+        """Парсит статью Reuters"""
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base = f'https://{url.split("/")[2]}'
+
+            title = None
+            og_title = soup.find('meta', property='og:title')
+            if og_title and og_title.get('content'):
+                title = og_title['content']
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+            if not title:
+                return None
+            
+            title = clean_text(title)
+            if not is_valid_news(title):
+                return None
+
+            image = extract_image_url(soup, base)
+            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                image = None
+
+            article = soup.find('article')
+            if not article:
+                article = soup.find('main')
+            if not article:
+                return None
+
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
@@ -569,17 +655,27 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # 1. Reuters (новый источник)
+        # 1. BBC News (основной источник)
+        logger.info("📰 BBC News...")
+        bbc_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_bbc_articles)
+        for a in bbc_articles[:5]:
+            if not self._is_duplicate(a['url'], a['title']):
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_bbc_article, a['url'])
+                if data:
+                    items.append(data)
+                    logger.info(f"✅ BBC: {data['title'][:40]}...")
+
+        # 2. Reuters (резервный)
         logger.info("📰 Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
-        for a in reuters_articles[:5]:
+        for a in reuters_articles[:3]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # 2. InfoBrics
+        # 3. InfoBrics
         logger.info("📰 InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for a in ib_articles[:3]:
@@ -589,7 +685,7 @@ class NewsBot:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # 3. Global Research
+        # 4. Global Research
         logger.info("📰 Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for a in gr_articles[:3]:
