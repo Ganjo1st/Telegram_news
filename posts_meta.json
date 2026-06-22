@@ -1,12 +1,5 @@
 {
   "posts": {
-    "bf82c97dc918ce44": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/congo-ebola-outbreak-who-4e08d8df6d9c34039a9e0b8bad7a8954",
-      "original_title": "Congo curtails funeral wakes in Ebola outbreak as WHO upgrades risk assessment",
-      "preview": "BUNIA, Congo — Authorities in northeastern Congo banned funeral wakes and gatherings of more than 50 people Friday in an effort to curb a rapidly spreading Ebola outbreak in a region where medical workers have struggled with a lack of resources and pushback from angry residents.\n\nThe World Health Or",
-      "time": "2026-05-23T08:25:52.712615+00:00"
-    },
     "e167a5d29f230f12": {
       "source": "AP News",
       "url": "https://apnews.com/article/canada-alberta-referendum-smith-3169b3d9fefac0c62ebedcbdb2ff876c",
@@ -825,6 +818,13 @@
       "original_title": "UK weather: Extreme heat warning extended to four days as 38C heatwave approaches",
       "preview": "An amber weather warning for extreme heat has been extended by the Met Office, with forecasts suggesting temperatures could reach 38C (100F) in parts of England later next week. An updated warning will now be in force from 01:00 BST on Monday through to 23:59 BST on Thursday, reflecting growing conf",
       "time": "2026-06-21T23:50:44.552842+00:00"
+    },
+    "5e92044bbde8af96": {
+      "source": "BBC News",
+      "url": "https://www.bbc.com/news/articles/cn8k1my75gno?at_medium=RSS&at_campaign=rss",
+      "original_title": "Starmer considers political future as calls to quit mount",
+      "preview": "Sir Keir Starmer is weighing up his political future as pressure grows on him to announce his resignation. It comes as cabinet ally Peter Kyle said the prime minister was considering \"political realities\" after Andy Burnham's victory in the Makerfield by-election last week cleared a path for him to ",
+      "time": "2026-06-22T08:42:14.536573+00:00"
     }
   }
 }
