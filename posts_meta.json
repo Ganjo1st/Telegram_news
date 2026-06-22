@@ -1,12 +1,5 @@
 {
   "posts": {
-    "e167a5d29f230f12": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/canada-alberta-referendum-smith-3169b3d9fefac0c62ebedcbdb2ff876c",
-      "original_title": "Alberta province plans a public vote on whether to hold a binding referendum on leaving Canada",
-      "preview": "TORONTO — Canada’s oil-rich province of Albertawill hold a referendumin October on leaving Canada, but the province’s premier said Thursday it won’t actually be a vote on whether to separate.\n\nDanielle Smith said voters instead would be deciding whether it’s time to hold a referendum on quitting Can",
-      "time": "2026-05-23T12:25:36.606421+00:00"
-    },
     "d585c37b24a45106": {
       "source": "AP News",
       "url": "https://apnews.com/article/castro-raul-trump-indictment-cuba-846cffc2af0505d55eead059deda877b",
@@ -825,6 +818,13 @@
       "original_title": "Starmer considers political future as calls to quit mount",
       "preview": "Sir Keir Starmer is weighing up his political future as pressure grows on him to announce his resignation. It comes as cabinet ally Peter Kyle said the prime minister was considering \"political realities\" after Andy Burnham's victory in the Makerfield by-election last week cleared a path for him to ",
       "time": "2026-06-22T08:42:14.536573+00:00"
+    },
+    "0b40fccf6dbaa6f7": {
+      "source": "BBC News",
+      "url": "https://www.bbc.com/news/articles/c39yd12zed9o?at_medium=RSS&at_campaign=rss",
+      "original_title": "Chris Mason: All eyes on Downing Street - what does the PM say, and when?",
+      "preview": "For the third time in four years, we appear on the brink of a prime minister announcing their plan to leave office, not because they have lost a general election but because their own party has concluded they would be better off without them. Many people within government and in the wider Labour Par",
+      "time": "2026-06-22T14:20:38.444686+00:00"
     }
   }
 }
