@@ -1,19 +1,5 @@
 {
   "posts": {
-    "b726d937e1bf4395": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/california-chemical-tank-leak-c1f922cae0ddb142857d12aee08d2d6b",
-      "original_title": "Southern California chemical tank at risk of exploding as 40,000 residents are ordered to evacuate",
-      "preview": "About 40,000 people were under evacuation orders and schools shut down Friday in Southern California after a storage tank continued to leak a hazardous chemical used to make plastic parts that officials said could rupture or explode.\n\nA damaged chemical storage tank that authorities fear is at risk ",
-      "time": "2026-05-24T16:51:23.136178+00:00"
-    },
-    "010d393f91982bc5": {
-      "source": "AP News",
-      "url": "https://apnews.com/article/sanctuary-cities-mullin-trump-flights-screening-cbp-380519008d0dc995e4c0a6dee0b79033",
-      "original_title": "Travel industry worries after Trump administration reiterates threat to sanctuary city airports",
-      "preview": "President Donald Trump, left, and Secretary of Homeland Security Markwayne Mullin, right, saluting at the start of the commencement ceremony at the U.S. Coast Guard Academy in New London, Conn., Wednesday, May 20, 2026.\n\nHomeland Security Secretary Markwayne Mullin, listens as President Donald Trump",
-      "time": "2026-05-24T18:13:12.432113+00:00"
-    },
     "4d597f1a7024a5a1": {
       "source": "AP News",
       "url": "https://apnews.com/article/iran-us-war-ceasefire-negotiations-hormuz-e603a7759d6cbd70ce5ed01f439a29dc",
@@ -797,6 +783,13 @@
       "original_title": "Chris Mason: Questions multiply for the man tipped to replace Starmer",
       "preview": "Westminster is a postcode whose currency is power – and power is shifting, quickly. Two key moments on Monday accelerated the likelihood of one key outcome. Not only did Sir Keir Starmer set out a timetable for his departure but the biggest potential rival to Andy Burnham, Wes Streeting, folded and ",
       "time": "2026-06-23T15:07:05.655073+00:00"
+    },
+    "a9b795339887cf73": {
+      "source": "BBC News",
+      "url": "https://www.bbc.co.uk/news/articles/c6217nv34rro?at_medium=RSS&at_campaign=rss",
+      "original_title": "Can you keep your kids off school or refuse to work during a heatwave?",
+      "preview": "There is no law in the UK that says a given temperature is too hot or too cold to work. The Met Office has issued arare red warningfor extreme heat covering parts of England and Wales later this week. Temperatures will increase significantly in the next few days and could hit 40C in places by Wednes",
+      "time": "2026-06-23T18:31:55.171505+00:00"
     }
   }
 }
