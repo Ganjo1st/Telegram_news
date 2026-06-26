@@ -53,12 +53,11 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# Фильтры для пропуска некрологов и не-новостей
+# Фильтры для пропуска некрологов и не-новостей (сокращенный список)
 SKIP_TITLES = [
     'died', 'dies', 'dead', 'killed', 'murdered', 'assassinated',
     'passed away', 'obituary', 'death of', 'умер', 'скончался',
     'biography', 'биография', 'birthday', 'memorial', 'funeral',
-    'obituary:', 'in memoriam', 'remembering',
 ]
 
 
@@ -76,12 +75,10 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     text = decode_html_entities(text)
-    text = re.sub(r'\([^)]*BRICS[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'—\s*BRICS\s*News.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -93,7 +90,6 @@ def is_valid_news(title: str, content: str = "") -> bool:
     title_lower = title.lower()
     for word in SKIP_TITLES:
         if word in title_lower:
-            logger.info(f"Пропуск (не новость): {title[:50]}")
             return False
     return True
 
@@ -109,7 +105,7 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
         }
-        response = requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=timeout, verify=False)
         response.raise_for_status()
         return response
     except Exception as e:
@@ -330,144 +326,12 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text[:2000]
 
-    # ========== BRICS NEWS (ОСНОВНОЙ ИСТОЧНИК) ==========
-    def _get_brics_articles(self) -> list:
-        try:
-            rss_urls = [
-                'https://brics.news/rss',
-                'https://brics.news/feed',
-                'https://brics.news/en/rss',
-                'https://brics.news/en/feed',
-            ]
-            
-            articles = []
-            for rss_url in rss_urls:
-                try:
-                    feed = feedparser.parse(rss_url)
-                    if feed.entries:
-                        logger.info(f"BRICS News RSS найден: {rss_url}")
-                        for entry in feed.entries[:8]:
-                            title = entry.get('title', '')
-                            if not title:
-                                continue
-                            if any(word in title.lower() for word in SKIP_TITLES):
-                                continue
-                            articles.append({
-                                'url': entry.link,
-                                'title': clean_text(title)
-                            })
-                        if articles:
-                            break
-                except Exception as e:
-                    logger.warning(f"Не удалось получить RSS с {rss_url}: {e}")
-                    continue
-            
-            if not articles:
-                logger.info("BRICS News RSS не работает, пробуем парсить главную страницу...")
-                articles = self._get_brics_articles_from_html()
-            
-            return articles[:8]
-        except Exception as e:
-            logger.error(f"BRICS News ошибка: {e}")
-            return []
-
-    def _get_brics_articles_from_html(self) -> list:
-        try:
-            resp = fetch_url('https://brics.news')
-            if not resp:
-                return []
-            
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            articles = []
-            
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if '/post/' in href or '/article/' in href or '/news/' in href:
-                    title = a.get_text(strip=True)
-                    if len(title) > 20:
-                        url = href if href.startswith('http') else 'https://brics.news' + href
-                        articles.append({'url': url, 'title': clean_text(title)})
-            
-            seen = set()
-            unique = []
-            for a in articles:
-                if a['url'] not in seen:
-                    seen.add(a['url'])
-                    unique.append(a)
-            
-            return unique[:8]
-        except Exception as e:
-            logger.error(f"BRICS News HTML парсинг ошибка: {e}")
-            return []
-
-    def _parse_brics_article(self, url: str) -> dict | None:
-        try:
-            resp = fetch_url(url)
-            if not resp:
-                return None
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
-
-            title = None
-            og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                title = og_title['content']
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-            if not title:
-                return None
-            
-            title = clean_text(title)
-            if not is_valid_news(title):
-                return None
-
-            image = extract_image_url(soup, base)
-            if image:
-                img_hash = hashlib.md5(image.encode()).hexdigest()
-                if img_hash in IMAGE_HASH_CACHE:
-                    image = None
-
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
-                return None
-
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
-            paragraphs = []
-            for p in article.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 5:
-                    break
-
-            if len(paragraphs) < 2:
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            content = clean_text(content)
-            
-            if len(content) < 150:
-                return None
-
-            return {'title': title, 'content': content, 'image': image, 'source': 'BRICS News', 'url': url}
-        except Exception as e:
-            logger.error(f"BRICS News парсинг ошибка: {e}")
-            return None
-
-    # ========== REUTERS (РЕЗЕРВНЫЙ) ==========
+    # ========== REUTERS ==========
     def _get_reuters_articles(self) -> list:
         try:
             feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
             articles = []
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if not title:
                     continue
@@ -547,7 +411,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if not title or title in ['{[title]}', 'BRICS portal']:
                     summary = entry.get('summary', '')
@@ -624,7 +488,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if title:
                     title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
@@ -696,36 +560,30 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        logger.info("📰 BRICS News...")
-        brics_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_brics_articles)
-        for a in brics_articles[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_brics_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ BRICS: {data['title'][:40]}...")
-
+        # 1. Reuters
         logger.info("📰 Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
-        for a in reuters_articles[:3]:
+        for a in reuters_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
+        # 2. InfoBrics
         logger.info("📰 InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for a in ib_articles[:3]:
+        for a in ib_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
+        # 3. Global Research
         logger.info("📰 Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for a in gr_articles[:3]:
+        for a in gr_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
                 if data:
