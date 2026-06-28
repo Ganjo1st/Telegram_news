@@ -97,9 +97,8 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Улучшенное извлечение изображений — фильтрует логотипы и находит реальные картинки статьи"""
+    """Извлечение изображений с фильтрацией логотипов"""
     
-    # Паттерны для исключения логотипов и иконок
     exclude_patterns = [
         'logo', 'icon', 'svg', 'gif', 'pixel', 'favicon', 'banner', 
         'avatar', 'placeholder', 'thumbnail', 'small', 'button',
@@ -107,13 +106,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
         'logo-brics', 'brics-icon', 'site-logo', 'header-logo'
     ]
     
-    # Паттерны для приоритетных изображений (основные картинки статьи)
-    priority_patterns = [
-        'hero', 'featured', 'main', 'lead', 'large', 'full',
-        'article-image', 'post-image', 'news-image', 'feature-image'
-    ]
-    
-    # 1. Open Graph (самый надежный)
+    # 1. Open Graph
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -123,7 +116,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
             img = urljoin(base_url, img)
         if img.startswith('http'):
             img_lower = img.lower()
-            # Пропускаем логотипы
             if not any(p in img_lower for p in exclude_patterns):
                 return img
     
@@ -140,7 +132,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if not any(p in img_lower for p in exclude_patterns):
                 return img
     
-    # 3. Ищем в article или main — ищем самые большие картинки
+    # 3. Поиск в статье по размеру
     container = soup.find('article') or soup.find('main') or soup.find('body')
     
     if container:
@@ -162,11 +154,9 @@ def extract_image_url(soup, base_url: str) -> str | None:
             
             src_lower = src.lower()
             
-            # Пропускаем логотипы и иконки
             if any(p in src_lower for p in exclude_patterns):
                 continue
             
-            # Проверяем размеры, если есть
             width = img.get('width', '')
             height = img.get('height', '')
             
@@ -174,18 +164,14 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 try:
                     w = int(width)
                     h = int(height)
-                    # Отдаем предпочтение большим изображениям
-                    size = w * h
-                    if size > best_size and w >= 300 and h >= 200:
-                        best_size = size
-                        best_img = src
+                    if w >= 300 and h >= 200:
+                        size = w * h
+                        if size > best_size:
+                            best_size = size
+                            best_img = src
                 except:
                     pass
             else:
-                # Если размеров нет, проверяем по src
-                if any(p in src_lower for p in priority_patterns):
-                    return src
-                # Если это JPG с нормальным разрешением
                 if re.search(r'\.(jpg|jpeg|png|webp)', src_lower) and 'small' not in src_lower:
                     if best_img is None:
                         best_img = src
@@ -193,9 +179,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if best_img:
             return best_img
     
-    # 4. Ищем в figure
+    # 4. Поиск в figure
     for figure in soup.find_all('figure'):
-        # Пропускаем figure с логотипами
         figure_class = ' '.join(figure.get('class', [])).lower()
         if any(p in figure_class for p in exclude_patterns):
             continue
@@ -331,12 +316,10 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
-        # В выходные публикуем всегда, без ограничений
         is_weekend = now.weekday() >= 5
         if is_weekend:
             return True
         
-        # В будни — только днем
         if 23 <= now.hour or now.hour < 7:
             return False
         
@@ -435,8 +418,15 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                image = None
+            
+            # Пропускаем статьи без изображения
+            if not image:
+                logger.info(f"Reuters: статья без изображения — пропускаем")
+                return None
+            
+            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                logger.info(f"Reuters: изображение уже использовалось — пропускаем")
+                return None
 
             article = soup.find('article')
             if not article:
@@ -512,8 +502,15 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                image = None
+            
+            # Пропускаем статьи без изображения
+            if not image:
+                logger.info(f"InfoBrics: статья без изображения — пропускаем")
+                return None
+            
+            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                logger.info(f"InfoBrics: изображение уже использовалось — пропускаем")
+                return None
 
             content_div = soup.find('div', class_=re.compile(r'article|content|post'))
             if not content_div:
@@ -584,8 +581,15 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                image = None
+            
+            # Пропускаем статьи без изображения
+            if not image:
+                logger.info(f"Global Research: статья без изображения — пропускаем")
+                return None
+            
+            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                logger.info(f"Global Research: изображение уже использовалось — пропускаем")
+                return None
 
             content_div = soup.find('div', class_=re.compile(r'entry-content|post-content'))
             if not content_div:
@@ -626,7 +630,7 @@ class NewsBot:
         # Reuters
         logger.info("📰 Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
-        for a in reuters_articles[:3]:
+        for a in reuters_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
                 if data:
@@ -636,7 +640,7 @@ class NewsBot:
         # InfoBrics
         logger.info("📰 InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for a in ib_articles[:3]:
+        for a in ib_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
                 if data:
@@ -646,14 +650,14 @@ class NewsBot:
         # Global Research
         logger.info("📰 Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for a in gr_articles[:3]:
+        for a in gr_articles[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ GR: {data['title'][:40]}...")
 
-        logger.info(f"📊 Новостей: {len(items)}")
+        logger.info(f"📊 Новостей с фото: {len(items)}")
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
@@ -666,6 +670,11 @@ class NewsBot:
 
             if not title_en or not content_en:
                 logger.error("Нет заголовка или контента")
+                return
+
+            # Если нет изображения — пропускаем (хотя в парсере уже проверяем)
+            if not img:
+                logger.info("Нет изображения — пропускаем публикацию")
                 return
 
             logger.info(f"📝 Перевод: {title_en[:40]}...")
@@ -691,51 +700,36 @@ class NewsBot:
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
-            if img:
-                logger.info(f"🖼️ Загрузка изображения...")
-                resp = await loop.run_in_executor(None, fetch_url, img)
-                if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
-                    try:
+            logger.info(f"🖼️ Загрузка изображения...")
+            resp = await loop.run_in_executor(None, fetch_url, img)
+            if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
+                try:
+                    await self.bot.send_photo(
+                        chat_id=CHANNEL_ID, 
+                        photo=resp.content, 
+                        caption=message, 
+                        parse_mode='Markdown'
+                    )
+                    logger.info("✅ С ФОТО")
+                    self._mark_sent(url, title_en, content_en, img)
+                    self._log_post(url, title_en)
+                    return
+                except TelegramError as e:
+                    if "caption is too long" in str(e).lower():
                         await self.bot.send_photo(
                             chat_id=CHANNEL_ID, 
                             photo=resp.content, 
-                            caption=message, 
+                            caption=f"*{title_escaped}*", 
                             parse_mode='Markdown'
                         )
-                        logger.info("✅ С ФОТО")
+                        logger.info("✅ ФОТО (коротко)")
                         self._mark_sent(url, title_en, content_en, img)
                         self._log_post(url, title_en)
                         return
-                    except TelegramError as e:
-                        if "caption is too long" in str(e).lower():
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID, 
-                                photo=resp.content, 
-                                caption=f"*{title_escaped}*", 
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ ФОТО (коротко)")
-                            self._mark_sent(url, title_en, content_en, img)
-                            self._log_post(url, title_en)
-                            return
-                        else:
-                            logger.warning(f"Ошибка фото: {e}")
-                else:
-                    logger.warning("Не удалось загрузить изображение")
-
-            text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"*{title_escaped}*\n\n{text_content}"
-            
-            if len(text_message) > MAX_MESSAGE:
-                title_len = len(f"*{title_escaped}*\n\n")
-                max_text_len = MAX_MESSAGE - title_len - 10
-                text_content = self._truncate_sentence(content_ru, max_text_len)
-                text_message = f"*{title_escaped}*\n\n{text_content}"
-            
-            await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode='Markdown')
-            logger.info("✅ ТЕКСТОМ")
-            self._mark_sent(url, title_en, content_en, img)
-            self._log_post(url, title_en)
+                    else:
+                        logger.warning(f"Ошибка фото: {e}")
+            else:
+                logger.warning("Не удалось загрузить изображение")
 
         except TelegramError as e:
             if "Can't parse entities" in str(e):
@@ -755,7 +749,7 @@ class NewsBot:
         try:
             news = await self.fetch_news()
             if not news:
-                logger.info("📭 Нет новостей")
+                logger.info("📭 Нет новостей с фото")
                 return
             if not self._can_post():
                 logger.info("⏸️ Отложено")
