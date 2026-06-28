@@ -97,8 +97,23 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    exclude = ['logo', 'icon', 'svg', 'gif', 'pixel', 'favicon', 'banner', 'avatar', 'placeholder']
+    """Улучшенное извлечение изображений — фильтрует логотипы и находит реальные картинки статьи"""
     
+    # Паттерны для исключения логотипов и иконок
+    exclude_patterns = [
+        'logo', 'icon', 'svg', 'gif', 'pixel', 'favicon', 'banner', 
+        'avatar', 'placeholder', 'thumbnail', 'small', 'button',
+        'infobrics-logo', 'brics-logo', 'reuters-logo', 'global-research-logo',
+        'logo-brics', 'brics-icon', 'site-logo', 'header-logo'
+    ]
+    
+    # Паттерны для приоритетных изображений (основные картинки статьи)
+    priority_patterns = [
+        'hero', 'featured', 'main', 'lead', 'large', 'full',
+        'article-image', 'post-image', 'news-image', 'feature-image'
+    ]
+    
+    # 1. Open Graph (самый надежный)
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -106,9 +121,13 @@ def extract_image_url(soup, base_url: str) -> str | None:
             img = 'https:' + img
         elif img.startswith('/'):
             img = urljoin(base_url, img)
-        if img.startswith('http') and not any(x in img.lower() for x in exclude):
-            return img
+        if img.startswith('http'):
+            img_lower = img.lower()
+            # Пропускаем логотипы
+            if not any(p in img_lower for p in exclude_patterns):
+                return img
     
+    # 2. Twitter image
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta and meta.get('content'):
         img = meta['content']
@@ -116,22 +135,84 @@ def extract_image_url(soup, base_url: str) -> str | None:
             img = 'https:' + img
         elif img.startswith('/'):
             img = urljoin(base_url, img)
-        if img.startswith('http') and not any(x in img.lower() for x in exclude):
-            return img
+        if img.startswith('http'):
+            img_lower = img.lower()
+            if not any(p in img_lower for p in exclude_patterns):
+                return img
     
-    container = soup.find('article') or soup.find('main')
+    # 3. Ищем в article или main — ищем самые большие картинки
+    container = soup.find('article') or soup.find('main') or soup.find('body')
+    
     if container:
+        best_img = None
+        best_size = 0
+        
         for img in container.find_all('img'):
             src = img.get('src') or img.get('data-src')
             if not src:
                 continue
+            
             if src.startswith('//'):
                 src = 'https:' + src
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
-            if src.startswith('http') and not any(x in src.lower() for x in exclude):
-                if 'logo' not in src.lower() and 'icon' not in src.lower():
+            
+            if not src.startswith('http'):
+                continue
+            
+            src_lower = src.lower()
+            
+            # Пропускаем логотипы и иконки
+            if any(p in src_lower for p in exclude_patterns):
+                continue
+            
+            # Проверяем размеры, если есть
+            width = img.get('width', '')
+            height = img.get('height', '')
+            
+            if width and height:
+                try:
+                    w = int(width)
+                    h = int(height)
+                    # Отдаем предпочтение большим изображениям
+                    size = w * h
+                    if size > best_size and w >= 300 and h >= 200:
+                        best_size = size
+                        best_img = src
+                except:
+                    pass
+            else:
+                # Если размеров нет, проверяем по src
+                if any(p in src_lower for p in priority_patterns):
                     return src
+                # Если это JPG с нормальным разрешением
+                if re.search(r'\.(jpg|jpeg|png|webp)', src_lower) and 'small' not in src_lower:
+                    if best_img is None:
+                        best_img = src
+        
+        if best_img:
+            return best_img
+    
+    # 4. Ищем в figure
+    for figure in soup.find_all('figure'):
+        # Пропускаем figure с логотипами
+        figure_class = ' '.join(figure.get('class', [])).lower()
+        if any(p in figure_class for p in exclude_patterns):
+            continue
+        
+        img = figure.find('img')
+        if img:
+            src = img.get('src') or img.get('data-src')
+            if src:
+                if src.startswith('//'):
+                    src = 'https:' + src
+                elif src.startswith('/'):
+                    src = urljoin(base_url, src)
+                if src.startswith('http'):
+                    src_lower = src.lower()
+                    if not any(p in src_lower for p in exclude_patterns):
+                        return src
+    
     return None
 
 
@@ -253,7 +334,6 @@ class NewsBot:
         # В выходные публикуем всегда, без ограничений
         is_weekend = now.weekday() >= 5
         if is_weekend:
-            logger.info("Выходной день — публикация разрешена")
             return True
         
         # В будни — только днем
@@ -441,6 +521,9 @@ class NewsBot:
             if not content_div:
                 return None
 
+            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
@@ -510,6 +593,9 @@ class NewsBot:
             if not content_div:
                 return None
 
+            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
@@ -536,9 +622,6 @@ class NewsBot:
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
-        
-        # Запускаем все источники параллельно
-        tasks = []
         
         # Reuters
         logger.info("📰 Reuters...")
