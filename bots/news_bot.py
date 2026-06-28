@@ -53,13 +53,6 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# Фильтры для пропуска некрологов и не-новостей (сокращенный список)
-SKIP_TITLES = [
-    'died', 'dies', 'dead', 'killed', 'murdered', 'assassinated',
-    'passed away', 'obituary', 'death of', 'умер', 'скончался',
-    'biography', 'биография', 'birthday', 'memorial', 'funeral',
-]
-
 
 def decode_html_entities(text: str) -> str:
     if not text:
@@ -82,16 +75,6 @@ def clean_text(text: str) -> str:
     text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
-
-
-def is_valid_news(title: str, content: str = "") -> bool:
-    if not title:
-        return False
-    title_lower = title.lower()
-    for word in SKIP_TITLES:
-        if word in title_lower:
-            return False
-    return True
 
 
 def get_local_time() -> datetime:
@@ -267,8 +250,14 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
+        # В выходные публикуем всегда, без ограничений
         is_weekend = now.weekday() >= 5
-        if not is_weekend and (23 <= now.hour or now.hour < 7):
+        if is_weekend:
+            logger.info("Выходной день — публикация разрешена")
+            return True
+        
+        # В будни — только днем
+        if 23 <= now.hour or now.hour < 7:
             return False
         
         today_posts = sum(1 for p in self.state['posts_log'] 
@@ -335,8 +324,6 @@ class NewsBot:
                 title = entry.get('title', '')
                 if not title:
                     continue
-                if any(word in title.lower() for word in SKIP_TITLES):
-                    continue
                 articles.append({
                     'url': entry.link,
                     'title': clean_text(title)
@@ -366,8 +353,6 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            if not is_valid_news(title):
-                return None
 
             image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
@@ -419,8 +404,6 @@ class NewsBot:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 if title and len(title) > 10:
-                    if any(word in title.lower() for word in SKIP_TITLES):
-                        continue
                     articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
@@ -443,12 +426,10 @@ class NewsBot:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-            if not title or title.lower() in ['brics portal', 'portal']:
+            if not title:
                 return None
             
             title = clean_text(title)
-            if not is_valid_news(title):
-                return None
 
             image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
@@ -492,8 +473,6 @@ class NewsBot:
                 title = entry.get('title', '')
                 if title:
                     title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
-                    if any(word in title.lower() for word in SKIP_TITLES):
-                        continue
                     articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
@@ -520,8 +499,6 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            if not is_valid_news(title):
-                return None
 
             image = extract_image_url(soup, base)
             if image and hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
@@ -560,30 +537,33 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # 1. Reuters
+        # Запускаем все источники параллельно
+        tasks = []
+        
+        # Reuters
         logger.info("📰 Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
-        for a in reuters_articles[:5]:
+        for a in reuters_articles[:3]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # 2. InfoBrics
+        # InfoBrics
         logger.info("📰 InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for a in ib_articles[:5]:
+        for a in ib_articles[:3]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # 3. Global Research
+        # Global Research
         logger.info("📰 Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for a in gr_articles[:5]:
+        for a in gr_articles[:3]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
                 if data:
