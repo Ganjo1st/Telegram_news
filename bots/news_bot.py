@@ -71,6 +71,7 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Al Jazeera[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -418,14 +419,9 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            
-            # Пропускаем статьи без изображения
             if not image:
-                logger.info(f"Reuters: статья без изображения — пропускаем")
                 return None
-            
             if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                logger.info(f"Reuters: изображение уже использовалось — пропускаем")
                 return None
 
             article = soup.find('article')
@@ -459,6 +455,84 @@ class NewsBot:
             return {'title': title, 'content': content, 'image': image, 'source': 'Reuters', 'url': url}
         except Exception as e:
             logger.error(f"Reuters парсинг ошибка: {e}")
+            return None
+
+    # ========== AL JAZEERA (НОВЫЙ ИСТОЧНИК) ==========
+    def _get_aljazeera_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.aljazeera.com/xml/rss.xml')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '')
+                if not title:
+                    continue
+                articles.append({
+                    'url': entry.link,
+                    'title': clean_text(title)
+                })
+            return articles
+        except Exception as e:
+            logger.error(f"Al Jazeera RSS ошибка: {e}")
+            return []
+
+    def _parse_aljazeera_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base = f'https://{url.split("/")[2]}'
+
+            title = None
+            og_title = soup.find('meta', property='og:title')
+            if og_title and og_title.get('content'):
+                title = og_title['content']
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+            if not title:
+                return None
+            
+            title = clean_text(title)
+
+            image = extract_image_url(soup, base)
+            if not image:
+                return None
+            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
+                return None
+
+            article = soup.find('article')
+            if not article:
+                article = soup.find('main')
+            if not article:
+                return None
+
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
+            paragraphs = []
+            for p in article.find_all('p'):
+                text = p.get_text(strip=True)
+                if len(text) > 50:
+                    text = clean_text(text)
+                    if text:
+                        paragraphs.append(text)
+                if len(paragraphs) >= 5:
+                    break
+
+            if len(paragraphs) < 2:
+                return None
+
+            content = '\n\n'.join(paragraphs)
+            content = clean_text(content)
+            
+            if len(content) < 150:
+                return None
+
+            return {'title': title, 'content': content, 'image': image, 'source': 'Al Jazeera', 'url': url}
+        except Exception as e:
+            logger.error(f"Al Jazeera парсинг ошибка: {e}")
             return None
 
     # ========== INFOBRICS ==========
@@ -502,14 +576,9 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            
-            # Пропускаем статьи без изображения
             if not image:
-                logger.info(f"InfoBrics: статья без изображения — пропускаем")
                 return None
-            
             if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                logger.info(f"InfoBrics: изображение уже использовалось — пропускаем")
                 return None
 
             content_div = soup.find('div', class_=re.compile(r'article|content|post'))
@@ -581,14 +650,9 @@ class NewsBot:
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
-            
-            # Пропускаем статьи без изображения
             if not image:
-                logger.info(f"Global Research: статья без изображения — пропускаем")
                 return None
-            
             if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                logger.info(f"Global Research: изображение уже использовалось — пропускаем")
                 return None
 
             content_div = soup.find('div', class_=re.compile(r'entry-content|post-content'))
@@ -627,7 +691,7 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # Reuters
+        # 1. Reuters
         logger.info("📰 Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
         for a in reuters_articles[:5]:
@@ -637,7 +701,17 @@ class NewsBot:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # InfoBrics
+        # 2. Al Jazeera (новый источник)
+        logger.info("📰 Al Jazeera...")
+        aj_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_aljazeera_articles)
+        for a in aj_articles[:5]:
+            if not self._is_duplicate(a['url'], a['title']):
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_aljazeera_article, a['url'])
+                if data:
+                    items.append(data)
+                    logger.info(f"✅ Al Jazeera: {data['title'][:40]}...")
+
+        # 3. InfoBrics
         logger.info("📰 InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for a in ib_articles[:5]:
@@ -647,7 +721,7 @@ class NewsBot:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # Global Research
+        # 4. Global Research
         logger.info("📰 Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for a in gr_articles[:5]:
@@ -672,9 +746,8 @@ class NewsBot:
                 logger.error("Нет заголовка или контента")
                 return
 
-            # Если нет изображения — пропускаем (хотя в парсере уже проверяем)
             if not img:
-                logger.info("Нет изображения — пропускаем публикацию")
+                logger.info("Нет изображения — пропускаем")
                 return
 
             logger.info(f"📝 Перевод: {title_en[:40]}...")
