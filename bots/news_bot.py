@@ -19,7 +19,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-from deep_translator import GoogleTranslator, exceptions as translator_exceptions
+from deep_translator import GoogleTranslator
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -71,7 +71,6 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*Al Jazeera[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -98,16 +97,12 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлечение изображений с фильтрацией логотипов"""
-    
     exclude_patterns = [
         'logo', 'icon', 'svg', 'gif', 'pixel', 'favicon', 'banner', 
         'avatar', 'placeholder', 'thumbnail', 'small', 'button',
-        'infobrics-logo', 'brics-logo', 'reuters-logo', 'global-research-logo',
-        'logo-brics', 'brics-icon', 'site-logo', 'header-logo'
+        'infobrics-logo', 'brics-logo', 'reuters-logo', 'global-research-logo'
     ]
     
-    # 1. Open Graph
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -120,7 +115,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if not any(p in img_lower for p in exclude_patterns):
                 return img
     
-    # 2. Twitter image
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta and meta.get('content'):
         img = meta['content']
@@ -133,59 +127,36 @@ def extract_image_url(soup, base_url: str) -> str | None:
             if not any(p in img_lower for p in exclude_patterns):
                 return img
     
-    # 3. Поиск в статье по размеру
     container = soup.find('article') or soup.find('main') or soup.find('body')
-    
     if container:
         best_img = None
-        best_size = 0
-        
         for img in container.find_all('img'):
             src = img.get('src') or img.get('data-src')
             if not src:
                 continue
-            
             if src.startswith('//'):
                 src = 'https:' + src
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
-            
             if not src.startswith('http'):
                 continue
-            
             src_lower = src.lower()
-            
             if any(p in src_lower for p in exclude_patterns):
                 continue
-            
             width = img.get('width', '')
             height = img.get('height', '')
-            
             if width and height:
                 try:
-                    w = int(width)
-                    h = int(height)
-                    if w >= 300 and h >= 200:
-                        size = w * h
-                        if size > best_size:
-                            best_size = size
-                            best_img = src
+                    if int(width) >= 300 and int(height) >= 200:
+                        return src
                 except:
                     pass
-            else:
-                if re.search(r'\.(jpg|jpeg|png|webp)', src_lower) and 'small' not in src_lower:
-                    if best_img is None:
-                        best_img = src
-        
+            if best_img is None:
+                best_img = src
         if best_img:
             return best_img
     
-    # 4. Поиск в figure
     for figure in soup.find_all('figure'):
-        figure_class = ' '.join(figure.get('class', [])).lower()
-        if any(p in figure_class for p in exclude_patterns):
-            continue
-        
         img = figure.find('img')
         if img:
             src = img.get('src') or img.get('data-src')
@@ -198,7 +169,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
                     src_lower = src.lower()
                     if not any(p in src_lower for p in exclude_patterns):
                         return src
-    
     return None
 
 
@@ -317,13 +287,12 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
-        is_weekend = now.weekday() >= 5
-        if is_weekend:
+        # Выходные — публикуем всегда
+        if now.weekday() >= 5:
             return True
-        
+        # Будни — только днем
         if 23 <= now.hour or now.hour < 7:
             return False
-        
         today_posts = sum(1 for p in self.state['posts_log'] 
                          if datetime.fromisoformat(p['time']).date() == now.date())
         if today_posts >= MAX_POSTS_PER_DAY:
@@ -388,10 +357,7 @@ class NewsBot:
                 title = entry.get('title', '')
                 if not title:
                     continue
-                articles.append({
-                    'url': entry.link,
-                    'title': clean_text(title)
-                })
+                articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
             logger.error(f"Reuters RSS ошибка: {e}")
@@ -415,7 +381,6 @@ class NewsBot:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
-            
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
@@ -448,91 +413,12 @@ class NewsBot:
 
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
-            
             if len(content) < 150:
                 return None
 
             return {'title': title, 'content': content, 'image': image, 'source': 'Reuters', 'url': url}
         except Exception as e:
-            logger.error(f"Reuters парсинг ошибка: {e}")
-            return None
-
-    # ========== AL JAZEERA (НОВЫЙ ИСТОЧНИК) ==========
-    def _get_aljazeera_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://www.aljazeera.com/xml/rss.xml')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '')
-                if not title:
-                    continue
-                articles.append({
-                    'url': entry.link,
-                    'title': clean_text(title)
-                })
-            return articles
-        except Exception as e:
-            logger.error(f"Al Jazeera RSS ошибка: {e}")
-            return []
-
-    def _parse_aljazeera_article(self, url: str) -> dict | None:
-        try:
-            resp = fetch_url(url)
-            if not resp:
-                return None
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
-
-            title = None
-            og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                title = og_title['content']
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-            if not title:
-                return None
-            
-            title = clean_text(title)
-
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
-
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
-                return None
-
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
-            paragraphs = []
-            for p in article.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 5:
-                    break
-
-            if len(paragraphs) < 2:
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            content = clean_text(content)
-            
-            if len(content) < 150:
-                return None
-
-            return {'title': title, 'content': content, 'image': image, 'source': 'Al Jazeera', 'url': url}
-        except Exception as e:
-            logger.error(f"Al Jazeera парсинг ошибка: {e}")
+            logger.error(f"Reuters ошибка: {e}")
             return None
 
     # ========== INFOBRICS ==========
@@ -572,7 +458,6 @@ class NewsBot:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
-            
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
@@ -604,7 +489,6 @@ class NewsBot:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
-            
             if len(content) < 150:
                 return None
 
@@ -646,7 +530,6 @@ class NewsBot:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
-            
             title = clean_text(title)
 
             image = extract_image_url(soup, base)
@@ -678,7 +561,6 @@ class NewsBot:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
-            
             if len(content) < 150:
                 return None
 
@@ -693,38 +575,25 @@ class NewsBot:
         
         # 1. Reuters
         logger.info("📰 Reuters...")
-        reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
-        for a in reuters_articles[:5]:
+        for a in self._get_reuters_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # 2. Al Jazeera (новый источник)
-        logger.info("📰 Al Jazeera...")
-        aj_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_aljazeera_articles)
-        for a in aj_articles[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_aljazeera_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ Al Jazeera: {data['title'][:40]}...")
-
-        # 3. InfoBrics
+        # 2. InfoBrics
         logger.info("📰 InfoBrics...")
-        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for a in ib_articles[:5]:
+        for a in self._get_infobrics_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
                 if data:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # 4. Global Research
+        # 3. Global Research
         logger.info("📰 Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for a in gr_articles[:5]:
+        for a in self._get_globalresearch_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
                 data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
                 if data:
