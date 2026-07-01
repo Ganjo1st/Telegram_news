@@ -71,8 +71,7 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*RT[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*Sputnik[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*France 24[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -99,9 +98,9 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Упрощенное извлечение изображений — берем первое подходящее"""
+    """Извлечение изображений — исключаем SVG и логотипы"""
     
-    # 1. Open Graph (самый надежный)
+    # 1. Open Graph
     meta = soup.find('meta', property='og:image')
     if meta and meta.get('content'):
         img = meta['content']
@@ -110,7 +109,9 @@ def extract_image_url(soup, base_url: str) -> str | None:
         elif img.startswith('/'):
             img = urljoin(base_url, img)
         if img.startswith('http'):
-            return img
+            # Исключаем SVG и логотипы
+            if '.svg' not in img.lower() and 'logo' not in img.lower() and 'icon' not in img.lower():
+                return img
     
     # 2. Twitter image
     meta = soup.find('meta', attrs={'name': 'twitter:image'})
@@ -121,7 +122,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
         elif img.startswith('/'):
             img = urljoin(base_url, img)
         if img.startswith('http'):
-            return img
+            if '.svg' not in img.lower() and 'logo' not in img.lower() and 'icon' not in img.lower():
+                return img
     
     # 3. Поиск в статье
     container = soup.find('article') or soup.find('main') or soup.find('body')
@@ -135,21 +137,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
             elif src.startswith('/'):
                 src = urljoin(base_url, src)
             if src.startswith('http'):
-                # Пропускаем только явные логотипы
-                if 'logo' not in src.lower() and 'icon' not in src.lower():
-                    return src
-    
-    # 4. Поиск в figure
-    for figure in soup.find_all('figure'):
-        img = figure.find('img')
-        if img:
-            src = img.get('src') or img.get('data-src')
-            if src:
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif src.startswith('/'):
-                    src = urljoin(base_url, src)
-                if src.startswith('http') and 'logo' not in src.lower():
+                src_lower = src.lower()
+                if '.svg' not in src_lower and 'logo' not in src_lower and 'icon' not in src_lower:
                     return src
     
     return None
@@ -270,10 +259,8 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
-        # Выходные — публикуем всегда
         if now.weekday() >= 5:
             return True
-        # Будни — только днем
         if 23 <= now.hour or now.hour < 7:
             return False
         today_posts = sum(1 for p in self.state['posts_log'] 
@@ -336,14 +323,14 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
             articles = []
-            for entry in feed.entries[:15]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if not title:
                     continue
                 articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
-            logger.error(f"Reuters RSS ошибка: {e}")
+            logger.error(f"Reuters RSS: {e}")
             return []
 
     def _parse_reuters_article(self, url: str) -> dict | None:
@@ -368,10 +355,8 @@ class NewsBot:
 
             image = extract_image_url(soup, base)
             if not image:
-                logger.info(f"Reuters: нет изображения")
                 return None
             if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                logger.info(f"Reuters: изображение уже использовалось")
                 return None
 
             article = soup.find('article')
@@ -406,22 +391,22 @@ class NewsBot:
             logger.error(f"Reuters ошибка: {e}")
             return None
 
-    # ========== RT NEWS (НОВЫЙ ИСТОЧНИК) ==========
-    def _get_rt_articles(self) -> list:
+    # ========== FRANCE 24 (НОВЫЙ НАДЕЖНЫЙ ИСТОЧНИК) ==========
+    def _get_france24_articles(self) -> list:
         try:
-            feed = feedparser.parse('https://www.rt.com/rss/news/')
+            feed = feedparser.parse('https://www.france24.com/en/rss')
             articles = []
-            for entry in feed.entries[:15]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if not title:
                     continue
                 articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
-            logger.error(f"RT RSS ошибка: {e}")
+            logger.error(f"France24 RSS: {e}")
             return []
 
-    def _parse_rt_article(self, url: str) -> dict | None:
+    def _parse_france24_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -474,82 +459,9 @@ class NewsBot:
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image, 'source': 'RT', 'url': url}
+            return {'title': title, 'content': content, 'image': image, 'source': 'France 24', 'url': url}
         except Exception as e:
-            logger.error(f"RT ошибка: {e}")
-            return None
-
-    # ========== SPUTNIK (НОВЫЙ ИСТОЧНИК) ==========
-    def _get_sputnik_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://sputniknews.com/export/rss2/archive/index.xml')
-            articles = []
-            for entry in feed.entries[:15]:
-                title = entry.get('title', '')
-                if not title:
-                    continue
-                articles.append({'url': entry.link, 'title': clean_text(title)})
-            return articles
-        except Exception as e:
-            logger.error(f"Sputnik RSS ошибка: {e}")
-            return []
-
-    def _parse_sputnik_article(self, url: str) -> dict | None:
-        try:
-            resp = fetch_url(url)
-            if not resp:
-                return None
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
-
-            title = None
-            og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                title = og_title['content']
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-            if not title:
-                return None
-            title = clean_text(title)
-
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
-
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
-                return None
-
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
-            paragraphs = []
-            for p in article.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 5:
-                    break
-
-            if len(paragraphs) < 2:
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            content = clean_text(content)
-            if len(content) < 150:
-                return None
-
-            return {'title': title, 'content': content, 'image': image, 'source': 'Sputnik', 'url': url}
-        except Exception as e:
-            logger.error(f"Sputnik ошибка: {e}")
+            logger.error(f"France24 ошибка: {e}")
             return None
 
     # ========== INFOBRICS ==========
@@ -557,7 +469,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:15]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if not title or title in ['{[title]}', 'BRICS portal']:
                     summary = entry.get('summary', '')
@@ -565,6 +477,9 @@ class NewsBot:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 if title and len(title) > 10:
+                    # Пропускаем статьи с заголовком "BRICS portal"
+                    if title.lower() == 'brics portal':
+                        continue
                     articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
@@ -587,7 +502,7 @@ class NewsBot:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-            if not title:
+            if not title or title.lower() == 'brics portal':
                 return None
             title = clean_text(title)
 
@@ -633,7 +548,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:15]:
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if title:
                     title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
@@ -713,25 +628,16 @@ class NewsBot:
                     items.append(data)
                     logger.info(f"✅ Reuters: {data['title'][:40]}...")
 
-        # 2. RT (новый)
-        logger.info("📰 RT...")
-        for a in self._get_rt_articles()[:5]:
+        # 2. France 24 (новый)
+        logger.info("📰 France 24...")
+        for a in self._get_france24_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_rt_article, a['url'])
+                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_france24_article, a['url'])
                 if data:
                     items.append(data)
-                    logger.info(f"✅ RT: {data['title'][:40]}...")
+                    logger.info(f"✅ France 24: {data['title'][:40]}...")
 
-        # 3. Sputnik (новый)
-        logger.info("📰 Sputnik...")
-        for a in self._get_sputnik_articles()[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_sputnik_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ Sputnik: {data['title'][:40]}...")
-
-        # 4. InfoBrics
+        # 3. InfoBrics
         logger.info("📰 InfoBrics...")
         for a in self._get_infobrics_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
@@ -740,7 +646,7 @@ class NewsBot:
                     items.append(data)
                     logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
 
-        # 5. Global Research
+        # 4. Global Research
         logger.info("📰 Global Research...")
         for a in self._get_globalresearch_articles()[:5]:
             if not self._is_duplicate(a['url'], a['title']):
