@@ -49,11 +49,56 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
+# ========== ФИЛЬТРЫ ДЛЯ ПОДПИСЕЙ К ФОТО ==========
+PHOTO_CAPTION_KEYWORDS = [
+    'позирует', 'позёр', 'photo session', 'red carpet',
+    'arrives at the premiere', 'poses for photographers',
+    'attends the screening', 'walks the red carpet',
+    'фотографам', 'прибывают на показ', 'слева направо',
+    'стоит на мелководье', 'стоят на мелководье', 'купаются',
+    'фреска', 'изображена', 'кадр кадра', 'портрет',
+    'выставлены в витрине', 'сидит', 'машет рукой',
+    'пожимает руку', 'собирает вещи', 'проходят мимо',
+]
+
+PHOTO_CAPTION_STARTS = [
+    'file -', 'this image', 'this photo', 'in this photo',
+    'на этом фото', 'на этой фотографии', 'фото:',
+    'фотография:', 'кадр из', 'на снимке',
+    'этот кадр', 'на данной фотографии',
+]
+
+
+def is_photo_caption(text: str) -> bool:
+    """Проверяет, является ли текст подписью к фото"""
+    if not text:
+        return True
+    
+    text_lower = text.lower().strip()
+    
+    # Проверяем по началу фразы
+    for start in PHOTO_CAPTION_STARTS:
+        if text_lower.startswith(start):
+            return True
+    
+    # Проверяем по ключевым словам
+    for keyword in PHOTO_CAPTION_KEYWORDS:
+        if keyword in text_lower:
+            return True
+    
+    # Если текст слишком короткий (до 60 символов) и содержит слова о фото
+    if len(text) < 80:
+        photo_words = ['photo', 'фото', 'снимок', 'изображение', 'картина', 'кадр']
+        for word in photo_words:
+            if word in text_lower:
+                return True
+    
+    return False
+
 
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    # Удаляем упоминания источников в скобках
     text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
@@ -324,6 +369,9 @@ class NewsBot:
                     tag.decompose()
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Пропускаем подписи к фото
+                    if is_photo_caption(text):
+                        continue
                     if len(text) > 40:
                         text = clean_text(text)
                         if text:
@@ -398,6 +446,9 @@ class NewsBot:
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
+                # Пропускаем подписи к фото
+                if is_photo_caption(text):
+                    continue
                 if len(text) > 40 and not text.startswith('Read more'):
                     text = clean_text(text)
                     if text:
@@ -469,6 +520,9 @@ class NewsBot:
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
+                # Пропускаем подписи к фото
+                if is_photo_caption(text):
+                    continue
                 if len(text) > 40 and not text.startswith('Read more'):
                     text = clean_text(text)
                     if text:
@@ -556,13 +610,13 @@ class NewsBot:
             title_escaped = html.escape(title_ru)
             
             msg_text = self._truncate_text(content_ru, is_caption=True)
-            message = f"📰 *{title_escaped}*\n\n{msg_text}"
+            message = f"*{title_escaped}*\n\n{msg_text}"
 
             if len(message) > MAX_CAPTION:
-                title_len = len(f"📰 *{title_escaped}*\n\n")
+                title_len = len(f"*{title_escaped}*\n\n")
                 max_text_len = MAX_CAPTION - title_len - 5
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
-                message = f"📰 *{title_escaped}*\n\n{msg_text}"
+                message = f"*{title_escaped}*\n\n{msg_text}"
 
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения...")
@@ -584,7 +638,7 @@ class NewsBot:
                             await self.bot.send_photo(
                                 chat_id=CHANNEL_ID, 
                                 photo=resp.content, 
-                                caption=f"📰 *{title_escaped}*", 
+                                caption=f"*{title_escaped}*", 
                                 parse_mode='Markdown'
                             )
                             logger.info("✅ ФОТО (коротко)")
@@ -597,13 +651,13 @@ class NewsBot:
                     logger.warning("Не удалось загрузить изображение")
 
             text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            text_message = f"*{title_escaped}*\n\n{text_content}"
             
             if len(text_message) > MAX_MESSAGE:
-                title_len = len(f"📰 *{title_escaped}*\n\n")
+                title_len = len(f"*{title_escaped}*\n\n")
                 max_text_len = MAX_MESSAGE - title_len - 10
                 text_content = self._truncate_sentence(content_ru, max_text_len)
-                text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+                text_message = f"*{title_escaped}*\n\n{text_content}"
             
             await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode='Markdown')
             logger.info("✅ ТЕКСТОМ")
@@ -614,7 +668,7 @@ class NewsBot:
             if "Can't parse entities" in str(e):
                 logger.warning("Ошибка Markdown, отправка без форматирования")
                 try:
-                    await self.bot.send_message(chat_id=CHANNEL_ID, text=f"📰 {title_ru}\n\n{content_ru}", parse_mode=None)
+                    await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
                 except Exception as e2:
                     logger.error(f"Ошибка: {e2}")
             else:
