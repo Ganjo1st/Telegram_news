@@ -68,9 +68,6 @@ def remove_ap_parentheses(text: str) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = cleaned.strip()
 
-    if cleaned != text:
-        logger.info(f"✂️ Удалено (AP) из текста")
-
     return cleaned
 
 
@@ -100,6 +97,7 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 def extract_image_url(soup, base_url: str) -> str | None:
     """Извлекает URL изображения из страницы"""
+    # 1. Пробуем Open Graph image (самый надежный)
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -109,19 +107,23 @@ def extract_image_url(soup, base_url: str) -> str | None:
             return urljoin(base_url, url)
         if url.startswith('http'):
             return url
-        return url
     
-    for img in soup.find_all('img', src=True):
-        src = img.get('src', '')
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
-            continue
-        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+    # 2. Ищем основное изображение в статье
+    article = soup.find('article')
+    if article:
+        for img in article.find_all('img', src=True):
+            src = img.get('src', '')
+            # Пропускаем логотипы и иконки
+            if any(x in src.lower() for x in ['logo', 'icon', 'svg', 'gif', 'avatar']):
+                continue
+            # Берем только большие изображения
+            if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                if src.startswith('//'):
+                    return 'https:' + src
+                if src.startswith('/'):
+                    return urljoin(base_url, src)
+                if src.startswith('http'):
+                    return src
     
     return None
 
@@ -325,33 +327,57 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # ======== ЗАГОЛОВОК ========
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
                 title = meta_title['content']
             else:
-                h1 = soup.find('h1')
+                h1 = soup.find('h1', class_='Page-headline')
                 if h1:
                     title = h1.get_text(strip=True)
+                else:
+                    h1 = soup.find('h1')
+                    if h1:
+                        title = h1.get_text(strip=True)
             if not title:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = title.strip()
 
+            # ======== ИЗОБРАЖЕНИЕ ========
             image_url = extract_image_url(soup, base_url)
 
-            container = soup.find('article') or soup.find('main')
+            # ======== ТЕКСТ СТАТЬИ ========
+            # Ищем контейнер с текстом статьи
+            article = soup.find('article')
+            if not article:
+                article = soup.find('main')
+            if not article:
+                return None
+
+            # Удаляем все ненужные элементы
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
+            # Удаляем figure с подписями к фото
+            for figure in article.find_all('figure'):
+                figure.decompose()
+
+            # Собираем параграфы
             paragraphs = []
-            if container:
-                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                    tag.decompose()
-                for p in container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    # Пропускаем подписи к фото (они короткие и содержат AP в скобках)
-                    if len(text) > 40:
-                        text = clean_text(text)
-                        if text:
-                            paragraphs.append(text)
+            for p in article.find_all('p'):
+                text = p.get_text(strip=True)
+                # Пропускаем короткие параграфы и явные подписи
+                if len(text) > 40:
+                    # Дополнительная проверка: если текст начинается с "This image" или "FILE -"
+                    if text.lower().startswith(('this image', 'this photo', 'file -', 'in this image')):
+                        continue
+                    text = clean_text(text)
+                    if text:
+                        paragraphs.append(text)
+                if len(paragraphs) >= 8:
+                    break
 
             if len(paragraphs) < 2:
                 return None
@@ -416,8 +442,9 @@ class NewsBot:
             if not content_div:
                 return None
 
-            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
+            # Удаляем подписи к фото
+            for figure in content_div.find_all('figure'):
+                figure.decompose()
 
             paragraphs = []
             for p in content_div.find_all('p'):
@@ -487,8 +514,9 @@ class NewsBot:
             if not content_div:
                 return None
 
-            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
+            # Удаляем подписи к фото
+            for figure in content_div.find_all('figure'):
+                figure.decompose()
 
             paragraphs = []
             for p in content_div.find_all('p'):
@@ -574,20 +602,25 @@ class NewsBot:
             title_ru = clean_text(title_ru)
             content_ru = clean_text(content_ru)
 
+            # Сохраняем метаданные
             pid = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(pid, post['source'], url, title_en, content_en[:300])
 
+            # Форматируем сообщение: заголовок жирным, текст
             title_escaped = html.escape(title_ru)
             
+            # Обрезаем текст для подписи к фото
             msg_text = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{msg_text}"
 
+            # Проверяем длину подписи (максимум 1024 символа)
             if len(message) > MAX_CAPTION:
                 title_len = len(f"*{title_escaped}*\n\n")
                 max_text_len = MAX_CAPTION - title_len - 5
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
+            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения...")
                 resp = await loop.run_in_executor(None, fetch_url, image_url)
@@ -620,6 +653,7 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
+            # Публикация без фото
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
