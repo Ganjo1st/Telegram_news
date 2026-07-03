@@ -49,57 +49,35 @@ MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
 
-# ========== ФИЛЬТРЫ ДЛЯ ПОДПИСЕЙ К ФОТО ==========
-PHOTO_CAPTION_KEYWORDS = [
-    'позирует', 'позёр', 'photo session', 'red carpet',
-    'arrives at the premiere', 'poses for photographers',
-    'attends the screening', 'walks the red carpet',
-    'фотографам', 'прибывают на показ', 'слева направо',
-    'стоит на мелководье', 'стоят на мелководье', 'купаются',
-    'фреска', 'изображена', 'кадр кадра', 'портрет',
-    'выставлены в витрине', 'сидит', 'машет рукой',
-    'пожимает руку', 'собирает вещи', 'проходят мимо',
-]
 
-PHOTO_CAPTION_STARTS = [
-    'file -', 'this image', 'this photo', 'in this photo',
-    'на этом фото', 'на этой фотографии', 'фото:',
-    'фотография:', 'кадр из', 'на снимке',
-    'этот кадр', 'на данной фотографии',
-]
-
-
-def is_photo_caption(text: str) -> bool:
-    """Проверяет, является ли текст подписью к фото"""
+def remove_ap_parentheses(text: str) -> str:
+    """
+    Удаляет из текста конструкцию (AP), (АР) и подобные с пробелами.
+    Примеры: (AP), (AP ), ( AP ), (АР), (AP Photo/...), (AP Photo/Khalil Hamra, File)
+    """
     if not text:
-        return True
-    
-    text_lower = text.lower().strip()
-    
-    # Проверяем по началу фразы
-    for start in PHOTO_CAPTION_STARTS:
-        if text_lower.startswith(start):
-            return True
-    
-    # Проверяем по ключевым словам
-    for keyword in PHOTO_CAPTION_KEYWORDS:
-        if keyword in text_lower:
-            return True
-    
-    # Если текст слишком короткий (до 60 символов) и содержит слова о фото
-    if len(text) < 80:
-        photo_words = ['photo', 'фото', 'снимок', 'изображение', 'картина', 'кадр']
-        for word in photo_words:
-            if word in text_lower:
-                return True
-    
-    return False
+        return text
+
+    # Шаблон: открывающая скобка, любые символы, содержащие AP или АР в любом регистре, закрывающая скобка
+    pattern = r'\([^)]*[AaАа][PpРр][^)]*\)'
+
+    # Заменяем на пустую строку
+    cleaned = re.sub(pattern, '', text)
+
+    # Дополнительно: удаляем лишние пробелы, которые могли образоваться после удаления
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = cleaned.strip()
+
+    if cleaned != text:
+        logger.info(f"✂️ Удалено (AP) из текста")
+
+    return cleaned
 
 
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = remove_ap_parentheses(text)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
@@ -369,9 +347,7 @@ class NewsBot:
                     tag.decompose()
                 for p in container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Пропускаем подписи к фото
-                    if is_photo_caption(text):
-                        continue
+                    # Пропускаем подписи к фото (они короткие и содержат AP в скобках)
                     if len(text) > 40:
                         text = clean_text(text)
                         if text:
@@ -446,9 +422,6 @@ class NewsBot:
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
-                # Пропускаем подписи к фото
-                if is_photo_caption(text):
-                    continue
                 if len(text) > 40 and not text.startswith('Read more'):
                     text = clean_text(text)
                     if text:
@@ -520,9 +493,6 @@ class NewsBot:
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
-                # Пропускаем подписи к фото
-                if is_photo_caption(text):
-                    continue
                 if len(text) > 40 and not text.startswith('Read more'):
                     text = clean_text(text)
                     if text:
