@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Telegram News Bot - Автоматические публикации новостей
+Источники: AP News, InfoBrics, Global Research
+"""
+
 import os
 import json
 import logging
@@ -9,8 +14,6 @@ import hashlib
 import re
 import html
 import random
-import signal
-import sys
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -24,17 +27,9 @@ from deep_translator import GoogleTranslator
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[logging.StreamHandler(sys.stdout)]
+    level=logging.INFO
 )
 logger = logging.getLogger('news_bot')
-
-def signal_handler(signum, frame):
-    logger.info(f"Получен сигнал {signum}, завершаем работу...")
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, signal_handler)
-signal.signal(signal.SIGINT, signal_handler)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
@@ -45,6 +40,7 @@ MAX_POSTS_PER_DAY = 24
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
+
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
@@ -54,26 +50,14 @@ MAX_MESSAGE = 4096
 IMAGE_HASH_CACHE = set()
 
 
-def decode_html_entities(text: str) -> str:
-    if not text:
-        return text
-    text = text.replace('&quot;', '"').replace('&amp;', '&')
-    text = text.replace('&lt;', '<').replace('&gt;', '>')
-    text = text.replace('&apos;', "'").replace('&#39;', "'")
-    text = re.sub(r'&#\d+;', '', text)
-    return text
-
-
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    text = decode_html_entities(text)
-    text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
+    # Удаляем упоминания источников в скобках
+    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*France 24[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'—\s*Reuters.*$', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -84,62 +68,37 @@ def get_local_time() -> datetime:
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-        }
-        response = requests.get(url, headers=headers, timeout=timeout, verify=False)
-        response.raise_for_status()
-        return response
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        return requests.get(url, headers=headers, timeout=timeout)
     except Exception as e:
-        logger.error(f"Ошибка {url[:80]}: {e}")
+        logger.error(f"Ошибка запроса {url}: {e}")
         return None
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлечение изображений — исключаем SVG и логотипы"""
+    """Извлекает URL изображения из страницы"""
+    meta_img = soup.find('meta', property='og:image')
+    if meta_img and meta_img.get('content'):
+        url = meta_img['content']
+        if url.startswith('//'):
+            return 'https:' + url
+        if url.startswith('/'):
+            return urljoin(base_url, url)
+        if url.startswith('http'):
+            return url
+        return url
     
-    # 1. Open Graph
-    meta = soup.find('meta', property='og:image')
-    if meta and meta.get('content'):
-        img = meta['content']
-        if img.startswith('//'):
-            img = 'https:' + img
-        elif img.startswith('/'):
-            img = urljoin(base_url, img)
-        if img.startswith('http'):
-            # Исключаем SVG и логотипы
-            if '.svg' not in img.lower() and 'logo' not in img.lower() and 'icon' not in img.lower():
-                return img
-    
-    # 2. Twitter image
-    meta = soup.find('meta', attrs={'name': 'twitter:image'})
-    if meta and meta.get('content'):
-        img = meta['content']
-        if img.startswith('//'):
-            img = 'https:' + img
-        elif img.startswith('/'):
-            img = urljoin(base_url, img)
-        if img.startswith('http'):
-            if '.svg' not in img.lower() and 'logo' not in img.lower() and 'icon' not in img.lower():
-                return img
-    
-    # 3. Поиск в статье
-    container = soup.find('article') or soup.find('main') or soup.find('body')
-    if container:
-        for img in container.find_all('img'):
-            src = img.get('src') or img.get('data-src')
-            if not src:
-                continue
+    for img in soup.find_all('img', src=True):
+        src = img.get('src', '')
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
+            continue
+        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
-                src = 'https:' + src
-            elif src.startswith('/'):
-                src = urljoin(base_url, src)
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
             if src.startswith('http'):
-                src_lower = src.lower()
-                if '.svg' not in src_lower and 'logo' not in src_lower and 'icon' not in src_lower:
-                    return src
+                return src
     
     return None
 
@@ -149,18 +108,8 @@ class NewsBot:
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        self._translator = None
+        self.translator = GoogleTranslator(source='en', target='ru')
         self._load_image_cache()
-
-    @property
-    def translator(self):
-        if self._translator is None:
-            try:
-                self._translator = GoogleTranslator(source='en', target='ru')
-            except Exception as e:
-                logger.error(f"Ошибка переводчика: {e}")
-                self._translator = None
-        return self._translator
 
     def _load_image_cache(self):
         global IMAGE_HASH_CACHE
@@ -259,10 +208,9 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         now = get_local_time()
-        if now.weekday() >= 5:
-            return True
         if 23 <= now.hour or now.hour < 7:
             return False
+
         today_posts = sum(1 for p in self.state['posts_log'] 
                          if datetime.fromisoformat(p['time']).date() == now.date())
         if today_posts >= MAX_POSTS_PER_DAY:
@@ -282,186 +230,117 @@ class NewsBot:
                 return text[:pos + 1].strip()
         pos = text.rfind(' ', 0, limit)
         if pos > 0:
-            return text[:pos].strip() + '.'
-        return text[:limit].strip() + '.'
+            return text[:pos].strip() + '...'
+        return text[:limit].strip() + '...'
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
-        limit = MAX_CAPTION - 100 if is_caption else MAX_MESSAGE - 100
-        paras = re.split(r'\n\s*\n', text)
-        result = []
-        length = 0
-        for p in paras:
-            p = p.strip()
-            if not p:
-                continue
-            if length + len(p) + 2 <= limit:
-                result.append(p)
-                length += len(p) + 2
-            else:
-                if not result:
-                    return self._truncate_sentence(p, limit)
-                break
-        if result:
-            return '\n\n'.join(result)
-        return self._truncate_sentence(text, limit)
+        max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
+        return self._truncate_sentence(text, max_len)
 
     def _translate(self, text: str) -> str:
         if not text or len(text) < 10:
             return text
-        translator_instance = self.translator
-        if translator_instance is None:
-            return text[:2000]
         try:
-            result = translator_instance.translate(text[:3000])
-            return clean_text(result) if result else text[:2000]
+            if len(text) > 3000:
+                text = text[:3000]
+            result = self.translator.translate(text)
+            return clean_text(result) if result else text
         except Exception as e:
             logger.error(f"Ошибка перевода: {e}")
-            return text[:2000]
+            return text
 
-    # ========== REUTERS ==========
-    def _get_reuters_articles(self) -> list:
+    # ========== AP NEWS ==========
+    def _get_apnews_articles(self) -> list:
         try:
-            feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
+            resp = fetch_url('https://apnews.com/')
+            if not resp or resp.status_code != 200:
+                return []
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
             articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '')
-                if not title:
+
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                if '/article/' not in href:
                     continue
-                articles.append({'url': entry.link, 'title': clean_text(title)})
-            return articles
+
+                if href.startswith('https://'):
+                    url = href
+                elif href.startswith('/'):
+                    url = 'https://apnews.com' + href
+                else:
+                    continue
+
+                title = link.get_text(strip=True)
+                if not title or len(title) < 15:
+                    parent = link.find_parent(['h1', 'h2', 'h3', 'h4'])
+                    if parent:
+                        title = parent.get_text(strip=True)
+                if not title or len(title) < 15:
+                    continue
+
+                title = re.sub(r'\s+', ' ', title).strip()
+                articles.append({'url': url, 'title': title})
+
+            seen = set()
+            unique = []
+            for a in articles:
+                if a['url'] not in seen:
+                    seen.add(a['url'])
+                    unique.append(a)
+            return unique[:10]
         except Exception as e:
-            logger.error(f"Reuters RSS: {e}")
+            logger.error(f"Ошибка AP News: {e}")
             return []
 
-    def _parse_reuters_article(self, url: str) -> dict | None:
+    def _parse_apnews_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
                 return None
+
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
+            base_url = f'https://{url.split("/")[2]}'
 
             title = None
-            og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                title = og_title['content']
-            if not title:
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content']
+            else:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
-            title = clean_text(title)
+            title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
+            title = title.strip()
 
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
+            image_url = extract_image_url(soup, base_url)
 
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
-                return None
-
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
+            container = soup.find('article') or soup.find('main')
             paragraphs = []
-            for p in article.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 5:
-                    break
+            if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                    tag.decompose()
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40:
+                        text = clean_text(text)
+                        if text:
+                            paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 return None
 
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image, 'source': 'Reuters', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News', 'url': url}
         except Exception as e:
-            logger.error(f"Reuters ошибка: {e}")
-            return None
-
-    # ========== FRANCE 24 (НОВЫЙ НАДЕЖНЫЙ ИСТОЧНИК) ==========
-    def _get_france24_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://www.france24.com/en/rss')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '')
-                if not title:
-                    continue
-                articles.append({'url': entry.link, 'title': clean_text(title)})
-            return articles
-        except Exception as e:
-            logger.error(f"France24 RSS: {e}")
-            return []
-
-    def _parse_france24_article(self, url: str) -> dict | None:
-        try:
-            resp = fetch_url(url)
-            if not resp:
-                return None
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
-
-            title = None
-            og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                title = og_title['content']
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-            if not title:
-                return None
-            title = clean_text(title)
-
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
-
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
-                return None
-
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
-            paragraphs = []
-            for p in article.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 5:
-                    break
-
-            if len(paragraphs) < 2:
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            content = clean_text(content)
-            if len(content) < 150:
-                return None
-
-            return {'title': title, 'content': content, 'image': image, 'source': 'France 24', 'url': url}
-        except Exception as e:
-            logger.error(f"France24 ошибка: {e}")
+            logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
     # ========== INFOBRICS ==========
@@ -477,9 +356,6 @@ class NewsBot:
                         title = re.sub(r'<[^>]+>', '', summary)
                         title = title.split('.')[0][:100]
                 if title and len(title) > 10:
-                    # Пропускаем статьи с заголовком "BRICS portal"
-                    if title.lower() == 'brics portal':
-                        continue
                     articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
@@ -491,8 +367,9 @@ class NewsBot:
             resp = fetch_url(url)
             if not resp:
                 return None
+
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
+            base_url = f'https://{url.split("/")[2]}'
 
             title = None
             og = soup.find('meta', property='og:title')
@@ -502,15 +379,12 @@ class NewsBot:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-            if not title or title.lower() == 'brics portal':
+            if not title:
                 return None
+            
             title = clean_text(title)
 
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
+            image_url = extract_image_url(soup, base_url)
 
             content_div = soup.find('div', class_=re.compile(r'article|content|post'))
             if not content_div:
@@ -528,19 +402,20 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 4:
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+            
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image, 'source': 'InfoBrics', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
         except Exception as e:
-            logger.error(f"InfoBrics ошибка: {e}")
+            logger.error(f"InfoBrics парсинг: {e}")
             return None
 
     # ========== GLOBAL RESEARCH ==========
@@ -555,7 +430,7 @@ class NewsBot:
                     articles.append({'url': entry.link, 'title': clean_text(title)})
             return articles
         except Exception as e:
-            logger.error(f"GR RSS: {e}")
+            logger.error(f"Global Research RSS: {e}")
             return []
 
     def _parse_globalresearch_article(self, url: str) -> dict | None:
@@ -563,8 +438,9 @@ class NewsBot:
             resp = fetch_url(url)
             if not resp:
                 return None
+
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base = f'https://{url.split("/")[2]}'
+            base_url = f'https://{url.split("/")[2]}'
 
             title = None
             og = soup.find('meta', property='og:title')
@@ -576,13 +452,10 @@ class NewsBot:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
+            
             title = clean_text(title)
 
-            image = extract_image_url(soup, base)
-            if not image:
-                return None
-            if hashlib.md5(image.encode()).hexdigest() in IMAGE_HASH_CACHE:
-                return None
+            image_url = extract_image_url(soup, base_url)
 
             content_div = soup.find('div', class_=re.compile(r'entry-content|post-content'))
             if not content_div:
@@ -600,62 +473,60 @@ class NewsBot:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 4:
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
                 return None
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
+            
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image, 'source': 'Global Research', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
         except Exception as e:
-            logger.error(f"GR ошибка: {e}")
+            logger.error(f"Global Research парсинг: {e}")
             return None
 
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
         
-        # 1. Reuters
-        logger.info("📰 Reuters...")
-        for a in self._get_reuters_articles()[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ Reuters: {data['title'][:40]}...")
-
-        # 2. France 24 (новый)
-        logger.info("📰 France 24...")
-        for a in self._get_france24_articles()[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_france24_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ France 24: {data['title'][:40]}...")
-
-        # 3. InfoBrics
-        logger.info("📰 InfoBrics...")
-        for a in self._get_infobrics_articles()[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ InfoBrics: {data['title'][:40]}...")
-
-        # 4. Global Research
-        logger.info("📰 Global Research...")
-        for a in self._get_globalresearch_articles()[:5]:
-            if not self._is_duplicate(a['url'], a['title']):
-                data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, a['url'])
-                if data:
-                    items.append(data)
-                    logger.info(f"✅ GR: {data['title'][:40]}...")
-
-        logger.info(f"📊 Новостей с фото: {len(items)}")
+        # 1. AP News
+        logger.info("📰 Парсинг AP News...")
+        ap_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
+        for article in ap_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ AP News: {data['title'][:50]}...")
+        
+        # 2. InfoBrics
+        logger.info("📰 Парсинг InfoBrics...")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for article in ib_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+        
+        # 3. Global Research
+        logger.info("📰 Парсинг Global Research...")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+        
+        logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
@@ -664,18 +535,14 @@ class NewsBot:
             title_en = post.get('title', '')
             content_en = post.get('content', '')
             url = post.get('url', '')
-            img = post.get('image')
+            image_url = post.get('image')
 
             if not title_en or not content_en:
-                logger.error("Нет заголовка или контента")
+                logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            if not img:
-                logger.info("Нет изображения — пропускаем")
-                return
+            logger.info(f"📝 Перевод: {title_en[:50]}...")
 
-            logger.info(f"📝 Перевод: {title_en[:40]}...")
-            
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
@@ -689,50 +556,65 @@ class NewsBot:
             title_escaped = html.escape(title_ru)
             
             msg_text = self._truncate_text(content_ru, is_caption=True)
-            message = f"*{title_escaped}*\n\n{msg_text}"
+            message = f"📰 *{title_escaped}*\n\n{msg_text}"
 
             if len(message) > MAX_CAPTION:
-                title_len = len(f"*{title_escaped}*\n\n")
+                title_len = len(f"📰 *{title_escaped}*\n\n")
                 max_text_len = MAX_CAPTION - title_len - 5
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
-                message = f"*{title_escaped}*\n\n{msg_text}"
+                message = f"📰 *{title_escaped}*\n\n{msg_text}"
 
-            logger.info(f"🖼️ Загрузка изображения...")
-            resp = await loop.run_in_executor(None, fetch_url, img)
-            if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
-                try:
-                    await self.bot.send_photo(
-                        chat_id=CHANNEL_ID, 
-                        photo=resp.content, 
-                        caption=message, 
-                        parse_mode='Markdown'
-                    )
-                    logger.info("✅ С ФОТО")
-                    self._mark_sent(url, title_en, content_en, img)
-                    self._log_post(url, title_en)
-                    return
-                except TelegramError as e:
-                    if "caption is too long" in str(e).lower():
+            if image_url:
+                logger.info(f"🖼️ Загрузка изображения...")
+                resp = await loop.run_in_executor(None, fetch_url, image_url)
+                if resp and resp.status_code == 200 and 'image' in resp.headers.get('Content-Type', ''):
+                    try:
                         await self.bot.send_photo(
                             chat_id=CHANNEL_ID, 
                             photo=resp.content, 
-                            caption=f"*{title_escaped}*", 
+                            caption=message, 
                             parse_mode='Markdown'
                         )
-                        logger.info("✅ ФОТО (коротко)")
-                        self._mark_sent(url, title_en, content_en, img)
+                        logger.info("✅ С ФОТО")
+                        self._mark_sent(url, title_en, content_en, image_url)
                         self._log_post(url, title_en)
                         return
-                    else:
-                        logger.warning(f"Ошибка фото: {e}")
-            else:
-                logger.warning("Не удалось загрузить изображение")
+                    except TelegramError as e:
+                        if "caption is too long" in str(e).lower():
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID, 
+                                photo=resp.content, 
+                                caption=f"📰 *{title_escaped}*", 
+                                parse_mode='Markdown'
+                            )
+                            logger.info("✅ ФОТО (коротко)")
+                            self._mark_sent(url, title_en, content_en, image_url)
+                            self._log_post(url, title_en)
+                            return
+                        else:
+                            logger.warning(f"Ошибка фото: {e}")
+                else:
+                    logger.warning("Не удалось загрузить изображение")
+
+            text_content = self._truncate_text(content_ru, is_caption=False)
+            text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            
+            if len(text_message) > MAX_MESSAGE:
+                title_len = len(f"📰 *{title_escaped}*\n\n")
+                max_text_len = MAX_MESSAGE - title_len - 10
+                text_content = self._truncate_sentence(content_ru, max_text_len)
+                text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            
+            await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode='Markdown')
+            logger.info("✅ ТЕКСТОМ")
+            self._mark_sent(url, title_en, content_en, image_url)
+            self._log_post(url, title_en)
 
         except TelegramError as e:
             if "Can't parse entities" in str(e):
                 logger.warning("Ошибка Markdown, отправка без форматирования")
                 try:
-                    await self.bot.send_message(chat_id=CHANNEL_ID, text=f"{title_ru}\n\n{content_ru}", parse_mode=None)
+                    await self.bot.send_message(chat_id=CHANNEL_ID, text=f"📰 {title_ru}\n\n{content_ru}", parse_mode=None)
                 except Exception as e2:
                     logger.error(f"Ошибка: {e2}")
             else:
@@ -746,7 +628,7 @@ class NewsBot:
         try:
             news = await self.fetch_news()
             if not news:
-                logger.info("📭 Нет новостей с фото")
+                logger.info("📭 Нет новостей")
                 return
             if not self._can_post():
                 logger.info("⏸️ Отложено")
