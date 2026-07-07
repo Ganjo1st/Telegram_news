@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: AP News, RT, Global Research
+Источники: AP News, Reuters, Al Jazeera
 """
 
 import os
@@ -63,8 +63,8 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     text = remove_ap_parentheses(text)
-    text = re.sub(r'\([^)]*RT[^)]*\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Al Jazeera[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -86,7 +86,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 def extract_image_url(soup, base_url: str) -> str | None:
     """Извлекает URL изображения из страницы"""
     
-    # 1. Open Graph image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -97,7 +96,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    # 2. Twitter image
     meta_img = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -108,7 +106,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    # 3. Поиск в статье
     container = soup.find('article') or soup.find('main') or soup.find('body')
     if container:
         for img in container.find_all('img', src=True):
@@ -376,23 +373,22 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== RT NEWS (НОВЫЙ ИСТОЧНИК) ==========
-    def _get_rt_articles(self) -> list:
+    # ========== REUTERS (НОВЫЙ ИСТОЧНИК) ==========
+    def _get_reuters_articles(self) -> list:
         try:
-            feed = feedparser.parse('https://www.rt.com/rss/news/')
+            feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
             articles = []
             for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if title:
-                    title = clean_text(title)
-                    articles.append({'url': entry.link, 'title': title})
-                    logger.info(f"RT: найден заголовок '{title[:50]}'")
+                    articles.append({'url': entry.link, 'title': clean_text(title)})
+                    logger.info(f"Reuters: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
-            logger.error(f"RT RSS: {e}")
+            logger.error(f"Reuters RSS: {e}")
             return []
 
-    def _parse_rt_article(self, url: str) -> dict | None:
+    def _parse_reuters_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -401,7 +397,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ======== ЗАГОЛОВОК ========
+            # Заголовок
             title = None
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
@@ -414,14 +410,11 @@ class NewsBot:
                 return None
             
             title = clean_text(title)
-            logger.info(f"RT: заголовок '{title[:50]}'")
 
-            # ======== ИЗОБРАЖЕНИЕ ========
+            # Изображение
             image_url = extract_image_url(soup, base_url)
-            if image_url:
-                logger.info(f"RT: найдено изображение")
 
-            # ======== КОНТЕНТ ========
+            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
@@ -437,11 +430,11 @@ class NewsBot:
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                if len(text) > 40 and not text.startswith('Read more'):
+                if len(text) > 40:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 6:
+                if len(paragraphs) >= 8:
                     break
 
             if len(paragraphs) < 2:
@@ -452,27 +445,27 @@ class NewsBot:
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'RT', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Reuters', 'url': url}
         except Exception as e:
-            logger.error(f"RT парсинг: {e}")
+            logger.error(f"Reuters парсинг: {e}")
             return None
 
-    # ========== GLOBAL RESEARCH ==========
-    def _get_globalresearch_articles(self) -> list:
+    # ========== AL JAZEERA (НОВЫЙ ИСТОЧНИК) ==========
+    def _get_aljazeera_articles(self) -> list:
         try:
-            feed = feedparser.parse('https://www.globalresearch.ca/feed')
+            feed = feedparser.parse('https://www.aljazeera.com/xml/rss.xml')
             articles = []
             for entry in feed.entries[:10]:
                 title = entry.get('title', '')
                 if title:
-                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
                     articles.append({'url': entry.link, 'title': clean_text(title)})
+                    logger.info(f"Al Jazeera: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
-            logger.error(f"Global Research RSS: {e}")
+            logger.error(f"Al Jazeera RSS: {e}")
             return []
 
-    def _parse_globalresearch_article(self, url: str) -> dict | None:
+    def _parse_aljazeera_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -481,6 +474,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Заголовок
             title = None
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
@@ -494,25 +488,30 @@ class NewsBot:
             
             title = clean_text(title)
 
+            # Изображение
             image_url = extract_image_url(soup, base_url)
 
-            content_div = soup.find('div', class_=re.compile(r'entry-content|post-content'))
-            if not content_div:
-                content_div = soup.find('article')
-            if not content_div:
+            # Контент
+            article = soup.find('article')
+            if not article:
+                article = soup.find('main')
+            if not article:
                 return None
 
-            for figure in content_div.find_all('figure'):
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
+
+            for figure in article.find_all('figure'):
                 figure.decompose()
 
             paragraphs = []
-            for p in content_div.find_all('p'):
+            for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                if len(text) > 40 and not text.startswith('Read more'):
+                if len(text) > 40:
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 6:
+                if len(paragraphs) >= 8:
                     break
 
             if len(paragraphs) < 2:
@@ -523,9 +522,9 @@ class NewsBot:
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Al Jazeera', 'url': url}
         except Exception as e:
-            logger.error(f"Global Research парсинг: {e}")
+            logger.error(f"Al Jazeera парсинг: {e}")
             return None
 
     # ========== СБОР НОВОСТЕЙ ==========
@@ -543,27 +542,27 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ AP News: {data['title'][:50]}...")
         
-        # 2. RT (новый источник)
-        logger.info("📰 Парсинг RT...")
-        rt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_rt_articles)
-        for article in rt_articles[:3]:
+        # 2. Reuters
+        logger.info("📰 Парсинг Reuters...")
+        reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
+        for article in reuters_articles[:3]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_rt_article, article['url'])
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_reuters_article, article['url'])
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
-                logger.info(f"✅ RT: {data['title'][:50]}...")
+                logger.info(f"✅ Reuters: {data['title'][:50]}...")
         
-        # 3. Global Research
-        logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:3]:
+        # 3. Al Jazeera
+        logger.info("📰 Парсинг Al Jazeera...")
+        aj_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_aljazeera_articles)
+        for article in aj_articles[:3]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_aljazeera_article, article['url'])
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
-                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+                logger.info(f"✅ Al Jazeera: {data['title'][:50]}...")
         
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
