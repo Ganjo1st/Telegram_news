@@ -84,8 +84,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из страницы"""
-    
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -373,7 +371,7 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== REUTERS (НОВЫЙ ИСТОЧНИК) ==========
+    # ========== REUTERS ==========
     def _get_reuters_articles(self) -> list:
         try:
             feed = feedparser.parse('https://www.reuters.com/world/rssfeed')
@@ -397,7 +395,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
@@ -411,10 +408,8 @@ class NewsBot:
             
             title = clean_text(title)
 
-            # Изображение
             image_url = extract_image_url(soup, base_url)
 
-            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
@@ -450,7 +445,7 @@ class NewsBot:
             logger.error(f"Reuters парсинг: {e}")
             return None
 
-    # ========== AL JAZEERA (НОВЫЙ ИСТОЧНИК) ==========
+    # ========== AL JAZEERA ==========
     def _get_aljazeera_articles(self) -> list:
         try:
             feed = feedparser.parse('https://www.aljazeera.com/xml/rss.xml')
@@ -474,7 +469,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Заголовок
             title = None
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
@@ -488,10 +482,8 @@ class NewsBot:
             
             title = clean_text(title)
 
-            # Изображение
             image_url = extract_image_url(soup, base_url)
 
-            # Контент
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
