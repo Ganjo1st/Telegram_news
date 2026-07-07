@@ -84,7 +84,7 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из страницы с поддержкой InfoBrics"""
+    """Извлекает URL изображения из страницы"""
     
     # 1. Open Graph image
     meta_img = soup.find('meta', property='og:image')
@@ -108,20 +108,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    # 3. Специально для InfoBrics: ищем article__image
-    article_img = soup.find('img', class_='article__image')
-    if article_img:
-        src = article_img.get('src')
-        if src:
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
-    
-    # 4. Поиск в статье
-    container = soup.find('article') or soup.find('main')
+    # 3. Поиск в статье
+    container = soup.find('article') or soup.find('main') or soup.find('body')
     if container:
         for img in container.find_all('img', src=True):
             src = img.get('src', '')
@@ -388,23 +376,18 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== INFOBRICS (ИСПРАВЛЕН) ==========
+    # ========== INFOBRICS (УПРОЩЕННЫЙ) ==========
     def _get_infobrics_articles(self) -> list:
-        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
             for entry in feed.entries[:10]:
                 title = entry.get('title', '')
-                # Если заголовок шаблонный, пытаемся извлечь из summary
                 if not title or title in ['{[title]}', 'BRICS portal', 'Портал БРИКС']:
                     summary = entry.get('summary', '')
                     if summary:
-                        # Удаляем HTML-теги
                         title = re.sub(r'<[^>]+>', '', summary)
-                        # Берем первое предложение
                         title = title.split('.')[0][:150]
-                        # Удаляем лишние упоминания
                         title = re.sub(r'\s*(?:BRICS|Portal|brics|portal|Портал БРИКС)\s*$', '', title, flags=re.IGNORECASE)
                 if title and len(title) > 10:
                     title = clean_text(title)
@@ -416,7 +399,6 @@ class NewsBot:
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
-        """Парсит отдельную статью InfoBrics"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -428,33 +410,25 @@ class NewsBot:
             # ======== ЗАГОЛОВОК ========
             title = None
             
-            # 1. Пробуем meta og:title
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
                 title = og['content']
             
-            # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
             
-            # 3. Пробуем div с классом title
             if not title:
                 title_div = soup.find('div', class_='title')
                 if title_div:
                     title = title_div.get_text(strip=True)
             
-            # 4. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal|Портал БРИКС).*$', '', title, flags=re.IGNORECASE)
-            
-            # Проверяем, не шаблонный ли заголовок
-            if title and title.lower() in ['brics portal', 'portal', 'infobrics', 'портал брик']:
-                return None
             
             if not title:
                 logger.warning(f"InfoBrics: не удалось найти заголовок для {url}")
@@ -467,22 +441,23 @@ class NewsBot:
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"InfoBrics: найдено изображение")
-            
+
             # ======== КОНТЕНТ ========
-            content_div = soup.find('div', class_=re.compile(r'article|content|post|docs'))
+            # Ищем контейнер с контентом
+            content_div = soup.find('div', class_=re.compile(r'article__text|article-content|content|post|docs'))
             if not content_div:
                 content_div = soup.find('article')
             if not content_div:
+                content_div = soup.find('main')
+            if not content_div:
+                logger.warning(f"InfoBrics: не найден контейнер с контентом для {url}")
                 return None
 
-            # Удаляем подписи к фото
-            for figure in content_div.find_all('figure'):
-                figure.decompose()
-            
-            # Удаляем мусорные элементы
-            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+            # Удаляем мусор
+            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'figure']):
                 tag.decompose()
 
+            # Собираем параграфы
             paragraphs = []
             for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
@@ -492,6 +467,18 @@ class NewsBot:
                         paragraphs.append(text)
                 if len(paragraphs) >= 6:
                     break
+
+            if len(paragraphs) < 2:
+                # Пробуем найти контент в других местах
+                for div in soup.find_all('div', class_=re.compile(r'text|body|content')):
+                    for p in div.find_all('p'):
+                        text = p.get_text(strip=True)
+                        if len(text) > 40 and not text.startswith('Read more'):
+                            text = clean_text(text)
+                            if text:
+                                paragraphs.append(text)
+                    if len(paragraphs) >= 4:
+                        break
 
             if len(paragraphs) < 2:
                 logger.warning(f"InfoBrics: недостаточно контента для {url}")
