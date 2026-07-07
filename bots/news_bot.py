@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: AP News, InfoBrics, Global Research
+Источники: AP News, RT, Global Research
 """
 
 import os
@@ -63,7 +63,7 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     text = remove_ap_parentheses(text)
-    text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*RT[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -376,29 +376,23 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== INFOBRICS (ИСПРАВЛЕН) ==========
-    def _get_infobrics_articles(self) -> list:
+    # ========== RT NEWS (НОВЫЙ ИСТОЧНИК) ==========
+    def _get_rt_articles(self) -> list:
         try:
-            feed = feedparser.parse('https://infobrics.org/rss/en')
+            feed = feedparser.parse('https://www.rt.com/rss/news/')
             articles = []
             for entry in feed.entries[:10]:
                 title = entry.get('title', '')
-                if not title or title in ['{[title]}', 'BRICS portal', 'Портал БРИКС']:
-                    summary = entry.get('summary', '')
-                    if summary:
-                        title = re.sub(r'<[^>]+>', '', summary)
-                        title = title.split('.')[0][:150]
-                        title = re.sub(r'\s*(?:BRICS|Portal|brics|portal|Портал БРИКС)\s*$', '', title, flags=re.IGNORECASE)
-                if title and len(title) > 10:
+                if title:
                     title = clean_text(title)
                     articles.append({'url': entry.link, 'title': title})
-                    logger.info(f"InfoBrics: найден заголовок '{title[:50]}'")
+                    logger.info(f"RT: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
-            logger.error(f"InfoBrics RSS: {e}")
+            logger.error(f"RT RSS: {e}")
             return []
 
-    def _parse_infobrics_article(self, url: str) -> dict | None:
+    def _parse_rt_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -409,67 +403,39 @@ class NewsBot:
 
             # ======== ЗАГОЛОВОК ========
             title = None
-            
-            # 1. Пробуем meta og:title
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
                 title = og['content']
-            
-            # 2. Пробуем div.docs__head .title
-            if not title:
-                head_div = soup.find('div', class_='docs__head')
-                if head_div:
-                    title_div = head_div.find('div', class_='title')
-                    if title_div:
-                        title = title_div.get_text(strip=True)
-            
-            # 3. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-            
-            # 4. Пробуем title тег
             if not title:
-                title_tag = soup.find('title')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal|Портал БРИКС).*$', '', title, flags=re.IGNORECASE)
-            
-            # 5. Если заголовок все еще шаблонный, используем URL
-            if title and title.lower() in ['brics portal', 'portal', 'infobrics', 'портал брик']:
-                title = None
-            
-            if not title:
-                logger.warning(f"InfoBrics: не удалось найти заголовок для {url}")
                 return None
             
             title = clean_text(title)
-            logger.info(f"InfoBrics: заголовок '{title[:50]}'")
+            logger.info(f"RT: заголовок '{title[:50]}'")
 
             # ======== ИЗОБРАЖЕНИЕ ========
             image_url = extract_image_url(soup, base_url)
             if image_url:
-                logger.info(f"InfoBrics: найдено изображение")
+                logger.info(f"RT: найдено изображение")
 
             # ======== КОНТЕНТ ========
-            # Ищем основной контейнер с контентом
-            content_div = soup.find('div', class_=re.compile(r'content|article|docs|post'))
-            if not content_div:
-                content_div = soup.find('article')
-            if not content_div:
-                content_div = soup.find('main')
-            if not content_div:
-                logger.warning(f"InfoBrics: не найден контейнер с контентом для {url}")
+            article = soup.find('article')
+            if not article:
+                article = soup.find('main')
+            if not article:
                 return None
 
-            # Удаляем мусор
-            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'figure']):
+            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
-            # Собираем параграфы
+            for figure in article.find_all('figure'):
+                figure.decompose()
+
             paragraphs = []
-            for p in content_div.find_all('p'):
+            for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 40 and not text.startswith('Read more'):
                     text = clean_text(text)
@@ -478,32 +444,17 @@ class NewsBot:
                 if len(paragraphs) >= 6:
                     break
 
-            # Если не нашли параграфы, пробуем другие контейнеры
             if len(paragraphs) < 2:
-                for div in soup.find_all('div', class_=re.compile(r'text|body|article-text')):
-                    for p in div.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if len(text) > 40 and not text.startswith('Read more'):
-                            text = clean_text(text)
-                            if text:
-                                paragraphs.append(text)
-                    if len(paragraphs) >= 4:
-                        break
-
-            if len(paragraphs) < 2:
-                logger.warning(f"InfoBrics: недостаточно контента для {url}")
                 return None
-            
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
             
             if len(content) < 150:
-                logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'RT', 'url': url}
         except Exception as e:
-            logger.error(f"InfoBrics парсинг: {e}")
+            logger.error(f"RT парсинг: {e}")
             return None
 
     # ========== GLOBAL RESEARCH ==========
@@ -592,16 +543,16 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ AP News: {data['title'][:50]}...")
         
-        # 2. InfoBrics
-        logger.info("📰 Парсинг InfoBrics...")
-        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:3]:
+        # 2. RT (новый источник)
+        logger.info("📰 Парсинг RT...")
+        rt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_rt_articles)
+        for article in rt_articles[:3]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_rt_article, article['url'])
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
-                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+                logger.info(f"✅ RT: {data['title'][:50]}...")
         
         # 3. Global Research
         logger.info("📰 Парсинг Global Research...")
