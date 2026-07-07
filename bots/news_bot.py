@@ -376,7 +376,7 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== INFOBRICS (УПРОЩЕННЫЙ) ==========
+    # ========== INFOBRICS (ИСПРАВЛЕН) ==========
     def _get_infobrics_articles(self) -> list:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
@@ -410,25 +410,35 @@ class NewsBot:
             # ======== ЗАГОЛОВОК ========
             title = None
             
+            # 1. Пробуем meta og:title
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
                 title = og['content']
             
+            # 2. Пробуем div.docs__head .title
+            if not title:
+                head_div = soup.find('div', class_='docs__head')
+                if head_div:
+                    title_div = head_div.find('div', class_='title')
+                    if title_div:
+                        title = title_div.get_text(strip=True)
+            
+            # 3. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
             
-            if not title:
-                title_div = soup.find('div', class_='title')
-                if title_div:
-                    title = title_div.get_text(strip=True)
-            
+            # 4. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal|Портал БРИКС).*$', '', title, flags=re.IGNORECASE)
+            
+            # 5. Если заголовок все еще шаблонный, используем URL
+            if title and title.lower() in ['brics portal', 'portal', 'infobrics', 'портал брик']:
+                title = None
             
             if not title:
                 logger.warning(f"InfoBrics: не удалось найти заголовок для {url}")
@@ -443,8 +453,8 @@ class NewsBot:
                 logger.info(f"InfoBrics: найдено изображение")
 
             # ======== КОНТЕНТ ========
-            # Ищем контейнер с контентом
-            content_div = soup.find('div', class_=re.compile(r'article__text|article-content|content|post|docs'))
+            # Ищем основной контейнер с контентом
+            content_div = soup.find('div', class_=re.compile(r'content|article|docs|post'))
             if not content_div:
                 content_div = soup.find('article')
             if not content_div:
@@ -468,9 +478,9 @@ class NewsBot:
                 if len(paragraphs) >= 6:
                     break
 
+            # Если не нашли параграфы, пробуем другие контейнеры
             if len(paragraphs) < 2:
-                # Пробуем найти контент в других местах
-                for div in soup.find_all('div', class_=re.compile(r'text|body|content')):
+                for div in soup.find_all('div', class_=re.compile(r'text|body|article-text')):
                     for p in div.find_all('p'):
                         text = p.get_text(strip=True)
                         if len(text) > 40 and not text.startswith('Read more'):
