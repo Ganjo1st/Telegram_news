@@ -51,24 +51,12 @@ IMAGE_HASH_CACHE = set()
 
 
 def remove_ap_parentheses(text: str) -> str:
-    """
-    Удаляет из текста конструкцию (AP), (АР) и подобные с пробелами.
-    Примеры: (AP), (AP ), ( AP ), (АР), (AP Photo/...), (AP Photo/Khalil Hamra, File)
-    """
     if not text:
         return text
-
-    # Шаблон: открывающая скобка, любые символы, содержащие AP или АР в любом регистре, закрывающая скобка
     pattern = r'\([^)]*[AaАа][PpРр][^)]*\)'
-
-    # Заменяем на пустую строку
     cleaned = re.sub(pattern, '', text)
-
-    # Дополнительно: удаляем лишние пробелы, которые могли образоваться после удаления
     cleaned = re.sub(r'\s+', ' ', cleaned)
-    cleaned = cleaned.strip()
-
-    return cleaned
+    return cleaned.strip()
 
 
 def clean_text(text: str) -> str:
@@ -96,8 +84,9 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из страницы"""
-    # 1. Пробуем Open Graph image (самый надежный)
+    """Извлекает URL изображения из страницы с поддержкой InfoBrics"""
+    
+    # 1. Open Graph image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -108,15 +97,36 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    # 2. Ищем основное изображение в статье
-    article = soup.find('article')
-    if article:
-        for img in article.find_all('img', src=True):
+    # 2. Twitter image
+    meta_img = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta_img and meta_img.get('content'):
+        url = meta_img['content']
+        if url.startswith('//'):
+            return 'https:' + url
+        if url.startswith('/'):
+            return urljoin(base_url, url)
+        if url.startswith('http'):
+            return url
+    
+    # 3. Специально для InfoBrics: ищем article__image
+    article_img = soup.find('img', class_='article__image')
+    if article_img:
+        src = article_img.get('src')
+        if src:
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
+    
+    # 4. Поиск в статье
+    container = soup.find('article') or soup.find('main')
+    if container:
+        for img in container.find_all('img', src=True):
             src = img.get('src', '')
-            # Пропускаем логотипы и иконки
-            if any(x in src.lower() for x in ['logo', 'icon', 'svg', 'gif', 'avatar']):
+            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif']):
                 continue
-            # Берем только большие изображения
             if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                 if src.startswith('//'):
                     return 'https:' + src
@@ -327,52 +337,37 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ======== ЗАГОЛОВОК ========
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
                 title = meta_title['content']
             else:
-                h1 = soup.find('h1', class_='Page-headline')
+                h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-                else:
-                    h1 = soup.find('h1')
-                    if h1:
-                        title = h1.get_text(strip=True)
             if not title:
                 return None
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = title.strip()
 
-            # ======== ИЗОБРАЖЕНИЕ ========
             image_url = extract_image_url(soup, base_url)
 
-            # ======== ТЕКСТ СТАТЬИ ========
-            # Ищем контейнер с текстом статьи
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
-            # Удаляем все ненужные элементы
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
-            # Удаляем figure с подписями к фото
             for figure in article.find_all('figure'):
                 figure.decompose()
 
-            # Собираем параграфы
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                # Пропускаем короткие параграфы и явные подписи
                 if len(text) > 40:
-                    # Дополнительная проверка: если текст начинается с "This image" или "FILE -"
-                    if text.lower().startswith(('this image', 'this photo', 'file -', 'in this image')):
-                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
@@ -393,26 +388,35 @@ class NewsBot:
             logger.error(f"Ошибка парсинга AP News: {e}")
             return None
 
-    # ========== INFOBRICS ==========
+    # ========== INFOBRICS (ИСПРАВЛЕН) ==========
     def _get_infobrics_articles(self) -> list:
+        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
             for entry in feed.entries[:10]:
                 title = entry.get('title', '')
-                if not title or title in ['{[title]}', 'BRICS portal']:
+                # Если заголовок шаблонный, пытаемся извлечь из summary
+                if not title or title in ['{[title]}', 'BRICS portal', 'Портал БРИКС']:
                     summary = entry.get('summary', '')
                     if summary:
+                        # Удаляем HTML-теги
                         title = re.sub(r'<[^>]+>', '', summary)
-                        title = title.split('.')[0][:100]
+                        # Берем первое предложение
+                        title = title.split('.')[0][:150]
+                        # Удаляем лишние упоминания
+                        title = re.sub(r'\s*(?:BRICS|Portal|brics|portal|Портал БРИКС)\s*$', '', title, flags=re.IGNORECASE)
                 if title and len(title) > 10:
-                    articles.append({'url': entry.link, 'title': clean_text(title)})
+                    title = clean_text(title)
+                    articles.append({'url': entry.link, 'title': title})
+                    logger.info(f"InfoBrics: найден заголовок '{title[:50]}'")
             return articles
         except Exception as e:
             logger.error(f"InfoBrics RSS: {e}")
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью InfoBrics"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -421,22 +425,51 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # ======== ЗАГОЛОВОК ========
             title = None
+            
+            # 1. Пробуем meta og:title
             og = soup.find('meta', property='og:title')
             if og and og.get('content'):
                 title = og['content']
+            
+            # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
+            
+            # 3. Пробуем div с классом title
             if not title:
+                title_div = soup.find('div', class_='title')
+                if title_div:
+                    title = title_div.get_text(strip=True)
+            
+            # 4. Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    title = re.sub(r'\s*[|-]\s*(?:InfoBrics|INFOBRICS|BRICS portal|Портал БРИКС).*$', '', title, flags=re.IGNORECASE)
+            
+            # Проверяем, не шаблонный ли заголовок
+            if title and title.lower() in ['brics portal', 'portal', 'infobrics', 'портал брик']:
+                return None
+            
+            if not title:
+                logger.warning(f"InfoBrics: не удалось найти заголовок для {url}")
                 return None
             
             title = clean_text(title)
+            logger.info(f"InfoBrics: заголовок '{title[:50]}'")
 
+            # ======== ИЗОБРАЖЕНИЕ ========
             image_url = extract_image_url(soup, base_url)
-
-            content_div = soup.find('div', class_=re.compile(r'article|content|post'))
+            if image_url:
+                logger.info(f"InfoBrics: найдено изображение")
+            
+            # ======== КОНТЕНТ ========
+            content_div = soup.find('div', class_=re.compile(r'article|content|post|docs'))
             if not content_div:
                 content_div = soup.find('article')
             if not content_div:
@@ -445,6 +478,10 @@ class NewsBot:
             # Удаляем подписи к фото
             for figure in content_div.find_all('figure'):
                 figure.decompose()
+            
+            # Удаляем мусорные элементы
+            for tag in content_div.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
+                tag.decompose()
 
             paragraphs = []
             for p in content_div.find_all('p'):
@@ -457,11 +494,14 @@ class NewsBot:
                     break
 
             if len(paragraphs) < 2:
+                logger.warning(f"InfoBrics: недостаточно контента для {url}")
                 return None
+            
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
             
             if len(content) < 150:
+                logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
@@ -514,7 +554,6 @@ class NewsBot:
             if not content_div:
                 return None
 
-            # Удаляем подписи к фото
             for figure in content_div.find_all('figure'):
                 figure.decompose()
 
@@ -602,25 +641,20 @@ class NewsBot:
             title_ru = clean_text(title_ru)
             content_ru = clean_text(content_ru)
 
-            # Сохраняем метаданные
             pid = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(pid, post['source'], url, title_en, content_en[:300])
 
-            # Форматируем сообщение: заголовок жирным, текст
             title_escaped = html.escape(title_ru)
             
-            # Обрезаем текст для подписи к фото
             msg_text = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{msg_text}"
 
-            # Проверяем длину подписи (максимум 1024 символа)
             if len(message) > MAX_CAPTION:
                 title_len = len(f"*{title_escaped}*\n\n")
                 max_text_len = MAX_CAPTION - title_len - 5
                 msg_text = self._truncate_sentence(content_ru, max_text_len)
                 message = f"*{title_escaped}*\n\n{msg_text}"
 
-            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения...")
                 resp = await loop.run_in_executor(None, fetch_url, image_url)
@@ -653,7 +687,6 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # Публикация без фото
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
