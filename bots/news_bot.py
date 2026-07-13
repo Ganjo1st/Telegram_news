@@ -691,11 +691,14 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
+            # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
 
-            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
+            # Формируем сообщение БЕЗ иконки 📰
+            message = f"*{title_escaped}*\n\n{content_truncated}"
 
+            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -721,8 +724,9 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
+            # Фолбэк: публикация текстом
             logger.info("📝 Публикация текстом (без фото)")
-            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
+            text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=text_message,
@@ -741,7 +745,7 @@ class NewsBot:
                 try:
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
-                        text=f"📰 {title_ru}\n\n{content_ru}",
+                        text=f"{title_ru}\n\n{content_ru}",
                         parse_mode=None
                     )
                     self._mark_sent(url, title_en, content_en)
