@@ -111,6 +111,39 @@ def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
     
     return None
 
+def clean_globalresearch_content(text: str) -> str:
+    """Очищает текст от служебных блоков Global Research"""
+    if not text:
+        return text
+    
+    # Удаляем блок с переводом на разные языки
+    patterns = [
+        r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
+        r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
+        r'Para leer este artículo en los siguientes idiomas, haga clic en el botón.*?(?:\n|$)',
+        r'Pour lire cet article dans les langues suivantes, cliquez sur le bouton.*?(?:\n|$)',
+        r'Um diesen Artikel in den folgenden Sprachen zu lesen, klicken Sie auf die Schaltfläche.*?(?:\n|$)',
+        r'Per leggere questo articolo nelle seguenti lingue, fare clic sul pulsante.*?(?:\n|$)',
+        r'Для того щоб прочитати цю статтю на наступних мовах, натисніть кнопку.*?(?:\n|$)',
+        r'לקריאת מאמר זה בשפות הבאות, לחץ על הכפתור.*?(?:\n|$)',
+        r'برای خواندن این مقاله به زبان‌های زیر، روی دکمه کلیک کنید.*?(?:\n|$)',
+        r'이 기사를 다음 언어로 읽으려면 버튼을 클릭하세요.*?(?:\n|$)',
+        r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
+        r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
+        r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
+        # Удаляем строки с перечислением языков после такого блока
+        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
+        r'(?:Arabic|Hebrew|Ukrainian|Farsi|Spanish|Portuguese|Russian|Chinese|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:and \d+ more languages?)?[,.\s]*',
+    ]
+    
+    for pattern in patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Удаляем лишние переводы строк после очистки
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
@@ -481,6 +514,7 @@ class NewsBot:
                             logger.info(f"Global Research: заголовок из RSS: '{title[:50]}'")
                             summary = entry.get('summary', '')
                             summary = re.sub(r'<[^>]+>', '', summary)
+                            summary = clean_globalresearch_content(summary)
                             if summary:
                                 return {
                                     'title': title,
@@ -603,23 +637,24 @@ class NewsBot:
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         if not text.startswith('Copyright') and not text.startswith('©'):
                             if not text.startswith('Image:'):
-                                paragraphs.append(text)
+                                # Очищаем от служебного текста перевода
+                                text = clean_globalresearch_content(text)
+                                if text:
+                                    paragraphs.append(text)
 
-            if len(paragraphs) < 2:
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if len(text) > 30:
-                            paragraphs.append(text)
+            # Объединяем параграфы и очищаем весь контент
+            content = '\n\n'.join(paragraphs)
+            content = clean_globalresearch_content(content)
 
-            if len(paragraphs) < 2:
-                logger.warning(f"Global Research: недостаточно контента для {url}")
+            if len(content) < 150:
+                logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
+                # Пробуем получить контент из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
                         summary = entry.get('summary', '')
                         summary = re.sub(r'<[^>]+>', '', summary)
+                        summary = clean_globalresearch_content(summary)
                         if summary:
                             return {
                                 'title': title,
@@ -628,11 +663,6 @@ class NewsBot:
                                 'source': 'Global Research',
                                 'url': url
                             }
-                return None
-
-            content = '\n\n'.join(paragraphs)
-            if len(content) < 150:
-                logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
@@ -685,8 +715,10 @@ class NewsBot:
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
+            # Дополнительная очистка от служебных текстов
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
+            content_ru = clean_globalresearch_content(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
@@ -695,7 +727,7 @@ class NewsBot:
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
 
-            # Формируем сообщение БЕЗ иконки 📰
+            # Формируем сообщение
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
             # Публикация с фото
