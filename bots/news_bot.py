@@ -33,6 +33,7 @@ logger = logging.getLogger('news_bot')
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
+TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
 # Интервалы публикации (секунды)
 MIN_INTERVAL = 2100  # 35 минут
@@ -141,6 +142,8 @@ class NewsBot:
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
+        if TEST_MODE:
+            logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ ВКЛЮЧЕН - ограничения отключены")
 
     def _load_state(self) -> dict:
         try:
@@ -259,6 +262,11 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
+        # В тестовом режиме все ограничения отключены
+        if TEST_MODE:
+            logger.info("🧪 Тестовый режим: публикация разрешена")
+            return True
+            
         now = get_local_time()
         hour = now.hour
         if 23 <= hour or hour < 7:
@@ -292,6 +300,11 @@ class NewsBot:
         return True
 
     def _next_delay(self) -> int:
+        # В тестовом режиме задержка 5 секунд
+        if TEST_MODE:
+            logger.info("🧪 Тестовый режим: задержка 5 секунд")
+            return 5
+            
         delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
