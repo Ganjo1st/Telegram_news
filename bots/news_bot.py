@@ -89,9 +89,23 @@ def extract_image_url_infobrics(soup, base_url: str) -> str | None:
 
 def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
     """Извлекает URL изображения из статьи Global Research"""
-    article_img = soup.find('img', class_='attachment-single-post-thumbnail')
-    if article_img and article_img.get('src'):
-        src = article_img['src']
+    # 1. Пробуем найти через div.postThumbnail > img
+    thumbnail_div = soup.find('div', class_='postThumbnail')
+    if thumbnail_div:
+        img = thumbnail_div.find('img')
+        if img and img.get('src'):
+            src = img['src']
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
+    
+    # 2. Пробуем найти img с классом attachment-single-post-thumbnail
+    img = soup.find('img', class_='attachment-single-post-thumbnail')
+    if img and img.get('src'):
+        src = img['src']
         if src.startswith('//'):
             return 'https:' + src
         if src.startswith('/'):
@@ -99,6 +113,7 @@ def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
         if src.startswith('http'):
             return src
     
+    # 3. Пробуем найти через meta og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -108,6 +123,19 @@ def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
             return urljoin(base_url, url)
         if url.startswith('http'):
             return url
+    
+    # 4. Пробуем найти любое изображение в статье (не логотип)
+    content = soup.find('div', itemprop='articleBody')
+    if content:
+        for img in content.find_all('img'):
+            src = img.get('src', '')
+            if src and not any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'gif']):
+                if src.startswith('//'):
+                    return 'https:' + src
+                if src.startswith('/'):
+                    return urljoin(base_url, src)
+                if src.startswith('http'):
+                    return src
     
     return None
 
@@ -131,9 +159,16 @@ def clean_globalresearch_content(text: str) -> str:
         r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
         r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
         r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
-        # Удаляем строки с перечислением языков после такого блока
         r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
         r'(?:Arabic|Hebrew|Ukrainian|Farsi|Spanish|Portuguese|Russian|Chinese|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:and \d+ more languages?)?[,.\s]*',
+        r'Click the share button below to email/forward this article.*?(?:\n|$)',
+        r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
+        r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
+        r'Global Research is a reader-funded media.*?(?:\n|$)',
+        r'Help us stay afloat.*?(?:\n|$)',
+        r'Become Member of Global Research.*?(?:\n|$)',
+        r'Free Books!.*?(?:\n|$)',
+        r'Make a one-time or recurring donation.*?(?:\n|$)',
     ]
     
     for pattern in patterns:
@@ -637,18 +672,15 @@ class NewsBot:
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         if not text.startswith('Copyright') and not text.startswith('©'):
                             if not text.startswith('Image:'):
-                                # Очищаем от служебного текста перевода
                                 text = clean_globalresearch_content(text)
                                 if text:
                                     paragraphs.append(text)
 
-            # Объединяем параграфы и очищаем весь контент
             content = '\n\n'.join(paragraphs)
             content = clean_globalresearch_content(content)
 
             if len(content) < 150:
                 logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
-                # Пробуем получить контент из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
