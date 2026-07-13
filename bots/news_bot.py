@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: AP News, Reuters, Al Jazeera
+Источники: InfoBrics, Global Research, Reuters, Al Jazeera
 """
 
 import os
@@ -48,13 +48,15 @@ MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
-SENT_CONTENT_HASHES = set()
 
 
 def clean_text(text: str) -> str:
+    """Очищает текст от упоминаний источников и мусора"""
     if not text:
         return ""
-    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
+    # Удаляем скобки с упоминаниями источников
+    text = re.sub(r'\([^)]*InfoBrics[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*Global Research[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Al Jazeera[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
@@ -81,16 +83,27 @@ def extract_image_url(soup, base_url: str) -> str | None:
     # 1. Open Graph image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
-        url = meta_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
+        img = meta_img['content']
+        if img.startswith('//'):
+            return 'https:' + img
+        if img.startswith('/'):
+            return urljoin(base_url, img)
+        if img.startswith('http'):
+            return img
     
-    # 2. Поиск в статье
-    container = soup.find('article') or soup.find('main')
+    # 2. Twitter image
+    meta_img = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta_img and meta_img.get('content'):
+        img = meta_img['content']
+        if img.startswith('//'):
+            return 'https:' + img
+        if img.startswith('/'):
+            return urljoin(base_url, img)
+        if img.startswith('http'):
+            return img
+    
+    # 3. Поиск в статье
+    container = soup.find('article') or soup.find('main') or soup.find('body')
     if container:
         for img in container.find_all('img', src=True):
             src = img.get('src', '')
@@ -105,39 +118,6 @@ def extract_image_url(soup, base_url: str) -> str | None:
                     return src
     
     return None
-
-
-def is_video_caption(text: str) -> bool:
-    """Проверяет, является ли текст подписью к видео"""
-    if not text:
-        return True
-    
-    text_lower = text.lower()
-    
-    # Ключевые слова, указывающие на подпись к видео
-    video_keywords = [
-        'на кадрах', 'на видео', 'запечатлен', 'камер видеонаблюдения',
-        'video shows', 'captured on', 'video footage', 'security camera',
-        'на записи', 'видно как', 'момент когда', 'как посетители',
-    ]
-    
-    for keyword in video_keywords:
-        if keyword in text_lower:
-            return True
-    
-    # Если текст начинается с описания действия
-    if len(text) < 150 and any([
-        text_lower.startswith('на кадрах'),
-        text_lower.startswith('на видео'),
-        text_lower.startswith('video shows'),
-        text_lower.startswith('in video'),
-        text_lower.startswith('security camera'),
-        text_lower.startswith('слева направо'),
-        text_lower.startswith('на снимке'),
-    ]):
-        return True
-    
-    return False
 
 
 class NewsBot:
@@ -209,30 +189,28 @@ class NewsBot:
 
     def _add_to_meta(self, post_id: str, source: str, url: str, title: str, preview: str = ""):
         self.meta['posts'][post_id] = {
-            'source': source, 'url': url, 'original_title': title,
-            'preview': preview[:500], 'time': get_local_time().isoformat()
+            'source': source,
+            'url': url,
+            'original_title': title,
+            'preview': preview[:500] if preview else "",
+            'time': get_local_time().isoformat()
         }
         self._save_meta()
+        logger.info(f"📝 Метаданные сохранены: {source} - {title[:50]}...")
 
     def _is_duplicate(self, url: str, title: str, content: str = "") -> bool:
-        # Проверка по URL
         if url in self.state['sent_links']:
             logger.info(f"Дубликат по URL: {url[:50]}")
             return True
-        
-        # Нормализуем заголовок для сравнения
         norm_title = title.lower().strip()[:100]
         if norm_title and norm_title in self.state['sent_titles']:
             logger.info(f"Дубликат по заголовку: {title[:50]}")
             return True
-        
-        # Проверка по хэшу контента
         if content:
             h = hashlib.md5(content[:500].encode()).hexdigest()
             if h in self.state['sent_hashes']:
                 logger.info(f"Дубликат по содержимому: {title[:50]}")
                 return True
-        
         return False
 
     def _mark_sent(self, url: str, title: str, content: str = "", img: str = None):
@@ -296,51 +274,27 @@ class NewsBot:
             logger.error(f"Ошибка перевода: {e}")
             return text
 
-    # ========== AP NEWS ==========
-    def _get_apnews_articles(self) -> list:
+    # ========== INFOBRICS ==========
+    def _get_infobrics_articles(self) -> list:
         try:
-            resp = fetch_url('https://apnews.com/')
-            if not resp or resp.status_code != 200:
-                return []
-
-            soup = BeautifulSoup(resp.text, 'html.parser')
+            feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-
-            for link in soup.find_all('a', href=True):
-                href = link['href']
-                if '/article/' not in href:
-                    continue
-
-                if href.startswith('https://'):
-                    url = href
-                elif href.startswith('/'):
-                    url = 'https://apnews.com' + href
-                else:
-                    continue
-
-                title = link.get_text(strip=True)
-                if not title or len(title) < 15:
-                    parent = link.find_parent(['h1', 'h2', 'h3', 'h4'])
-                    if parent:
-                        title = parent.get_text(strip=True)
-                if not title or len(title) < 15:
-                    continue
-
-                title = re.sub(r'\s+', ' ', title).strip()
-                articles.append({'url': url, 'title': title})
-
-            seen = set()
-            unique = []
-            for a in articles:
-                if a['url'] not in seen:
-                    seen.add(a['url'])
-                    unique.append(a)
-            return unique[:10]
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '')
+                if not title or title in ['{[title]}', 'BRICS portal']:
+                    summary = entry.get('summary', '')
+                    if summary:
+                        title = re.sub(r'<[^>]+>', '', summary)
+                        title = title.split('.')[0][:100]
+                if title and len(title) > 10:
+                    articles.append({'url': entry.link, 'title': clean_text(title)})
+                    logger.info(f"InfoBrics: найден заголовок '{title[:50]}'")
+            return articles
         except Exception as e:
-            logger.error(f"Ошибка AP News: {e}")
+            logger.error(f"InfoBrics RSS: {e}")
             return []
 
-    def _parse_apnews_article(self, url: str) -> dict | None:
+    def _parse_infobrics_article(self, url: str) -> dict | None:
         try:
             resp = fetch_url(url)
             if not resp:
@@ -349,81 +303,127 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ======== ЗАГОЛОВОК ========
+            # Заголовок
             title = None
-            meta_title = soup.find('meta', property='og:title')
-            if meta_title and meta_title.get('content'):
-                title = meta_title['content']
-            else:
+            og = soup.find('meta', property='og:title')
+            if og and og.get('content'):
+                title = og['content']
+            if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
             if not title:
                 return None
-            title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
-            title = title.strip()
+            
+            title = clean_text(title)
 
-            # ======== ИЗОБРАЖЕНИЕ ========
+            # Изображение
             image_url = extract_image_url(soup, base_url)
 
-            # ======== ТЕКСТ СТАТЬИ ========
-            article = soup.find('article')
-            if not article:
-                article = soup.find('main')
-            if not article:
+            # Контент
+            content_div = soup.find('div', class_=re.compile(r'article|content|post'))
+            if not content_div:
+                content_div = soup.find('article')
+            if not content_div:
                 return None
 
-            # Удаляем мусорные элементы
-            for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
-                tag.decompose()
-
-            # Удаляем figure с подписями (они обычно содержат подписи к фото/видео)
-            for figure in article.find_all('figure'):
+            # Удаляем подписи к фото
+            for figure in content_div.find_all('figure'):
                 figure.decompose()
 
-            # Собираем только основные параграфы
             paragraphs = []
-            for p in article.find_all('p'):
+            for p in content_div.find_all('p'):
                 text = p.get_text(strip=True)
-                
-                # Пропускаем короткие параграфы
-                if len(text) < 40:
-                    continue
-                
-                # Пропускаем подписи к видео
-                if is_video_caption(text):
-                    logger.info(f"Пропущена подпись к видео: {text[:80]}")
-                    continue
-                
-                # Пропускаем подписи к фото (содержат AP Photo)
-                if 'AP Photo' in text or 'AP Images' in text:
-                    continue
-                
-                # Проверяем, что параграф не начинается с описания даты/места
-                if re.match(r'^[A-Z]{2,5}, [A-Za-z]+ —', text):
-                    # Это может быть первый параграф с местоположением, оставляем
-                    pass
-                
-                text = clean_text(text)
-                if text:
-                    paragraphs.append(text)
-                
-                # Останавливаемся после 5-6 параграфов (достаточно для новости)
+                if len(text) > 40 and not text.startswith('Read more'):
+                    text = clean_text(text)
+                    if text:
+                        paragraphs.append(text)
                 if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
                 return None
-
             content = '\n\n'.join(paragraphs)
             content = clean_text(content)
-
+            
             if len(content) < 150:
                 return None
 
-            return {'title': title, 'content': content, 'image': image_url, 'source': 'AP News', 'url': url}
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
         except Exception as e:
-            logger.error(f"Ошибка парсинга AP News: {e}")
+            logger.error(f"InfoBrics парсинг: {e}")
+            return None
+
+    # ========== GLOBAL RESEARCH ==========
+    def _get_globalresearch_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.globalresearch.ca/feed')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '')
+                if title:
+                    title = re.sub(r'\s*[-|]\s*Global Research$', '', title)
+                    articles.append({'url': entry.link, 'title': clean_text(title)})
+                    logger.info(f"Global Research: найден заголовок '{title[:50]}'")
+            return articles
+        except Exception as e:
+            logger.error(f"Global Research RSS: {e}")
+            return []
+
+    def _parse_globalresearch_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+
+            title = None
+            og = soup.find('meta', property='og:title')
+            if og and og.get('content'):
+                title = og['content']
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+            if not title:
+                return None
+            
+            title = clean_text(title)
+
+            image_url = extract_image_url(soup, base_url)
+
+            content_div = soup.find('div', class_=re.compile(r'entry-content|post-content'))
+            if not content_div:
+                content_div = soup.find('article')
+            if not content_div:
+                return None
+
+            for figure in content_div.find_all('figure'):
+                figure.decompose()
+
+            paragraphs = []
+            for p in content_div.find_all('p'):
+                text = p.get_text(strip=True)
+                if len(text) > 40 and not text.startswith('Read more'):
+                    text = clean_text(text)
+                    if text:
+                        paragraphs.append(text)
+                if len(paragraphs) >= 6:
+                    break
+
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            content = clean_text(content)
+            
+            if len(content) < 150:
+                return None
+
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
+        except Exception as e:
+            logger.error(f"Global Research парсинг: {e}")
             return None
 
     # ========== REUTERS ==========
@@ -481,9 +481,6 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 40:
-                    # Пропускаем подписи
-                    if is_video_caption(text):
-                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
@@ -558,8 +555,6 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 40:
-                    if is_video_caption(text):
-                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
@@ -583,18 +578,29 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # 1. AP News
-        logger.info("📰 Парсинг AP News...")
-        ap_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_apnews_articles)
-        for article in ap_articles[:3]:
+        # 1. InfoBrics
+        logger.info("📰 Парсинг InfoBrics...")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for article in ib_articles[:3]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_apnews_article, article['url'])
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
-                logger.info(f"✅ AP News: {data['title'][:50]}...")
+                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
         
-        # 2. Reuters
+        # 2. Global Research
+        logger.info("📰 Парсинг Global Research...")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:3]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+        
+        # 3. Reuters
         logger.info("📰 Парсинг Reuters...")
         reuters_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_reuters_articles)
         for article in reuters_articles[:3]:
@@ -605,7 +611,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Reuters: {data['title'][:50]}...")
         
-        # 3. Al Jazeera
+        # 4. Al Jazeera
         logger.info("📰 Парсинг Al Jazeera...")
         aj_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_aljazeera_articles)
         for article in aj_articles[:3]:
