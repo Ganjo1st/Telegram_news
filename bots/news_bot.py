@@ -87,17 +87,6 @@ def extract_image_url_infobrics(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    # Пробуем найти через twitter:image
-    twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
-    if twitter_img and twitter_img.get('content'):
-        url = twitter_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
-    
     return None
 
 def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
@@ -123,19 +112,6 @@ def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
             return urljoin(base_url, url)
         if url.startswith('http'):
             return url
-    
-    # Пробуем найти изображение в контенте
-    content = soup.find('div', class_='post-content')
-    if content:
-        img = content.find('img')
-        if img and img.get('src'):
-            src = img['src']
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
     
     return None
 
@@ -532,7 +508,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка - используем h2 itemprop="headline"
+            # Поиск заголовка - используем h2 itemprop="headline" (точный селектор из HTML)
             title = None
             title_h2 = soup.find('h2', itemprop='headline')
             if title_h2:
@@ -544,11 +520,30 @@ class NewsBot:
                 if h1:
                     title = h1.get_text(strip=True)
 
-            # Если не нашли, ищем в meta
+            # Если не нашли, ищем в meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+
+            # Если не нашли, пробуем entry-title
+            if not title:
+                entry_title = soup.find('h1', class_='entry-title')
+                if entry_title:
+                    title = entry_title.get_text(strip=True)
+
+            # Если заголовок все еще "Global Research" или пустой, пробуем найти в RSS
+            if not title or title == 'Global Research' or title == 'Global Research Article':
+                feed = feedparser.parse('https://www.globalresearch.ca/feed')
+                for entry in feed.entries[:5]:
+                    if entry.link == url:
+                        title = entry.get('title', 'Global Research Article')
+                        if title == '{[title]}' or not title:
+                            summary = entry.get('summary', '')
+                            summary = re.sub(r'<[^>]+>', '', summary)
+                            if summary:
+                                title = summary.split('.')[0].strip()
+                        break
 
             if not title:
                 title = "Global Research Article"
@@ -560,8 +555,12 @@ class NewsBot:
             image_url = extract_image_url_globalresearch(soup, base_url)
             logger.info(f"Global Research: найдено изображение {image_url[:50] if image_url else 'None'}")
 
-            # Поиск контента - ищем post-content
-            container = soup.find('div', class_='post-content')
+            # Поиск контента - используем div itemprop="articleBody" class="content"
+            container = soup.find('div', itemprop='articleBody')
+            if not container:
+                container = soup.find('div', class_='content')
+            if not container:
+                container = soup.find('div', class_='post-content')
             if not container:
                 container = soup.find('div', class_='entry-content')
             if not container:
@@ -577,9 +576,10 @@ class NewsBot:
                     text = p.get_text(strip=True)
                     # Фильтруем слишком короткие абзацы и служебный текст
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
-                        # Удаляем текст с копирайтом
+                        # Удаляем текст с копирайтом и подписи к изображениям
                         if not text.startswith('Copyright') and not text.startswith('©'):
-                            paragraphs.append(text)
+                            if not text.startswith('Image:'):
+                                paragraphs.append(text)
 
             # Если не нашли параграфы, пробуем найти в main
             if len(paragraphs) < 2:
