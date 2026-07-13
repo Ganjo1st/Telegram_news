@@ -48,21 +48,13 @@ MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
 IMAGE_HASH_CACHE = set()
-
-
-def remove_ap_parentheses(text: str) -> str:
-    if not text:
-        return text
-    pattern = r'\([^)]*[AaАа][PpРр][^)]*\)'
-    cleaned = re.sub(pattern, '', text)
-    cleaned = re.sub(r'\s+', ' ', cleaned)
-    return cleaned.strip()
+SENT_CONTENT_HASHES = set()
 
 
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    text = remove_ap_parentheses(text)
+    text = re.sub(r'\([^)]*AP[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Reuters[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Al Jazeera[^)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\([^)]*Photo[^)]*\)', '', text, flags=re.IGNORECASE)
@@ -84,6 +76,9 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 
 def extract_image_url(soup, base_url: str) -> str | None:
+    """Извлекает URL изображения из страницы"""
+    
+    # 1. Open Graph image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         url = meta_img['content']
@@ -94,17 +89,8 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if url.startswith('http'):
             return url
     
-    meta_img = soup.find('meta', attrs={'name': 'twitter:image'})
-    if meta_img and meta_img.get('content'):
-        url = meta_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
-    
-    container = soup.find('article') or soup.find('main') or soup.find('body')
+    # 2. Поиск в статье
+    container = soup.find('article') or soup.find('main')
     if container:
         for img in container.find_all('img', src=True):
             src = img.get('src', '')
@@ -119,6 +105,39 @@ def extract_image_url(soup, base_url: str) -> str | None:
                     return src
     
     return None
+
+
+def is_video_caption(text: str) -> bool:
+    """Проверяет, является ли текст подписью к видео"""
+    if not text:
+        return True
+    
+    text_lower = text.lower()
+    
+    # Ключевые слова, указывающие на подпись к видео
+    video_keywords = [
+        'на кадрах', 'на видео', 'запечатлен', 'камер видеонаблюдения',
+        'video shows', 'captured on', 'video footage', 'security camera',
+        'на записи', 'видно как', 'момент когда', 'как посетители',
+    ]
+    
+    for keyword in video_keywords:
+        if keyword in text_lower:
+            return True
+    
+    # Если текст начинается с описания действия
+    if len(text) < 150 and any([
+        text_lower.startswith('на кадрах'),
+        text_lower.startswith('на видео'),
+        text_lower.startswith('video shows'),
+        text_lower.startswith('in video'),
+        text_lower.startswith('security camera'),
+        text_lower.startswith('слева направо'),
+        text_lower.startswith('на снимке'),
+    ]):
+        return True
+    
+    return False
 
 
 class NewsBot:
@@ -196,24 +215,34 @@ class NewsBot:
         self._save_meta()
 
     def _is_duplicate(self, url: str, title: str, content: str = "") -> bool:
+        # Проверка по URL
         if url in self.state['sent_links']:
+            logger.info(f"Дубликат по URL: {url[:50]}")
             return True
-        norm = title.lower().strip()[:100]
-        if norm and norm in self.state['sent_titles']:
+        
+        # Нормализуем заголовок для сравнения
+        norm_title = title.lower().strip()[:100]
+        if norm_title and norm_title in self.state['sent_titles']:
+            logger.info(f"Дубликат по заголовку: {title[:50]}")
             return True
+        
+        # Проверка по хэшу контента
         if content:
             h = hashlib.md5(content[:500].encode()).hexdigest()
             if h in self.state['sent_hashes']:
+                logger.info(f"Дубликат по содержимому: {title[:50]}")
                 return True
+        
         return False
 
     def _mark_sent(self, url: str, title: str, content: str = "", img: str = None):
         self.state['sent_links'].add(url)
-        norm = title.lower().strip()[:100]
-        if norm:
-            self.state['sent_titles'].add(norm)
+        norm_title = title.lower().strip()[:100]
+        if norm_title:
+            self.state['sent_titles'].add(norm_title)
         if content:
-            self.state['sent_hashes'].add(hashlib.md5(content[:500].encode()).hexdigest())
+            h = hashlib.md5(content[:500].encode()).hexdigest()
+            self.state['sent_hashes'].add(h)
         if img:
             IMAGE_HASH_CACHE.add(hashlib.md5(img.encode()).hexdigest())
         self._save_state()
@@ -320,6 +349,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # ======== ЗАГОЛОВОК ========
             title = None
             meta_title = soup.find('meta', property='og:title')
             if meta_title and meta_title.get('content'):
@@ -333,28 +363,53 @@ class NewsBot:
             title = re.sub(r'\s*\|.*AP\s*News.*$', '', title, flags=re.IGNORECASE)
             title = title.strip()
 
+            # ======== ИЗОБРАЖЕНИЕ ========
             image_url = extract_image_url(soup, base_url)
 
+            # ======== ТЕКСТ СТАТЬИ ========
             article = soup.find('article')
             if not article:
                 article = soup.find('main')
             if not article:
                 return None
 
+            # Удаляем мусорные элементы
             for tag in article.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style']):
                 tag.decompose()
 
+            # Удаляем figure с подписями (они обычно содержат подписи к фото/видео)
             for figure in article.find_all('figure'):
                 figure.decompose()
 
+            # Собираем только основные параграфы
             paragraphs = []
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
-                if len(text) > 40:
-                    text = clean_text(text)
-                    if text:
-                        paragraphs.append(text)
-                if len(paragraphs) >= 8:
+                
+                # Пропускаем короткие параграфы
+                if len(text) < 40:
+                    continue
+                
+                # Пропускаем подписи к видео
+                if is_video_caption(text):
+                    logger.info(f"Пропущена подпись к видео: {text[:80]}")
+                    continue
+                
+                # Пропускаем подписи к фото (содержат AP Photo)
+                if 'AP Photo' in text or 'AP Images' in text:
+                    continue
+                
+                # Проверяем, что параграф не начинается с описания даты/места
+                if re.match(r'^[A-Z]{2,5}, [A-Za-z]+ —', text):
+                    # Это может быть первый параграф с местоположением, оставляем
+                    pass
+                
+                text = clean_text(text)
+                if text:
+                    paragraphs.append(text)
+                
+                # Останавливаемся после 5-6 параграфов (достаточно для новости)
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
@@ -426,10 +481,13 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 40:
+                    # Пропускаем подписи
+                    if is_video_caption(text):
+                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 8:
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
@@ -500,10 +558,12 @@ class NewsBot:
             for p in article.find_all('p'):
                 text = p.get_text(strip=True)
                 if len(text) > 40:
+                    if is_video_caption(text):
+                        continue
                     text = clean_text(text)
                     if text:
                         paragraphs.append(text)
-                if len(paragraphs) >= 8:
+                if len(paragraphs) >= 6:
                     break
 
             if len(paragraphs) < 2:
