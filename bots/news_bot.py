@@ -80,8 +80,8 @@ def clean_globalresearch_content(text: str) -> str:
         r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
         
         # Перечисление языков (все варианты)
-        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|Arabic|Hebrew|Ukrainian|Farsi|Spanish|Portuguese|Russian|Chinese|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
-        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
+        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
         
         # Другие варианты
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
@@ -511,10 +511,10 @@ class NewsBot:
                             summary = re.sub(r'<[^>]+>', '', summary)
                             summary = clean_globalresearch_content(summary)
                             image_url = None
-                            if summary and 'src="' in summary:
-                                img_match = re.search(r'src="([^"]+)"', summary)
-                                if img_match:
-                                    image_url = img_match.group(1)
+                            # Пробуем найти изображение в summary
+                            img_match = re.search(r'src="([^"]+)"', summary)
+                            if img_match:
+                                image_url = img_match.group(1)
                             if summary:
                                 return {
                                     'title': title,
@@ -583,6 +583,7 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
+            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ СПОСОБ)
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -594,6 +595,20 @@ class NewsBot:
                     image_url = src
                 logger.info(f"Global Research: изображение найдено в og:image")
             
+            # 2. Пробуем meta property="og:image:secure_url"
+            if not image_url:
+                meta_img_secure = soup.find('meta', property='og:image:secure_url')
+                if meta_img_secure and meta_img_secure.get('content'):
+                    src = meta_img_secure['content']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
+                    logger.info(f"Global Research: изображение найдено в og:image:secure_url")
+            
+            # 3. Пробуем img class="attachment-single-post-thumbnail"
             if not image_url:
                 img = soup.find('img', class_='attachment-single-post-thumbnail')
                 if img and img.get('src'):
@@ -606,6 +621,7 @@ class NewsBot:
                         image_url = src
                     logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail")
             
+            # 4. Пробуем div.postThumbnail > img
             if not image_url:
                 thumbnail_div = soup.find('div', class_='postThumbnail')
                 if thumbnail_div:
@@ -620,6 +636,7 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail")
             
+            # 5. Пробуем meta twitter:image
             if not image_url:
                 twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
                 if twitter_img and twitter_img.get('content'):
