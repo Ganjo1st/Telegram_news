@@ -314,7 +314,6 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '').strip()
                 
-                # Если RSS не дает нормальный заголовок, пробуем извлечь из summary
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
                     summary = re.sub(r'<[^>]+>', '', summary)
@@ -364,7 +363,6 @@ class NewsBot:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    # Удаляем суффикс "BRICS Russia | "
                     title = re.sub(r'^BRICS Russia\s*[|]\s*', '', title)
                     if title:
                         logger.info(f"InfoBrics: заголовок найден в title: '{title[:50]}'")
@@ -385,6 +383,8 @@ class NewsBot:
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
+            
+            # 1. Пробуем img class="article__image"
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
                 src = article_img['src']
@@ -395,16 +395,17 @@ class NewsBot:
                 elif src.startswith('http'):
                     image_url = src
             
+            # 2. Пробуем meta og:image
             if not image_url:
                 meta_img = soup.find('meta', property='og:image')
                 if meta_img and meta_img.get('content'):
-                    url_img = meta_img['content']
-                    if url_img.startswith('//'):
-                        image_url = 'https:' + url_img
-                    elif url_img.startswith('/'):
-                        image_url = urljoin(base_url, url_img)
-                    elif url_img.startswith('http'):
-                        image_url = url_img
+                    src = meta_img['content']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
             
             logger.info(f"InfoBrics: найдено изображение {image_url[:50] if image_url else 'None'}")
 
@@ -486,11 +487,17 @@ class NewsBot:
                             summary = entry.get('summary', '')
                             summary = re.sub(r'<[^>]+>', '', summary)
                             summary = clean_globalresearch_content(summary)
+                            # Пробуем получить изображение из RSS
+                            image_url = None
+                            if summary and 'src="' in summary:
+                                img_match = re.search(r'src="([^"]+)"', summary)
+                                if img_match:
+                                    image_url = img_match.group(1)
                             if summary:
                                 return {
                                     'title': title,
                                     'content': summary[:500],
-                                    'image': None,
+                                    'image': image_url,
                                     'source': 'Global Research',
                                     'url': url
                                 }
@@ -506,7 +513,6 @@ class NewsBot:
             title_tag = soup.find('title')
             if title_tag:
                 title = title_tag.get_text(strip=True)
-                # Удаляем суффикс " - Global ResearchGlobal Research - Centre for Research on Globalization"
                 title = re.sub(r'\s*[-|]\s*(?:Global Research.*|Home.*)$', '', title)
                 if title:
                     logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
@@ -561,18 +567,32 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем img class="attachment-single-post-thumbnail"
-            img = soup.find('img', class_='attachment-single-post-thumbnail')
-            if img and img.get('src'):
-                src = img['src']
+            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ СПОСОБ)
+            meta_img = soup.find('meta', property='og:image')
+            if meta_img and meta_img.get('content'):
+                src = meta_img['content']
                 if src.startswith('//'):
                     image_url = 'https:' + src
                 elif src.startswith('/'):
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
+                logger.info(f"Global Research: изображение найдено в og:image: {image_url[:50]}")
             
-            # 2. Пробуем div.postThumbnail > img
+            # 2. Пробуем img class="attachment-single-post-thumbnail"
+            if not image_url:
+                img = soup.find('img', class_='attachment-single-post-thumbnail')
+                if img and img.get('src'):
+                    src = img['src']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
+                    logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail")
+            
+            # 3. Пробуем div.postThumbnail > img
             if not image_url:
                 thumbnail_div = soup.find('div', class_='postThumbnail')
                 if thumbnail_div:
@@ -585,20 +605,25 @@ class NewsBot:
                             image_url = urljoin(base_url, src)
                         elif src.startswith('http'):
                             image_url = src
+                        logger.info(f"Global Research: изображение найдено в postThumbnail")
             
-            # 3. Пробуем meta og:image
+            # 4. Пробуем meta twitter:image
             if not image_url:
-                meta_img = soup.find('meta', property='og:image')
-                if meta_img and meta_img.get('content'):
-                    src = meta_img['content']
+                twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
+                if twitter_img and twitter_img.get('content'):
+                    src = twitter_img['content']
                     if src.startswith('//'):
                         image_url = 'https:' + src
                     elif src.startswith('/'):
                         image_url = urljoin(base_url, src)
                     elif src.startswith('http'):
                         image_url = src
+                    logger.info(f"Global Research: изображение найдено в twitter:image")
             
-            logger.info(f"Global Research: найдено изображение {image_url[:50] if image_url else 'None'}")
+            if image_url:
+                logger.info(f"Global Research: итоговое изображение {image_url[:80]}...")
+            else:
+                logger.warning("Global Research: изображение не найдено")
 
             # === ПОИСК КОНТЕНТА ===
             container = None
