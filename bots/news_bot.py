@@ -79,11 +79,18 @@ def clean_globalresearch_content(text: str) -> str:
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
         
-        # Перечисление языков (все варианты)
-        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        # Перечисление языков (все варианты на всех языках)
+        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian|Portugués|Португальский|Португалия|Español|Испанский|Français|Французский|Deutsch|Немецкий|Italiano|Итальянский|日本語|Японский|한국어|Корейский|Türkçe|Турецкий|Српски|Сербский|עברית|Иврит|فارسی|Персидский|عربي|Арабский|中文|Китайский)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
         r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
         
-        # Другие варианты
+        # Удаляем отдельные названия языков, которые могли остаться (в любом падеже)
+        r'(?:Португальский|Португалия|Português|Portuguese|Испанский|Español|Spanish|Французский|Français|French|Немецкий|Deutsch|German|Итальянский|Italiano|Italian|Японский|日本語|Japanese|Корейский|한국어|Korean|Турецкий|Türkçe|Turkish|Сербский|Српски|Serbian|Иврит|עברית|Hebrew|Персидский|فارسی|Farsi|Арабский|عربي|Arabic|Китайский|中文|Chinese|Русский|Russian|Украинский|українська мова|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        
+        # Удаляем строки с "и еще 40 языков" и подобные
+        r'[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)[,.\s]*',
+        r'(?:и еще \d+ языков?|and \d+ more languages?)',
+        
+        # Другие варианты служебного текста
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
         r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
         r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
@@ -112,6 +119,10 @@ def clean_globalresearch_content(text: str) -> str:
         r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
         r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
         r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
+        
+        # Удаляем пустые строки с точками и запятыми
+        r'^[\s,.;:]+$',
+        r'^[,.\s]+$',
     ]
     
     for pattern in patterns:
@@ -122,6 +133,9 @@ def clean_globalresearch_content(text: str) -> str:
     
     # Удаляем лишние переводы строк
     text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Удаляем одиночные точки и запятые в начале строк
+    text = re.sub(r'^[,.\s]+', '', text)
     
     return text
 
@@ -511,7 +525,6 @@ class NewsBot:
                             summary = re.sub(r'<[^>]+>', '', summary)
                             summary = clean_globalresearch_content(summary)
                             image_url = None
-                            # Пробуем найти изображение в summary
                             img_match = re.search(r'src="([^"]+)"', summary)
                             if img_match:
                                 image_url = img_match.group(1)
@@ -583,7 +596,7 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ СПОСОБ)
+            # 1. Пробуем meta property="og:image"
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
