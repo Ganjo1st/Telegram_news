@@ -68,9 +68,22 @@ def clean_globalresearch_content(text: str) -> str:
     if not text:
         return text
     
+    # Удаляем блок с переводом на разные языки (включая все варианты)
     patterns = [
+        # Английский вариант
         r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
-        r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
+        r'To read this article in the following languages, click the Translate Website button.*?(?:\n|$)',
+        
+        # Русский вариант (основной)
+        r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?Перевести веб-сайт.*?под именем автора.*?(?:\n|$)',
+        r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?под именем автора.*?(?:\n|$)',
+        r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
+        
+        # Перечисление языков (все варианты)
+        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|Arabic|Hebrew|Ukrainian|Farsi|Spanish|Portuguese|Russian|Chinese|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
+        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
+        
+        # Другие варианты
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
         r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
         r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
@@ -81,13 +94,36 @@ def clean_globalresearch_content(text: str) -> str:
         r'Make a one-time or recurring donation.*?(?:\n|$)',
         r'Copyright ©.*?(?:\n|$)',
         r'The original source of this article is Global Research.*?(?:\n|$)',
+        
+        # Удаляем строки с переводом (более широкий паттерн)
+        r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
+        r'To read this article in.*?(?:language|button).*?(?:\n|$)',
+        r'Click the "Translate Website" button.*?(?:\n|$)',
+        r'Нажмите кнопку.*?Перевести веб-сайт.*?(?:\n|$)',
+        r'Для того чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
+        r'Para leer este artículo en los siguientes idiomas, haga clic en el botón.*?(?:\n|$)',
+        r'Pour lire cet article dans les langues suivantes, cliquez sur le bouton.*?(?:\n|$)',
+        r'Um diesen Artikel in den folgenden Sprachen zu lesen, klicken Sie auf die Schaltfläche.*?(?:\n|$)',
+        r'Per leggere questo articolo nelle seguenti lingue, fare clic sul pulsante.*?(?:\n|$)',
+        r'Для того щоб прочитати цю статтю на наступних мовах, натисніть кнопку.*?(?:\n|$)',
+        r'לקריאת מאמר זה בשפות הבאות, לחץ על הכפתור.*?(?:\n|$)',
+        r'برای خواندن این مقاله به زبان‌های زیر، روی دکمه کلیک کنید.*?(?:\n|$)',
+        r'이 기사를 다음 언어로 읽으려면 버튼을 클릭하세요.*?(?:\n|$)',
+        r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
+        r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
+        r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
     ]
     
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
     
+    # Удаляем пустые строки в начале и конце
+    text = text.strip()
+    
+    # Удаляем лишние переводы строк
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    
+    return text
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -307,7 +343,6 @@ class NewsBot:
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
-        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
@@ -340,7 +375,6 @@ class NewsBot:
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
-        """Парсит отдельную статью InfoBrics"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -349,16 +383,12 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # === ПОИСК ЗАГОЛОВКА ===
             title = None
-            
-            # 1. Основной селектор: div class="title title--big"
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
                 logger.info(f"InfoBrics: заголовок найден в div.title--big: '{title[:50]}'")
             
-            # 2. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
@@ -367,7 +397,6 @@ class NewsBot:
                     if title:
                         logger.info(f"InfoBrics: заголовок найден в title: '{title[:50]}'")
             
-            # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
@@ -381,10 +410,7 @@ class NewsBot:
             title = title.strip()
             logger.info(f"Парсинг InfoBrics: итоговый заголовок '{title[:50]}'")
 
-            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
-            
-            # 1. Пробуем img class="article__image"
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
                 src = article_img['src']
@@ -395,7 +421,6 @@ class NewsBot:
                 elif src.startswith('http'):
                     image_url = src
             
-            # 2. Пробуем meta og:image
             if not image_url:
                 meta_img = soup.find('meta', property='og:image')
                 if meta_img and meta_img.get('content'):
@@ -409,7 +434,6 @@ class NewsBot:
             
             logger.info(f"InfoBrics: найдено изображение {image_url[:50] if image_url else 'None'}")
 
-            # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='article__text')
             if not container:
                 container = soup.find('article')
@@ -478,7 +502,6 @@ class NewsBot:
             resp = fetch_url(url)
             if not resp:
                 logger.warning(f"Global Research: не удалось загрузить страницу {url}")
-                # Пробуем получить данные из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
@@ -487,7 +510,6 @@ class NewsBot:
                             summary = entry.get('summary', '')
                             summary = re.sub(r'<[^>]+>', '', summary)
                             summary = clean_globalresearch_content(summary)
-                            # Пробуем получить изображение из RSS
                             image_url = None
                             if summary and 'src="' in summary:
                                 img_match = re.search(r'src="([^"]+)"', summary)
@@ -509,7 +531,6 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем title тег (наиболее надежный)
             title_tag = soup.find('title')
             if title_tag:
                 title = title_tag.get_text(strip=True)
@@ -517,14 +538,12 @@ class NewsBot:
                 if title:
                     logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
             
-            # 2. Пробуем h2 itemprop="headline"
             if not title:
                 h2 = soup.find('h2', itemprop='headline')
                 if h2:
                     title = h2.get_text(strip=True)
                     logger.info(f"Global Research: заголовок найден в h2[itemprop=headline]: '{title[:50]}'")
             
-            # 3. Пробуем div.title > h2
             if not title:
                 title_div = soup.find('div', class_='title')
                 if title_div:
@@ -533,21 +552,18 @@ class NewsBot:
                         title = h2.get_text(strip=True)
                         logger.info(f"Global Research: заголовок найден в div.title > h2: '{title[:50]}'")
             
-            # 4. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
                     logger.info(f"Global Research: заголовок найден в h1: '{title[:50]}'")
             
-            # 5. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
                     logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
 
-            # 6. Если ничего не нашли, пробуем RSS
             if not title:
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
@@ -567,7 +583,6 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ СПОСОБ)
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -577,9 +592,8 @@ class NewsBot:
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
-                logger.info(f"Global Research: изображение найдено в og:image: {image_url[:50]}")
+                logger.info(f"Global Research: изображение найдено в og:image")
             
-            # 2. Пробуем img class="attachment-single-post-thumbnail"
             if not image_url:
                 img = soup.find('img', class_='attachment-single-post-thumbnail')
                 if img and img.get('src'):
@@ -592,7 +606,6 @@ class NewsBot:
                         image_url = src
                     logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail")
             
-            # 3. Пробуем div.postThumbnail > img
             if not image_url:
                 thumbnail_div = soup.find('div', class_='postThumbnail')
                 if thumbnail_div:
@@ -607,7 +620,6 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail")
             
-            # 4. Пробуем meta twitter:image
             if not image_url:
                 twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
                 if twitter_img and twitter_img.get('content'):
@@ -626,42 +638,17 @@ class NewsBot:
                 logger.warning("Global Research: изображение не найдено")
 
             # === ПОИСК КОНТЕНТА ===
-            container = None
-            
-            # 1. div itemprop="articleBody"
             container = soup.find('div', itemprop='articleBody')
-            if container:
-                logger.info("Global Research: контент найден в itemprop=articleBody")
-            
-            # 2. class="content"
             if not container:
                 container = soup.find('div', class_='content')
-                if container:
-                    logger.info("Global Research: контент найден в class=content")
-            
-            # 3. post-content
             if not container:
                 container = soup.find('div', class_='post-content')
-                if container:
-                    logger.info("Global Research: контент найден в post-content")
-            
-            # 4. entry-content
             if not container:
                 container = soup.find('div', class_='entry-content')
-                if container:
-                    logger.info("Global Research: контент найден в entry-content")
-            
-            # 5. article
             if not container:
                 container = soup.find('article')
-                if container:
-                    logger.info("Global Research: контент найден в article")
-            
-            # 6. main
             if not container:
                 container = soup.find('main')
-                if container:
-                    logger.info("Global Research: контент найден в main")
 
             paragraphs = []
             if container:
@@ -681,7 +668,6 @@ class NewsBot:
 
             if len(content) < 150:
                 logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
-                # Пробуем получить контент из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
