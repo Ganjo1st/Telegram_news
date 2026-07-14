@@ -64,49 +64,18 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def clean_globalresearch_content(text: str) -> str:
-    """Очищает текст от служебных блоков Global Research"""
+    """Очищает текст от служебных блоков Global Research (языки, перевод, подписки)"""
     if not text:
         return text
     
-    # Удаляем блок с переводом на разные языки (включая все варианты)
+    # Все возможные паттерны для удаления блоков с языками и переводами
     patterns = [
-        # Английский вариант
+        # === БЛОКИ С ПЕРЕВОДОМ НА ЯЗЫКИ (ОСНОВНЫЕ) ===
         r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
         r'To read this article in the following languages, click the Translate Website button.*?(?:\n|$)',
-        
-        # Русский вариант (основной)
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?Перевести веб-сайт.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
-        
-        # Перечисление языков (все варианты на всех языках)
-        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian|Portugués|Португальский|Португалия|Español|Испанский|Français|Французский|Deutsch|Немецкий|Italiano|Итальянский|日本語|Японский|한국어|Корейский|Türkçe|Турецкий|Српски|Сербский|עברית|Иврит|فارسی|Персидский|عربي|Арабский|中文|Китайский)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
-        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
-        
-        # Удаляем отдельные названия языков, которые могли остаться (в любом падеже)
-        r'(?:Португальский|Португалия|Português|Portuguese|Испанский|Español|Spanish|Французский|Français|French|Немецкий|Deutsch|German|Итальянский|Italiano|Italian|Японский|日本語|Japanese|Корейский|한국어|Korean|Турецкий|Türkçe|Turkish|Сербский|Српски|Serbian|Иврит|עברית|Hebrew|Персидский|فارسی|Farsi|Арабский|عربي|Arabic|Китайский|中文|Chinese|Русский|Russian|Украинский|українська мова|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
-        
-        # Удаляем строки с "и еще 40 языков" и подобные
-        r'[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)[,.\s]*',
-        r'(?:и еще \d+ языков?|and \d+ more languages?)',
-        
-        # Другие варианты служебного текста
-        r'Click the share button below to email/forward this article.*?(?:\n|$)',
-        r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
-        r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
-        r'Global Research is a reader-funded media.*?(?:\n|$)',
-        r'Help us stay afloat.*?(?:\n|$)',
-        r'Become Member of Global Research.*?(?:\n|$)',
-        r'Free Books!.*?(?:\n|$)',
-        r'Make a one-time or recurring donation.*?(?:\n|$)',
-        r'Copyright ©.*?(?:\n|$)',
-        r'The original source of this article is Global Research.*?(?:\n|$)',
-        
-        # Удаляем строки с переводом (более широкий паттерн)
-        r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
-        r'To read this article in.*?(?:language|button).*?(?:\n|$)',
-        r'Click the "Translate Website" button.*?(?:\n|$)',
-        r'Нажмите кнопку.*?Перевести веб-сайт.*?(?:\n|$)',
         r'Для того чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
         r'Para leer este artículo en los siguientes idiomas, haga clic en el botón.*?(?:\n|$)',
         r'Pour lire cet article dans les langues suivantes, cliquez sur le bouton.*?(?:\n|$)',
@@ -120,7 +89,35 @@ def clean_globalresearch_content(text: str) -> str:
         r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
         r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
         
-        # Удаляем пустые строки с точками и запятыми
+        # === ПЕРЕЧИСЛЕНИЯ ЯЗЫКОВ (ВСЕ ВАРИАНТЫ) ===
+        # На английском
+        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian|Portuguese|Spanish|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        # На русском (все падежи)
+        r'(?:Русский|Китайский|Иврит|Арабский|Персидский|Испанский|Португальский|Португалия|Португальцы|Французский|Немецкий|Итальянский|Японский|Корейский|Турецкий|Сербский|Украинский)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
+        # На арабском
+        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        
+        # === ОТДЕЛЬНЫЕ НАЗВАНИЯ ЯЗЫКОВ (удаляем даже если они одни) ===
+        r'^(?:Португальский|Португалия|Португальцы|Português|Portuguese|Испанский|Español|Spanish|Французский|Français|French|Немецкий|Deutsch|German|Итальянский|Italiano|Italian|Японский|日本語|Japanese|Корейский|한국어|Korean|Турецкий|Türkçe|Turkish|Сербский|Српски|Serbian|Иврит|עברית|Hebrew|Персидский|فارسی|Farsi|Арабский|عربي|Arabic|Китайский|中文|Chinese|Русский|Russian|Украинский|українська мова|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?$',
+        
+        # === СТРОКИ С "И ЕЩЕ N ЯЗЫКОВ" ===
+        r'[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)[,.\s]*',
+        r'(?:и еще \d+ языков?|and \d+ more languages?)',
+        
+        # === ДРУГИЕ СЛУЖЕБНЫЕ БЛОКИ ===
+        r'Click the share button below to email/forward this article.*?(?:\n|$)',
+        r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
+        r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
+        r'Global Research is a reader-funded media.*?(?:\n|$)',
+        r'Help us stay afloat.*?(?:\n|$)',
+        r'Become Member of Global Research.*?(?:\n|$)',
+        r'Free Books!.*?(?:\n|$)',
+        r'Make a one-time or recurring donation.*?(?:\n|$)',
+        r'Copyright ©.*?(?:\n|$)',
+        r'The original source of this article is Global Research.*?(?:\n|$)',
+        r'Click the "Translate Website" button.*?(?:\n|$)',
+        r'Нажмите кнопку.*?Перевести веб-сайт.*?(?:\n|$)',
+        r'To read this article in.*?(?:language|button).*?(?:\n|$)',
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
     ]
@@ -134,10 +131,15 @@ def clean_globalresearch_content(text: str) -> str:
     # Удаляем лишние переводы строк
     text = re.sub(r'\n{3,}', '\n\n', text)
     
-    # Удаляем одиночные точки и запятые в начале строк
-    text = re.sub(r'^[,.\s]+', '', text)
+    # Удаляем одиночные точки, запятые и точки с запятой в начале
+    text = re.sub(r'^[,.\s;]+', '', text)
     
-    return text
+    # Удаляем строки, которые состоят только из названия языка
+    language_names = ['португальский', 'португалия', 'португальцы', 'испанский', 'французский', 'немецкий', 'итальянский', 'японский', 'корейский', 'турецкий', 'сербский', 'иврит', 'персидский', 'арабский', 'китайский', 'украинский']
+    for lang in language_names:
+        text = re.sub(r'^' + lang + r'[,.\s]*$', '', text, flags=re.IGNORECASE)
+    
+    return text.strip()
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -593,10 +595,10 @@ class NewsBot:
             title = title.strip()
             logger.info(f"Парсинг Global Research: итоговый заголовок '{title[:50]}'")
 
-            # === ПОИСК ИЗОБРАЖЕНИЯ ===
+            # === ПОИСК ИЗОБРАЖЕНИЯ (ПРИОРИТЕТ: og:image) ===
             image_url = None
             
-            # 1. Пробуем meta property="og:image"
+            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ)
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -606,7 +608,7 @@ class NewsBot:
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
-                logger.info(f"Global Research: изображение найдено в og:image")
+                logger.info(f"Global Research: изображение найдено в og:image: {image_url[:80]}")
             
             # 2. Пробуем meta property="og:image:secure_url"
             if not image_url:
@@ -665,7 +667,7 @@ class NewsBot:
             if image_url:
                 logger.info(f"Global Research: итоговое изображение {image_url[:80]}...")
             else:
-                logger.warning("Global Research: изображение не найдено")
+                logger.warning("Global Research: изображение НЕ НАЙДЕНО!")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', itemprop='articleBody')
@@ -776,6 +778,7 @@ class NewsBot:
 
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
+            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -793,6 +796,11 @@ class NewsBot:
                             logger.info("✅ Опубликовано С ФОТО")
                             self._mark_sent(url, title_en, content_en)
                             self._log_post(url, title_en)
+                            
+                            # Выводим информацию о следующей публикации
+                            if not TEST_MODE:
+                                next_delay = self._next_delay()
+                                logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
                             return
                         except TelegramError as e:
                             logger.warning(f"Ошибка отправки фото: {e}")
@@ -801,6 +809,7 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
+            # Фолбэк: публикация текстом
             logger.info("📝 Публикация текстом (без фото)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
@@ -813,6 +822,11 @@ class NewsBot:
 
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
+            
+            # Выводим информацию о следующей публикации
+            if not TEST_MODE:
+                next_delay = self._next_delay()
+                logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
 
         except TelegramError as e:
             error_msg = str(e)
