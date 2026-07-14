@@ -63,104 +63,14 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         logger.error(f"Ошибка запроса {url}: {e}")
         return None
 
-def extract_image_url_infobrics(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из статьи InfoBrics"""
-    article_img = soup.find('img', class_='article__image')
-    if article_img and article_img.get('src'):
-        src = article_img['src']
-        if src.startswith('//'):
-            return 'https:' + src
-        if src.startswith('/'):
-            return urljoin(base_url, src)
-        if src.startswith('http'):
-            return src
-    
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        url = meta_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
-    
-    return None
-
-def extract_image_url_globalresearch(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из статьи Global Research"""
-    # 1. Пробуем найти через div.postThumbnail > img
-    thumbnail_div = soup.find('div', class_='postThumbnail')
-    if thumbnail_div:
-        img = thumbnail_div.find('img')
-        if img and img.get('src'):
-            src = img['src']
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
-    
-    # 2. Пробуем найти img с классом attachment-single-post-thumbnail
-    img = soup.find('img', class_='attachment-single-post-thumbnail')
-    if img and img.get('src'):
-        src = img['src']
-        if src.startswith('//'):
-            return 'https:' + src
-        if src.startswith('/'):
-            return urljoin(base_url, src)
-        if src.startswith('http'):
-            return src
-    
-    # 3. Пробуем найти через meta og:image
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        url = meta_img['content']
-        if url.startswith('//'):
-            return 'https:' + url
-        if url.startswith('/'):
-            return urljoin(base_url, url)
-        if url.startswith('http'):
-            return url
-    
-    # 4. Пробуем найти любое изображение в статье (не логотип)
-    content = soup.find('div', itemprop='articleBody')
-    if content:
-        for img in content.find_all('img'):
-            src = img.get('src', '')
-            if src and not any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'gif']):
-                if src.startswith('//'):
-                    return 'https:' + src
-                if src.startswith('/'):
-                    return urljoin(base_url, src)
-                if src.startswith('http'):
-                    return src
-    
-    return None
-
 def clean_globalresearch_content(text: str) -> str:
     """Очищает текст от служебных блоков Global Research"""
     if not text:
         return text
     
-    # Удаляем блок с переводом на разные языки
     patterns = [
         r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
-        r'Para leer este artículo en los siguientes idiomas, haga clic en el botón.*?(?:\n|$)',
-        r'Pour lire cet article dans les langues suivantes, cliquez sur le bouton.*?(?:\n|$)',
-        r'Um diesen Artikel in den folgenden Sprachen zu lesen, klicken Sie auf die Schaltfläche.*?(?:\n|$)',
-        r'Per leggere questo articolo nelle seguenti lingue, fare clic sul pulsante.*?(?:\n|$)',
-        r'Для того щоб прочитати цю статтю на наступних мовах, натисніть кнопку.*?(?:\n|$)',
-        r'לקריאת מאמר זה בשפות הבאות, לחץ על הכפתור.*?(?:\n|$)',
-        r'برای خواندن این مقاله به زبان‌های زیر، روی دکمه کلیک کنید.*?(?:\n|$)',
-        r'이 기사를 다음 언어로 읽으려면 버튼을 클릭하세요.*?(?:\n|$)',
-        r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
-        r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
-        r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
-        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
-        r'(?:Arabic|Hebrew|Ukrainian|Farsi|Spanish|Portuguese|Russian|Chinese|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:and \d+ more languages?)?[,.\s]*',
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
         r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
         r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
@@ -169,14 +79,14 @@ def clean_globalresearch_content(text: str) -> str:
         r'Become Member of Global Research.*?(?:\n|$)',
         r'Free Books!.*?(?:\n|$)',
         r'Make a one-time or recurring donation.*?(?:\n|$)',
+        r'Copyright ©.*?(?:\n|$)',
+        r'The original source of this article is Global Research.*?(?:\n|$)',
     ]
     
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
     
-    # Удаляем лишние переводы строк после очистки
     text = re.sub(r'\n{3,}', '\n\n', text)
-    
     return text.strip()
 
 # ========== ОСНОВНОЙ КЛАСС ==========
@@ -397,12 +307,14 @@ class NewsBot:
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
+        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
             for entry in feed.entries[:5]:
                 title = entry.get('title', '').strip()
                 
+                # Если RSS не дает нормальный заголовок, пробуем извлечь из summary
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
                     summary = re.sub(r'<[^>]+>', '', summary)
@@ -413,13 +325,9 @@ class NewsBot:
                     logger.info(f"InfoBrics: заголовок извлечен из summary: '{title[:50]}'")
                 
                 if not title or len(title) < 5:
-                    published = entry.get('published', '')
-                    if published:
-                        title = f"InfoBrics Article from {published}"
-                    else:
-                        link = entry.get('link', '')
-                        url_id = link.split('/')[-1] if link else ''
-                        title = f"InfoBrics Article {url_id}"
+                    link = entry.get('link', '')
+                    url_id = link.split('/')[-1] if link else ''
+                    title = f"InfoBrics Article {url_id}"
                     logger.warning(f"InfoBrics: создан заглушечный заголовок: '{title}'")
 
                 articles.append({
@@ -433,6 +341,7 @@ class NewsBot:
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью InfoBrics"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -441,30 +350,65 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
+            
+            # 1. Основной селектор: div class="title title--big"
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
+                logger.info(f"InfoBrics: заголовок найден в div.title--big: '{title[:50]}'")
             
+            # 2. Пробуем title тег
             if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    # Удаляем суффикс "BRICS Russia | "
+                    title = re.sub(r'^BRICS Russia\s*[|]\s*', '', title)
+                    if title:
+                        logger.info(f"InfoBrics: заголовок найден в title: '{title[:50]}'")
             
+            # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"InfoBrics: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
                 title = "InfoBrics Article"
+                logger.warning(f"InfoBrics: заголовок не найден, используется заглушка")
 
             title = title.strip()
-            logger.info(f"Парсинг InfoBrics: заголовок '{title[:50]}'")
+            logger.info(f"Парсинг InfoBrics: итоговый заголовок '{title[:50]}'")
 
-            image_url = extract_image_url_infobrics(soup, base_url)
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
+            image_url = None
+            article_img = soup.find('img', class_='article__image')
+            if article_img and article_img.get('src'):
+                src = article_img['src']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+            
+            if not image_url:
+                meta_img = soup.find('meta', property='og:image')
+                if meta_img and meta_img.get('content'):
+                    url_img = meta_img['content']
+                    if url_img.startswith('//'):
+                        image_url = 'https:' + url_img
+                    elif url_img.startswith('/'):
+                        image_url = urljoin(base_url, url_img)
+                    elif url_img.startswith('http'):
+                        image_url = url_img
+            
             logger.info(f"InfoBrics: найдено изображение {image_url[:50] if image_url else 'None'}")
 
+            # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='article__text')
             if not container:
                 container = soup.find('article')
@@ -480,14 +424,6 @@ class NewsBot:
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         text = re.sub(r'См\.\s*$', '', text)
                         paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if len(text) > 30:
-                            paragraphs.append(text)
 
             if len(paragraphs) < 2:
                 logger.warning(f"InfoBrics: недостаточно контента для {url}")
@@ -541,12 +477,12 @@ class NewsBot:
             resp = fetch_url(url)
             if not resp:
                 logger.warning(f"Global Research: не удалось загрузить страницу {url}")
+                # Пробуем получить данные из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
                         title = entry.get('title', '').strip()
                         if title:
-                            logger.info(f"Global Research: заголовок из RSS: '{title[:50]}'")
                             summary = entry.get('summary', '')
                             summary = re.sub(r'<[^>]+>', '', summary)
                             summary = clean_globalresearch_content(summary)
@@ -563,46 +499,47 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ===== ПОИСК ЗАГОЛОВКА =====
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Основной селектор: div.title > h2 itemprop="headline"
-            title_div = soup.find('div', class_='title')
-            if title_div:
-                h2 = title_div.find('h2', itemprop='headline')
-                if h2:
-                    title = h2.get_text(strip=True)
-                    logger.info(f"Global Research: заголовок найден в div.title > h2[itemprop=headline]: '{title[:50]}'")
+            # 1. Пробуем title тег (наиболее надежный)
+            title_tag = soup.find('title')
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+                # Удаляем суффикс " - Global ResearchGlobal Research - Centre for Research on Globalization"
+                title = re.sub(r'\s*[-|]\s*(?:Global Research.*|Home.*)$', '', title)
+                if title:
+                    logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
             
-            # 2. Пробуем найти h2 itemprop="headline" в любом месте
+            # 2. Пробуем h2 itemprop="headline"
             if not title:
                 h2 = soup.find('h2', itemprop='headline')
                 if h2:
                     title = h2.get_text(strip=True)
                     logger.info(f"Global Research: заголовок найден в h2[itemprop=headline]: '{title[:50]}'")
             
-            # 3. Пробуем h1
+            # 3. Пробуем div.title > h2
+            if not title:
+                title_div = soup.find('div', class_='title')
+                if title_div:
+                    h2 = title_div.find('h2')
+                    if h2:
+                        title = h2.get_text(strip=True)
+                        logger.info(f"Global Research: заголовок найден в div.title > h2: '{title[:50]}'")
+            
+            # 4. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
                     logger.info(f"Global Research: заголовок найден в h1: '{title[:50]}'")
             
-            # 4. Пробуем meta og:title
+            # 5. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
                     logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
-            
-            # 5. Пробуем title тег
-            if not title:
-                title_tag = soup.find('title')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[-|]\s*(?:Global Research.*|Home.*)$', '', title)
-                    if title:
-                        logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
 
             # 6. Если ничего не нашли, пробуем RSS
             if not title:
@@ -621,43 +558,81 @@ class NewsBot:
             title = title.strip()
             logger.info(f"Парсинг Global Research: итоговый заголовок '{title[:50]}'")
 
-            # ===== ПОИСК ИЗОБРАЖЕНИЯ =====
-            image_url = extract_image_url_globalresearch(soup, base_url)
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
+            image_url = None
+            
+            # 1. Пробуем img class="attachment-single-post-thumbnail"
+            img = soup.find('img', class_='attachment-single-post-thumbnail')
+            if img and img.get('src'):
+                src = img['src']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+            
+            # 2. Пробуем div.postThumbnail > img
+            if not image_url:
+                thumbnail_div = soup.find('div', class_='postThumbnail')
+                if thumbnail_div:
+                    img = thumbnail_div.find('img')
+                    if img and img.get('src'):
+                        src = img['src']
+                        if src.startswith('//'):
+                            image_url = 'https:' + src
+                        elif src.startswith('/'):
+                            image_url = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            image_url = src
+            
+            # 3. Пробуем meta og:image
+            if not image_url:
+                meta_img = soup.find('meta', property='og:image')
+                if meta_img and meta_img.get('content'):
+                    src = meta_img['content']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
+            
             logger.info(f"Global Research: найдено изображение {image_url[:50] if image_url else 'None'}")
 
-            # ===== ПОИСК КОНТЕНТА =====
+            # === ПОИСК КОНТЕНТА ===
             container = None
             
-            # 1. Основной селектор: div itemprop="articleBody"
+            # 1. div itemprop="articleBody"
             container = soup.find('div', itemprop='articleBody')
             if container:
                 logger.info("Global Research: контент найден в itemprop=articleBody")
             
-            # 2. Пробуем class="content"
+            # 2. class="content"
             if not container:
                 container = soup.find('div', class_='content')
                 if container:
                     logger.info("Global Research: контент найден в class=content")
             
-            # 3. Пробуем post-content
+            # 3. post-content
             if not container:
                 container = soup.find('div', class_='post-content')
                 if container:
                     logger.info("Global Research: контент найден в post-content")
             
-            # 4. Пробуем entry-content
+            # 4. entry-content
             if not container:
                 container = soup.find('div', class_='entry-content')
                 if container:
                     logger.info("Global Research: контент найден в entry-content")
             
-            # 5. Пробуем article
+            # 5. article
             if not container:
                 container = soup.find('article')
                 if container:
                     logger.info("Global Research: контент найден в article")
             
-            # 6. Пробуем main
+            # 6. main
             if not container:
                 container = soup.find('main')
                 if container:
@@ -681,6 +656,7 @@ class NewsBot:
 
             if len(content) < 150:
                 logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
+                # Пробуем получить контент из RSS
                 feed = feedparser.parse('https://www.globalresearch.ca/feed')
                 for entry in feed.entries[:10]:
                     if entry.link == url:
@@ -747,7 +723,6 @@ class NewsBot:
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
-            # Дополнительная очистка от служебных текстов
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = clean_globalresearch_content(content_ru)
@@ -755,14 +730,11 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
 
-            # Формируем сообщение
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -788,7 +760,6 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # Фолбэк: публикация текстом
             logger.info("📝 Публикация текстом (без фото)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
