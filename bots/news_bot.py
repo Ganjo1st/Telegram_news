@@ -69,7 +69,7 @@ EXCLUDED_KEYWORDS = [
     'global research publishers', 'издательство',
     # Другое
     'print this article', 'print-me', 'pdf version',
-    'global research daily', 'the news behind the news', # это не новости, а подборки
+    'global research daily', 'the news behind the news',
 ]
 
 def is_news_article(title: str, content: str) -> bool:
@@ -199,6 +199,11 @@ class NewsBot:
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
+        # Счетчики для статистики
+        self.total_found = 0
+        self.total_excluded = 0
+        self.total_published = 0
+        self.queue_count = 0
         if TEST_MODE:
             logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ ВКЛЮЧЕН - ограничения отключены")
 
@@ -504,6 +509,7 @@ class NewsBot:
             # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
             if not image_url:
                 logger.warning(f"❌ InfoBrics: нет изображения, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
                 return None
             
             logger.info(f"InfoBrics: найдено изображение {image_url[:50]}...")
@@ -527,18 +533,22 @@ class NewsBot:
 
             if len(paragraphs) < 2:
                 logger.warning(f"InfoBrics: недостаточно контента для {url}")
+                self.total_excluded += 1
                 return None
 
             content = '\n\n'.join(paragraphs)
             if len(content) < 150:
                 logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
                 return None
 
             # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ InfoBrics: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
                 return None
 
+            self.total_found += 1
             return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
         except Exception as e:
             logger.error(f"Ошибка парсинга InfoBrics: {e}")
@@ -676,6 +686,7 @@ class NewsBot:
             # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
             if not image_url:
                 logger.warning(f"❌ Global Research: нет изображения, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
                 return None
             
             logger.info(f"Global Research: найдено изображение {image_url[:50]}...")
@@ -711,13 +722,16 @@ class NewsBot:
 
             if len(content) < 150:
                 logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
                 return None
 
             # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ Global Research: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
                 return None
 
+            self.total_found += 1
             return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
         except Exception as e:
             logger.error(f"Ошибка парсинга Global Research: {e}")
@@ -726,6 +740,9 @@ class NewsBot:
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
+        # Сбрасываем счетчики перед каждым сбором
+        self.total_found = 0
+        self.total_excluded = 0
 
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
@@ -747,7 +764,12 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
 
+        # Сохраняем общее количество найденных статей для статистики
+        self.total_found = len(items) + self.total_excluded
+        
         logger.info(f"📊 Всего новых статей: {len(items)}")
+        logger.info(f"📊 Найдено всего: {self.total_found}, исключено: {self.total_excluded}")
+        
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
@@ -798,7 +820,11 @@ class NewsBot:
                             logger.info("✅ Опубликовано С ФОТО")
                             self._mark_sent(url, title_en, content_en)
                             self._log_post(url, title_en)
+                            self.total_published += 1
                             
+                            # Выводим статистику по очереди
+                            self.queue_count = len(self.state['posts_log'])
+                            logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
                             if not TEST_MODE:
                                 next_delay = self._next_delay()
                                 logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
@@ -823,7 +849,11 @@ class NewsBot:
 
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
+            self.total_published += 1
             
+            # Выводим статистику по очереди
+            self.queue_count = len(self.state['posts_log'])
+            logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
             if not TEST_MODE:
                 next_delay = self._next_delay()
                 logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
@@ -840,6 +870,7 @@ class NewsBot:
                     )
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
+                    self.total_published += 1
                 except Exception as e2:
                     logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
             else:
