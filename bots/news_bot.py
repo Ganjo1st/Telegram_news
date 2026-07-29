@@ -51,23 +51,19 @@ MAX_MESSAGE = 4096
 
 # === КЛЮЧЕВЫЕ СЛОВА ДЛЯ ИСКЛЮЧЕНИЯ СТАТЕЙ ===
 EXCLUDED_KEYWORDS = [
-    # Английские
     'donate', 'donation', 'support us', 'reader-funded', 'fundraising',
     'become a member', 'membership', 'free books', 'subscribe',
     'newsletter', 'click the share button', 'follow us on',
     'global research is a reader-funded media', 'help us stay afloat',
     'make a one-time or recurring donation', 'become member',
     'comment on global research articles', 'become a member of global research',
-    # Русские
     'пожертвование', 'пожертвовать', 'поддержать', 'спонсор',
     'стать участником', 'членство', 'бесплатные книги', 'подписаться',
     'рассылка', 'поделиться', 'подписывайтесь', 'помочь нам',
     'сделать пожертвование', 'стать членом', 'комментировать статьи',
-    # Книги и не-новости
     'book', 'книга', 'books', 'i-books', 'ebook', 'pdf',
     'free download', 'скачать бесплатно', 'clarity press',
     'global research publishers', 'издательство',
-    # Другое
     'print this article', 'print-me', 'pdf version',
     'global research daily', 'the news behind the news',
 ]
@@ -79,18 +75,15 @@ def is_news_article(title: str, content: str) -> bool:
     
     combined = (title + ' ' + content).lower()
     
-    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
-    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
     if len(content) < 200:
         logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
     
-    # Исключаем статьи, в которых больше 30% текста - служебный
     service_patterns = [
         r'click the share button',
         r'follow us on',
@@ -112,6 +105,22 @@ def is_news_article(title: str, content: str) -> bool:
     
     return True
 
+def check_image_available(image_url: str, timeout: int = 10) -> bool:
+    """Проверяет, доступно ли изображение по URL"""
+    if not image_url:
+        return False
+    try:
+        response = requests.head(image_url, timeout=timeout)
+        if response.status_code == 200:
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' in content_type:
+                return True
+        logger.warning(f"Изображение недоступно: {image_url} (статус: {response.status_code})")
+        return False
+    except Exception as e:
+        logger.warning(f"Не удалось проверить изображение {image_url}: {e}")
+        return False
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
@@ -132,22 +141,15 @@ def clean_globalresearch_content(text: str) -> str:
         return text
     
     patterns = [
-        # Блоки с переводом на языки
         r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
         r'To read this article in the following languages, click the Translate Website button.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?Перевести веб-сайт.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
         r'Для того чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
-        
-        # Перечисления языков
         r'(?:Русский|Китайский|Иврит|Арабский|Персидский|Испанский|Португальский|Португалия|Португальцы|Французский|Немецкий|Итальянский|Японский|Корейский|Турецкий|Сербский|Украинский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
-        
-        # Строки с "и еще N языков"
         r'[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)[,.\s]*',
         r'(?:и еще \d+ языков?|and \d+ more languages?)',
-        
-        # Служебные блоки
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
         r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
         r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
@@ -167,8 +169,6 @@ def clean_globalresearch_content(text: str) -> str:
         r'Поддержать.*?(?:\n|$)',
         r'Стать участником.*?(?:\n|$)',
         r'This article was originally published on.*?(?:\n|$)',
-        
-        # Пустые строки
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
     ]
@@ -176,7 +176,6 @@ def clean_globalresearch_content(text: str) -> str:
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
     
-    # Удаляем отдельные названия языков
     language_names = [
         'португальский', 'португалия', 'португальцы', 'испанский', 
         'французский', 'немецкий', 'итальянский', 'японский', 
@@ -452,7 +451,7 @@ class NewsBot:
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base_url = f'https://infobrics.org'
+            base_url = 'https://infobrics.org'
 
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
@@ -476,14 +475,17 @@ class NewsBot:
                     logger.info(f"InfoBrics: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
-                logger.warning(f"InfoBrics: заголовок не найден для {url}")
+                logger.warning(f"❌ InfoBrics: заголовок не найден для {url}")
+                self.total_excluded += 1
                 return None
 
             title = title.strip()
-            logger.info(f"Парсинг InfoBrics: итоговый заголовок '{title[:50]}'")
+            logger.info(f"InfoBrics: итоговый заголовок '{title[:50]}'")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
+            
+            # 1. Пробуем img class="article__image"
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
                 src = article_img['src']
@@ -495,6 +497,7 @@ class NewsBot:
                     image_url = src
                 logger.info(f"InfoBrics: изображение найдено в article__image: {image_url}")
             
+            # 2. Пробуем meta og:image
             if not image_url:
                 meta_img = soup.find('meta', property='og:image')
                 if meta_img and meta_img.get('content'):
@@ -507,13 +510,23 @@ class NewsBot:
                         image_url = src
                     logger.info(f"InfoBrics: изображение найдено в og:image: {image_url}")
             
-            # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
+            # === ПРОВЕРКА: ЕСТЬ ЛИ ИЗОБРАЖЕНИЕ ===
             if not image_url:
-                logger.warning(f"❌ InfoBrics: нет изображения, статья пропущена: {title[:50]}")
+                logger.warning(f"❌ InfoBrics: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            logger.info(f"InfoBrics: итоговое изображение {image_url}")
+            # === ПРОВЕРКА: ДОСТУПНО ЛИ ИЗОБРАЖЕНИЕ ===
+            # Пропускаем проверку, если URL ведет на infobrics.org (иногда блокирует HEAD запросы)
+            if 'infobrics.org' not in image_url:
+                if not check_image_available(image_url):
+                    logger.warning(f"❌ InfoBrics: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                    self.total_excluded += 1
+                    return None
+            else:
+                logger.info(f"InfoBrics: пропущена проверка доступности для infobrics.org")
+            
+            logger.info(f"✅ InfoBrics: изображение доступно: {image_url}")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='article__text')
@@ -533,17 +546,17 @@ class NewsBot:
                         paragraphs.append(text)
 
             if len(paragraphs) < 2:
-                logger.warning(f"InfoBrics: недостаточно контента для {url}")
+                logger.warning(f"❌ InfoBrics: недостаточно контента для {url}")
                 self.total_excluded += 1
                 return None
 
             content = '\n\n'.join(paragraphs)
             if len(content) < 150:
-                logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
+                logger.warning(f"❌ InfoBrics: контент слишком короткий ({len(content)} символов)")
                 self.total_excluded += 1
                 return None
 
-            # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
+            # === ПРОВЕРКА: НОВОСТНАЯ ЛИ СТАТЬЯ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ InfoBrics: статья исключена (не новостная): {title[:50]}")
                 self.total_excluded += 1
@@ -596,7 +609,7 @@ class NewsBot:
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base_url = f'https://www.globalresearch.ca'
+            base_url = 'https://www.globalresearch.ca'
 
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
@@ -644,16 +657,17 @@ class NewsBot:
                         break
 
             if not title:
-                title = "Global Research Article"
-                logger.warning(f"Global Research: заголовок не найден, используется заглушка")
+                logger.warning(f"❌ Global Research: заголовок не найден для {url}")
+                self.total_excluded += 1
+                return None
 
             title = title.strip()
-            logger.info(f"Парсинг Global Research: итоговый заголовок '{title[:50]}'")
+            logger.info(f"Global Research: итоговый заголовок '{title[:50]}'")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем meta property="og:image"
+            # 1. Пробуем meta og:image
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -693,13 +707,19 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
             
-            # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
+            # === ПРОВЕРКА: ЕСТЬ ЛИ ИЗОБРАЖЕНИЕ ===
             if not image_url:
-                logger.warning(f"❌ Global Research: нет изображения, статья пропущена: {title[:50]}")
+                logger.warning(f"❌ Global Research: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            logger.info(f"Global Research: итоговое изображение {image_url}")
+            # === ПРОВЕРКА: ДОСТУПНО ЛИ ИЗОБРАЖЕНИЕ ===
+            if not check_image_available(image_url):
+                logger.warning(f"❌ Global Research: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            logger.info(f"✅ Global Research: изображение доступно: {image_url}")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', itemprop='articleBody')
@@ -731,11 +751,11 @@ class NewsBot:
             content = clean_globalresearch_content(content)
 
             if len(content) < 150:
-                logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
+                logger.warning(f"❌ Global Research: контент слишком короткий ({len(content)} символов)")
                 self.total_excluded += 1
                 return None
 
-            # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
+            # === ПРОВЕРКА: НОВОСТНАЯ ЛИ СТАТЬЯ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ Global Research: статья исключена (не новостная): {title[:50]}")
                 self.total_excluded += 1
