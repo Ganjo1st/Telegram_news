@@ -46,7 +46,9 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-MAX_CAPTION = 1024
+# Для подписи к фото Telegram ограничение 1024 символа
+# Оставляем запас 50 символов для форматирования
+MAX_CAPTION = 950
 MAX_MESSAGE = 4096
 
 # === КЛЮЧЕВЫЕ СЛОВА ДЛЯ ИСКЛЮЧЕНИЯ СТАТЕЙ ===
@@ -485,7 +487,6 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем img class="article__image"
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
                 src = article_img['src']
@@ -497,7 +498,6 @@ class NewsBot:
                     image_url = src
                 logger.info(f"InfoBrics: изображение найдено в article__image: {image_url}")
             
-            # 2. Пробуем meta og:image
             if not image_url:
                 meta_img = soup.find('meta', property='og:image')
                 if meta_img and meta_img.get('content'):
@@ -510,14 +510,12 @@ class NewsBot:
                         image_url = src
                     logger.info(f"InfoBrics: изображение найдено в og:image: {image_url}")
             
-            # === ПРОВЕРКА: ЕСТЬ ЛИ ИЗОБРАЖЕНИЕ ===
             if not image_url:
                 logger.warning(f"❌ InfoBrics: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            # === ПРОВЕРКА: ДОСТУПНО ЛИ ИЗОБРАЖЕНИЕ ===
-            # Пропускаем проверку, если URL ведет на infobrics.org (иногда блокирует HEAD запросы)
+            # Пропускаем проверку доступности для infobrics.org
             if 'infobrics.org' not in image_url:
                 if not check_image_available(image_url):
                     logger.warning(f"❌ InfoBrics: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
@@ -556,7 +554,6 @@ class NewsBot:
                 self.total_excluded += 1
                 return None
 
-            # === ПРОВЕРКА: НОВОСТНАЯ ЛИ СТАТЬЯ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ InfoBrics: статья исключена (не новостная): {title[:50]}")
                 self.total_excluded += 1
@@ -667,7 +664,6 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем meta og:image
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -679,7 +675,6 @@ class NewsBot:
                     image_url = src
                 logger.info(f"Global Research: изображение найдено в og:image: {image_url}")
             
-            # 2. Пробуем img class="attachment-single-post-thumbnail"
             if not image_url:
                 img = soup.find('img', class_='attachment-single-post-thumbnail')
                 if img and img.get('src'):
@@ -692,7 +687,6 @@ class NewsBot:
                         image_url = src
                     logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail: {image_url}")
             
-            # 3. Пробуем div.postThumbnail > img
             if not image_url:
                 thumbnail_div = soup.find('div', class_='postThumbnail')
                 if thumbnail_div:
@@ -707,13 +701,11 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
             
-            # === ПРОВЕРКА: ЕСТЬ ЛИ ИЗОБРАЖЕНИЕ ===
             if not image_url:
                 logger.warning(f"❌ Global Research: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            # === ПРОВЕРКА: ДОСТУПНО ЛИ ИЗОБРАЖЕНИЕ ===
             if not check_image_available(image_url):
                 logger.warning(f"❌ Global Research: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
@@ -755,7 +747,6 @@ class NewsBot:
                 self.total_excluded += 1
                 return None
 
-            # === ПРОВЕРКА: НОВОСТНАЯ ЛИ СТАТЬЯ ===
             if not is_news_article(title, content):
                 logger.info(f"❌ Global Research: статья исключена (не новостная): {title[:50]}")
                 self.total_excluded += 1
@@ -837,26 +828,55 @@ class NewsBot:
                 if img_response and img_response.status_code == 200:
                     content_type = img_response.headers.get('Content-Type', '')
                     if 'image' in content_type:
-                        try:
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en)
-                            self._log_post(url, title_en)
-                            self.total_published += 1
-                            
-                            self.queue_count = len(self.state['posts_log'])
-                            logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
-                            if not TEST_MODE:
-                                next_delay = self._next_delay()
-                                logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
-                            return
-                        except TelegramError as e:
-                            logger.warning(f"Ошибка отправки фото: {e}")
+                        # Проверяем длину сообщения для фото (лимит 1024 символа)
+                        if len(message) <= 1024:
+                            try:
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=img_response.content,
+                                    caption=message,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info("✅ Опубликовано С ФОТО")
+                                self._mark_sent(url, title_en, content_en)
+                                self._log_post(url, title_en)
+                                self.total_published += 1
+                                
+                                self.queue_count = len(self.state['posts_log'])
+                                logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
+                                if not TEST_MODE:
+                                    next_delay = self._next_delay()
+                                    logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
+                                return
+                            except TelegramError as e:
+                                logger.warning(f"Ошибка отправки фото: {e}")
+                        else:
+                            # Если сообщение слишком длинное, обрезаем его для фото
+                            logger.info(f"📝 Сообщение слишком длинное для фото ({len(message)} символов), обрезаем...")
+                            shorter_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=True)}"
+                            if len(shorter_message) > 1024:
+                                # Еще короче
+                                shorter_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru[:500], is_caption=True)}"
+                            try:
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=img_response.content,
+                                    caption=shorter_message,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info("✅ Опубликовано С ФОТО (обрезанный текст)")
+                                self._mark_sent(url, title_en, content_en)
+                                self._log_post(url, title_en)
+                                self.total_published += 1
+                                
+                                self.queue_count = len(self.state['posts_log'])
+                                logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
+                                if not TEST_MODE:
+                                    next_delay = self._next_delay()
+                                    logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
+                                return
+                            except TelegramError as e:
+                                logger.warning(f"Ошибка отправки фото (обрезанный текст): {e}")
                     else:
                         logger.warning(f"URL не ведёт на изображение: {content_type}")
                 else:
