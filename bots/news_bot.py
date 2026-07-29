@@ -49,6 +49,69 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
+# === КЛЮЧЕВЫЕ СЛОВА ДЛЯ ИСКЛЮЧЕНИЯ СТАТЕЙ ===
+EXCLUDED_KEYWORDS = [
+    # Английские
+    'donate', 'donation', 'support us', 'reader-funded', 'fundraising',
+    'become a member', 'membership', 'free books', 'subscribe',
+    'newsletter', 'click the share button', 'follow us on',
+    'global research is a reader-funded media', 'help us stay afloat',
+    'make a one-time or recurring donation', 'become member',
+    'comment on global research articles', 'become a member of global research',
+    # Русские
+    'пожертвование', 'пожертвовать', 'поддержать', 'спонсор',
+    'стать участником', 'членство', 'бесплатные книги', 'подписаться',
+    'рассылка', 'поделиться', 'подписывайтесь', 'помочь нам',
+    'сделать пожертвование', 'стать членом', 'комментировать статьи',
+    # Книги и не-новости
+    'book', 'книга', 'books', 'i-books', 'ebook', 'pdf',
+    'free download', 'скачать бесплатно', 'clarity press',
+    'global research publishers', 'издательство',
+    # Другое
+    'print this article', 'print-me', 'pdf version',
+    'global research daily', 'the news behind the news', # это не новости, а подборки
+]
+
+def is_news_article(title: str, content: str) -> bool:
+    """Проверяет, является ли статья новостной (не служебной)"""
+    if not title:
+        return False
+    
+    combined = (title + ' ' + content).lower()
+    
+    # Проверяем на служебные ключевые слова
+    for keyword in EXCLUDED_KEYWORDS:
+        if keyword.lower() in combined:
+            logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
+            return False
+    
+    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
+    if len(content) < 200:
+        logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
+        return False
+    
+    # Исключаем статьи, в которых больше 30% текста - служебный
+    service_patterns = [
+        r'click the share button',
+        r'follow us on',
+        r'global research is a reader-funded',
+        r'help us stay afloat',
+        r'become a member',
+        r'пожертвование',
+        r'поддержать',
+        r'стать участником',
+    ]
+    
+    service_chars = 0
+    for pattern in service_patterns:
+        service_chars += len(re.findall(pattern, combined, re.IGNORECASE)) * 50
+    
+    if len(content) > 0 and service_chars / len(content) > 0.3:
+        logger.info(f"❌ Исключена статья (слишком много служебного текста): {title[:50]}...")
+        return False
+    
+    return True
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
@@ -64,47 +127,27 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def clean_globalresearch_content(text: str) -> str:
-    """Очищает текст от служебных блоков Global Research (языки, перевод, подписки)"""
+    """Очищает текст от служебных блоков Global Research"""
     if not text:
         return text
     
-    # Все возможные паттерны для удаления блоков с языками и переводами
     patterns = [
-        # === БЛОКИ С ПЕРЕВОДОМ НА ЯЗЫКИ (ОСНОВНЫЕ) ===
+        # Блоки с переводом на языки
         r'To read this article in the following languages, click the.*?button.*?(?:\n|$)',
         r'To read this article in the following languages, click the Translate Website button.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?Перевести веб-сайт.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?под именем автора.*?(?:\n|$)',
         r'Чтобы прочитать эту статью на следующих языках.*?(?:\n|$)',
         r'Для того чтобы прочитать эту статью на следующих языках, нажмите кнопку.*?(?:\n|$)',
-        r'Para leer este artículo en los siguientes idiomas, haga clic en el botón.*?(?:\n|$)',
-        r'Pour lire cet article dans les langues suivantes, cliquez sur le bouton.*?(?:\n|$)',
-        r'Um diesen Artikel in den folgenden Sprachen zu lesen, klicken Sie auf die Schaltfläche.*?(?:\n|$)',
-        r'Per leggere questo articolo nelle seguenti lingue, fare clic sul pulsante.*?(?:\n|$)',
-        r'Для того щоб прочитати цю статтю на наступних мовах, натисніть кнопку.*?(?:\n|$)',
-        r'לקריאת מאמר זה בשפות הבאות, לחץ על הכפתור.*?(?:\n|$)',
-        r'برای خواندن این مقاله به زبان‌های زیر، روی دکمه کلیک کنید.*?(?:\n|$)',
-        r'이 기사를 다음 언어로 읽으려면 버튼을 클릭하세요.*?(?:\n|$)',
-        r'この記事を次の言語で読むには、ボタンをクリックしてください.*?(?:\n|$)',
-        r'Bu makaleyi aşağıdaki dillerde okumak için düğmeye tıklayın.*?(?:\n|$)',
-        r'Да бисте прочитали овај чланак на следећим језицима, кликните на дугме.*?(?:\n|$)',
         
-        # === ПЕРЕЧИСЛЕНИЯ ЯЗЫКОВ (ВСЕ ВАРИАНТЫ) ===
-        # На английском
-        r'(?:Русский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова|Arabic|Ukrainian|Portuguese|Spanish|French|German|Italian|Japanese|Korean|Turkish|Serbian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
-        # На русском (все падежи)
-        r'(?:Русский|Китайский|Иврит|Арабский|Персидский|Испанский|Португальский|Португалия|Португальцы|Французский|Немецкий|Итальянский|Японский|Корейский|Турецкий|Сербский|Украинский)[,.\s]*(?:и еще \d+ языков?)?[,.\s]*',
-        # На арабском
-        r'(?:عربي|עברית|українська мова|فارسی|Español|Português|Русский|中文|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
+        # Перечисления языков
+        r'(?:Русский|Китайский|Иврит|Арабский|Персидский|Испанский|Португальский|Португалия|Португальцы|Французский|Немецкий|Итальянский|Японский|Корейский|Турецкий|Сербский|Украинский|中文|Hebrew|عربي|Farsi|Español|Português|Français|Deutsch|Italiano|日本語|한국어|Türkçe|Српски|українська мова)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?[,.\s]*',
         
-        # === ОТДЕЛЬНЫЕ НАЗВАНИЯ ЯЗЫКОВ (удаляем даже если они одни) ===
-        r'^(?:Португальский|Португалия|Португальцы|Português|Portuguese|Испанский|Español|Spanish|Французский|Français|French|Немецкий|Deutsch|German|Итальянский|Italiano|Italian|Японский|日本語|Japanese|Корейский|한국어|Korean|Турецкий|Türkçe|Turkish|Сербский|Српски|Serbian|Иврит|עברית|Hebrew|Персидский|فارسی|Farsi|Арабский|عربي|Arabic|Китайский|中文|Chinese|Русский|Russian|Украинский|українська мова|Ukrainian)[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)?$',
-        
-        # === СТРОКИ С "И ЕЩЕ N ЯЗЫКОВ" ===
+        # Строки с "и еще N языков"
         r'[,.\s]*(?:и еще \d+ языков?|and \d+ more languages?)[,.\s]*',
         r'(?:и еще \d+ языков?|and \d+ more languages?)',
         
-        # === ДРУГИЕ СЛУЖЕБНЫЕ БЛОКИ ===
+        # Служебные блоки
         r'Click the share button below to email/forward this article.*?(?:\n|$)',
         r'Follow us on.*?(?:Instagram|X|Telegram Channel).*?(?:\n|$)',
         r'Feel free to repost Global Research articles with proper attribution.*?(?:\n|$)',
@@ -118,6 +161,14 @@ def clean_globalresearch_content(text: str) -> str:
         r'Click the "Translate Website" button.*?(?:\n|$)',
         r'Нажмите кнопку.*?Перевести веб-сайт.*?(?:\n|$)',
         r'To read this article in.*?(?:language|button).*?(?:\n|$)',
+        r'Comment on Global Research Articles on our Facebook page.*?(?:\n|$)',
+        r'Become a Member of Global Research.*?(?:\n|$)',
+        r'Пожертвование.*?(?:\n|$)',
+        r'Поддержать.*?(?:\n|$)',
+        r'Стать участником.*?(?:\n|$)',
+        r'This article was originally published on.*?(?:\n|$)',
+        
+        # Пустые строки
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
     ]
@@ -125,19 +176,19 @@ def clean_globalresearch_content(text: str) -> str:
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
     
-    # Удаляем пустые строки в начале и конце
-    text = text.strip()
-    
-    # Удаляем лишние переводы строк
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    # Удаляем одиночные точки, запятые и точки с запятой в начале
-    text = re.sub(r'^[,.\s;]+', '', text)
-    
-    # Удаляем строки, которые состоят только из названия языка
-    language_names = ['португальский', 'португалия', 'португальцы', 'испанский', 'французский', 'немецкий', 'итальянский', 'японский', 'корейский', 'турецкий', 'сербский', 'иврит', 'персидский', 'арабский', 'китайский', 'украинский']
+    # Удаляем отдельные названия языков
+    language_names = [
+        'португальский', 'португалия', 'португальцы', 'испанский', 
+        'французский', 'немецкий', 'итальянский', 'японский', 
+        'корейский', 'турецкий', 'сербский', 'иврит', 'персидский', 
+        'арабский', 'китайский', 'украинский'
+    ]
     for lang in language_names:
         text = re.sub(r'^' + lang + r'[,.\s]*$', '', text, flags=re.IGNORECASE)
+    
+    text = text.strip()
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'^[,.\s;]+', '', text)
     
     return text.strip()
 
@@ -399,6 +450,7 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
             title_div = soup.find('div', class_='title title--big')
             if title_div:
@@ -420,12 +472,13 @@ class NewsBot:
                     logger.info(f"InfoBrics: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
-                title = "InfoBrics Article"
-                logger.warning(f"InfoBrics: заголовок не найден, используется заглушка")
+                logger.warning(f"InfoBrics: заголовок не найден для {url}")
+                return None
 
             title = title.strip()
             logger.info(f"Парсинг InfoBrics: итоговый заголовок '{title[:50]}'")
 
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
@@ -448,8 +501,14 @@ class NewsBot:
                     elif src.startswith('http'):
                         image_url = src
             
-            logger.info(f"InfoBrics: найдено изображение {image_url[:50] if image_url else 'None'}")
+            # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
+            if not image_url:
+                logger.warning(f"❌ InfoBrics: нет изображения, статья пропущена: {title[:50]}")
+                return None
+            
+            logger.info(f"InfoBrics: найдено изображение {image_url[:50]}...")
 
+            # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='article__text')
             if not container:
                 container = soup.find('article')
@@ -473,6 +532,11 @@ class NewsBot:
             content = '\n\n'.join(paragraphs)
             if len(content) < 150:
                 logger.warning(f"InfoBrics: контент слишком короткий ({len(content)} символов)")
+                return None
+
+            # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
+            if not is_news_article(title, content):
+                logger.info(f"❌ InfoBrics: статья исключена (не новостная): {title[:50]}")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
@@ -518,26 +582,6 @@ class NewsBot:
             resp = fetch_url(url)
             if not resp:
                 logger.warning(f"Global Research: не удалось загрузить страницу {url}")
-                feed = feedparser.parse('https://www.globalresearch.ca/feed')
-                for entry in feed.entries[:10]:
-                    if entry.link == url:
-                        title = entry.get('title', '').strip()
-                        if title:
-                            summary = entry.get('summary', '')
-                            summary = re.sub(r'<[^>]+>', '', summary)
-                            summary = clean_globalresearch_content(summary)
-                            image_url = None
-                            img_match = re.search(r'src="([^"]+)"', summary)
-                            if img_match:
-                                image_url = img_match.group(1)
-                            if summary:
-                                return {
-                                    'title': title,
-                                    'content': summary[:500],
-                                    'image': image_url,
-                                    'source': 'Global Research',
-                                    'url': url
-                                }
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -580,25 +624,16 @@ class NewsBot:
                     logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
-                feed = feedparser.parse('https://www.globalresearch.ca/feed')
-                for entry in feed.entries[:10]:
-                    if entry.link == url:
-                        title = entry.get('title', '').strip()
-                        if title:
-                            logger.info(f"Global Research: заголовок из RSS (запасной): '{title[:50]}'")
-                        break
-
-            if not title:
-                title = "Global Research Article"
-                logger.warning(f"Global Research: заголовок не найден, используется заглушка")
+                logger.warning(f"Global Research: заголовок не найден для {url}")
+                return None
 
             title = title.strip()
             logger.info(f"Парсинг Global Research: итоговый заголовок '{title[:50]}'")
 
-            # === ПОИСК ИЗОБРАЖЕНИЯ (ПРИОРИТЕТ: og:image) ===
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # 1. Пробуем meta property="og:image" (САМЫЙ НАДЕЖНЫЙ)
+            # 1. Пробуем meta property="og:image"
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -608,22 +643,9 @@ class NewsBot:
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
-                logger.info(f"Global Research: изображение найдено в og:image: {image_url[:80]}")
+                logger.info(f"Global Research: изображение найдено в og:image")
             
-            # 2. Пробуем meta property="og:image:secure_url"
-            if not image_url:
-                meta_img_secure = soup.find('meta', property='og:image:secure_url')
-                if meta_img_secure and meta_img_secure.get('content'):
-                    src = meta_img_secure['content']
-                    if src.startswith('//'):
-                        image_url = 'https:' + src
-                    elif src.startswith('/'):
-                        image_url = urljoin(base_url, src)
-                    elif src.startswith('http'):
-                        image_url = src
-                    logger.info(f"Global Research: изображение найдено в og:image:secure_url")
-            
-            # 3. Пробуем img class="attachment-single-post-thumbnail"
+            # 2. Пробуем img class="attachment-single-post-thumbnail"
             if not image_url:
                 img = soup.find('img', class_='attachment-single-post-thumbnail')
                 if img and img.get('src'):
@@ -636,7 +658,7 @@ class NewsBot:
                         image_url = src
                     logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail")
             
-            # 4. Пробуем div.postThumbnail > img
+            # 3. Пробуем div.postThumbnail > img
             if not image_url:
                 thumbnail_div = soup.find('div', class_='postThumbnail')
                 if thumbnail_div:
@@ -651,23 +673,12 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail")
             
-            # 5. Пробуем meta twitter:image
+            # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
             if not image_url:
-                twitter_img = soup.find('meta', attrs={'name': 'twitter:image'})
-                if twitter_img and twitter_img.get('content'):
-                    src = twitter_img['content']
-                    if src.startswith('//'):
-                        image_url = 'https:' + src
-                    elif src.startswith('/'):
-                        image_url = urljoin(base_url, src)
-                    elif src.startswith('http'):
-                        image_url = src
-                    logger.info(f"Global Research: изображение найдено в twitter:image")
+                logger.warning(f"❌ Global Research: нет изображения, статья пропущена: {title[:50]}")
+                return None
             
-            if image_url:
-                logger.info(f"Global Research: итоговое изображение {image_url[:80]}...")
-            else:
-                logger.warning("Global Research: изображение НЕ НАЙДЕНО!")
+            logger.info(f"Global Research: найдено изображение {image_url[:50]}...")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', itemprop='articleBody')
@@ -700,20 +711,11 @@ class NewsBot:
 
             if len(content) < 150:
                 logger.warning(f"Global Research: контент слишком короткий ({len(content)} символов)")
-                feed = feedparser.parse('https://www.globalresearch.ca/feed')
-                for entry in feed.entries[:10]:
-                    if entry.link == url:
-                        summary = entry.get('summary', '')
-                        summary = re.sub(r'<[^>]+>', '', summary)
-                        summary = clean_globalresearch_content(summary)
-                        if summary:
-                            return {
-                                'title': title,
-                                'content': summary[:500],
-                                'image': image_url,
-                                'source': 'Global Research',
-                                'url': url
-                            }
+                return None
+
+            # === ПРОВЕРКА: ЯВЛЯЕТСЯ ЛИ СТАТЬЯ НОВОСТНОЙ ===
+            if not is_news_article(title, content):
+                logger.info(f"❌ Global Research: статья исключена (не новостная): {title[:50]}")
                 return None
 
             return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
@@ -797,7 +799,6 @@ class NewsBot:
                             self._mark_sent(url, title_en, content_en)
                             self._log_post(url, title_en)
                             
-                            # Выводим информацию о следующей публикации
                             if not TEST_MODE:
                                 next_delay = self._next_delay()
                                 logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
@@ -809,7 +810,7 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # Фолбэк: публикация текстом
+            # Фолбэк: публикация текстом (без фото)
             logger.info("📝 Публикация текстом (без фото)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
@@ -823,7 +824,6 @@ class NewsBot:
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
             
-            # Выводим информацию о следующей публикации
             if not TEST_MODE:
                 next_delay = self._next_delay()
                 logger.info(f"⏰ Следующая публикация через {next_delay // 60} минут")
