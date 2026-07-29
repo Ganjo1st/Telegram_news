@@ -199,7 +199,6 @@ class NewsBot:
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
-        # Счетчики для статистики
         self.total_found = 0
         self.total_excluded = 0
         self.total_published = 0
@@ -453,7 +452,7 @@ class NewsBot:
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
+            base_url = f'https://infobrics.org'
 
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
@@ -494,6 +493,7 @@ class NewsBot:
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
+                logger.info(f"InfoBrics: изображение найдено в article__image: {image_url}")
             
             if not image_url:
                 meta_img = soup.find('meta', property='og:image')
@@ -505,6 +505,7 @@ class NewsBot:
                         image_url = urljoin(base_url, src)
                     elif src.startswith('http'):
                         image_url = src
+                    logger.info(f"InfoBrics: изображение найдено в og:image: {image_url}")
             
             # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
             if not image_url:
@@ -512,7 +513,7 @@ class NewsBot:
                 self.total_excluded += 1
                 return None
             
-            logger.info(f"InfoBrics: найдено изображение {image_url[:50]}...")
+            logger.info(f"InfoBrics: итоговое изображение {image_url}")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='article__text')
@@ -595,7 +596,7 @@ class NewsBot:
                 return None
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
+            base_url = f'https://www.globalresearch.ca'
 
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
@@ -634,8 +635,17 @@ class NewsBot:
                     logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
-                logger.warning(f"Global Research: заголовок не найден для {url}")
-                return None
+                feed = feedparser.parse('https://www.globalresearch.ca/feed')
+                for entry in feed.entries[:10]:
+                    if entry.link == url:
+                        title = entry.get('title', '').strip()
+                        if title:
+                            logger.info(f"Global Research: заголовок из RSS (запасной): '{title[:50]}'")
+                        break
+
+            if not title:
+                title = "Global Research Article"
+                logger.warning(f"Global Research: заголовок не найден, используется заглушка")
 
             title = title.strip()
             logger.info(f"Парсинг Global Research: итоговый заголовок '{title[:50]}'")
@@ -653,7 +663,7 @@ class NewsBot:
                     image_url = urljoin(base_url, src)
                 elif src.startswith('http'):
                     image_url = src
-                logger.info(f"Global Research: изображение найдено в og:image")
+                logger.info(f"Global Research: изображение найдено в og:image: {image_url}")
             
             # 2. Пробуем img class="attachment-single-post-thumbnail"
             if not image_url:
@@ -666,7 +676,7 @@ class NewsBot:
                         image_url = urljoin(base_url, src)
                     elif src.startswith('http'):
                         image_url = src
-                    logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail")
+                    logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail: {image_url}")
             
             # 3. Пробуем div.postThumbnail > img
             if not image_url:
@@ -681,7 +691,7 @@ class NewsBot:
                             image_url = urljoin(base_url, src)
                         elif src.startswith('http'):
                             image_url = src
-                        logger.info(f"Global Research: изображение найдено в postThumbnail")
+                        logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
             
             # === ЕСЛИ НЕТ ИЗОБРАЖЕНИЯ - ПРОПУСКАЕМ СТАТЬЮ ===
             if not image_url:
@@ -689,7 +699,7 @@ class NewsBot:
                 self.total_excluded += 1
                 return None
             
-            logger.info(f"Global Research: найдено изображение {image_url[:50]}...")
+            logger.info(f"Global Research: итоговое изображение {image_url}")
 
             # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', itemprop='articleBody')
@@ -740,7 +750,6 @@ class NewsBot:
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
-        # Сбрасываем счетчики перед каждым сбором
         self.total_found = 0
         self.total_excluded = 0
 
@@ -764,9 +773,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
 
-        # Сохраняем общее количество найденных статей для статистики
         self.total_found = len(items) + self.total_excluded
-        
         logger.info(f"📊 Всего новых статей: {len(items)}")
         logger.info(f"📊 Найдено всего: {self.total_found}, исключено: {self.total_excluded}")
         
@@ -822,7 +829,6 @@ class NewsBot:
                             self._log_post(url, title_en)
                             self.total_published += 1
                             
-                            # Выводим статистику по очереди
                             self.queue_count = len(self.state['posts_log'])
                             logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
                             if not TEST_MODE:
@@ -851,7 +857,6 @@ class NewsBot:
             self._log_post(url, title_en)
             self.total_published += 1
             
-            # Выводим статистику по очереди
             self.queue_count = len(self.state['posts_log'])
             logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
             if not TEST_MODE:
