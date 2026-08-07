@@ -49,28 +49,59 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 950
 MAX_MESSAGE = 4096
 
-# === КЛЮЧЕВЫЕ СЛОВА ДЛЯ ИСКЛЮЧЕНИЯ СТАТЕЙ - ОСЛАБЛЕНЫ ===
+# === КЛЮЧЕВЫЕ СЛОВА ДЛЯ ИСКЛЮЧЕНИЯ СТАТЕЙ ===
 EXCLUDED_KEYWORDS = [
     'donate', 'donation', 'fundraising',
     'пожертвование', 'пожертвовать',
+    # Исключаем видео-статьи (они не содержат текста)
+    'video:', 'видео:', 'Video:',
+    'youtube', 'YouTube',
+    'global research daily', 'the news behind the news',
+    'this week\'s most popular', 'most popular articles',
 ]
 
+def is_video_article(title: str, content: str) -> bool:
+    """Проверяет, является ли статья видео-статьей (без текста)"""
+    combined = (title + ' ' + content).lower()
+    video_patterns = [
+        r'video:',
+        r'видео:',
+        r'youtube',
+        r'you tube',
+        r'screenshot',
+        r'скриншот',
+        r'featured image is a screenshot',
+        r'recommended image is a screenshot',
+    ]
+    for pattern in video_patterns:
+        if re.search(pattern, combined, re.IGNORECASE):
+            return True
+    return False
+
 def is_news_article(title: str, content: str) -> bool:
-    """Проверяет, является ли статья новостной (не служебной) - ОСЛАБЛЕНА"""
+    """Проверяет, является ли статья новостной (не служебной)"""
     if not title:
         return False
     
     combined = (title + ' ' + content).lower()
     
+    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
+    # Исключаем видео-статьи
+    if is_video_article(title, content):
+        logger.info(f"❌ Исключена видео-статья: {title[:50]}...")
+        return False
+    
+    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
     if len(content) < 200:
         logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
     
+    # Проверка на служебный текст - только если более 50% текста служебный
     service_patterns = [
         r'click the share button',
         r'global research is a reader-funded',
@@ -79,6 +110,8 @@ def is_news_article(title: str, content: str) -> bool:
         r'пожертвование',
         r'поддержать',
         r'стать участником',
+        r'screenshot',
+        r'скриншот',
     ]
     
     service_chars = 0
@@ -155,6 +188,9 @@ def clean_globalresearch_content(text: str) -> str:
         r'Поддержать.*?(?:\n|$)',
         r'Стать участником.*?(?:\n|$)',
         r'This article was originally published on.*?(?:\n|$)',
+        r'Recommended image is a screenshot from the video.*?(?:\n|$)',
+        r'Рекомендованное изображение — скриншот из видео.*?(?:\n|$)',
+        r'Featured image is a screenshot.*?(?:\n|$)',
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
     ]
@@ -176,6 +212,35 @@ def clean_globalresearch_content(text: str) -> str:
     text = re.sub(r'^[,.\s;]+', '', text)
     
     return text.strip()
+
+def fix_title_encoding(title: str) -> str:
+    """Исправляет проблемы с кодировкой в заголовках"""
+    if not title:
+        return title
+    
+    # Исправляем HTML-сущности
+    title = html.unescape(title)
+    
+    # Исправляем распространенные проблемы с кавычками
+    title = title.replace('&#x27;', "'")
+    title = title.replace('&quot;', '"')
+    title = title.replace('&amp;', '&')
+    title = title.replace('&lt;', '<')
+    title = title.replace('&gt;', '>')
+    
+    # Исправляем апострофы
+    title = title.replace('&#39;', "'")
+    title = title.replace('’', "'")
+    title = title.replace('‘', "'")
+    
+    # Исправляем тире
+    title = title.replace('–', '—')
+    title = title.replace('—', '—')
+    
+    # Удаляем лишние пробелы
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    return title
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -402,8 +467,9 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:10]:  # Увеличено с 5 до 10
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '').strip()
+                title = fix_title_encoding(title)
                 
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -412,6 +478,7 @@ class NewsBot:
                         title = summary.split('.')[0].strip()
                         if len(title) < 5:
                             title = summary[:100].strip()
+                        title = fix_title_encoding(title)
                     logger.info(f"InfoBrics: заголовок извлечен из summary: '{title[:50]}'")
                 
                 if not title or len(title) < 5:
@@ -443,6 +510,7 @@ class NewsBot:
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
+                title = fix_title_encoding(title)
                 logger.info(f"InfoBrics: заголовок найден в div.title--big: '{title[:50]}'")
             
             if not title:
@@ -450,6 +518,7 @@ class NewsBot:
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'^BRICS Russia\s*[|]\s*', '', title)
+                    title = fix_title_encoding(title)
                     if title:
                         logger.info(f"InfoBrics: заголовок найден в title: '{title[:50]}'")
             
@@ -457,6 +526,7 @@ class NewsBot:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    title = fix_title_encoding(title)
                     logger.info(f"InfoBrics: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
@@ -549,8 +619,9 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:10]:  # Увеличено с 5 до 10
+            for entry in feed.entries[:10]:
                 title = entry.get('title', '').strip()
+                title = fix_title_encoding(title)
                 
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -559,6 +630,7 @@ class NewsBot:
                         title = summary.split('.')[0].strip()
                         if len(title) < 5:
                             title = summary[:100].strip()
+                        title = fix_title_encoding(title)
                     logger.info(f"Global Research: заголовок извлечен из summary: '{title[:50]}'")
 
                 if not title or len(title) < 5:
@@ -593,6 +665,7 @@ class NewsBot:
             if title_tag:
                 title = title_tag.get_text(strip=True)
                 title = re.sub(r'\s*[-|]\s*(?:Global Research.*|Home.*)$', '', title)
+                title = fix_title_encoding(title)
                 if title:
                     logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
             
@@ -600,6 +673,7 @@ class NewsBot:
                 h2 = soup.find('h2', itemprop='headline')
                 if h2:
                     title = h2.get_text(strip=True)
+                    title = fix_title_encoding(title)
                     logger.info(f"Global Research: заголовок найден в h2[itemprop=headline]: '{title[:50]}'")
             
             if not title:
@@ -608,18 +682,21 @@ class NewsBot:
                     h2 = title_div.find('h2')
                     if h2:
                         title = h2.get_text(strip=True)
+                        title = fix_title_encoding(title)
                         logger.info(f"Global Research: заголовок найден в div.title > h2: '{title[:50]}'")
             
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
+                    title = fix_title_encoding(title)
                     logger.info(f"Global Research: заголовок найден в h1: '{title[:50]}'")
             
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    title = fix_title_encoding(title)
                     logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
 
             if not title:
@@ -627,6 +704,7 @@ class NewsBot:
                 for entry in feed.entries[:10]:
                     if entry.link == url:
                         title = entry.get('title', '').strip()
+                        title = fix_title_encoding(title)
                         if title:
                             logger.info(f"Global Research: заголовок из RSS (запасной): '{title[:50]}'")
                         break
@@ -678,17 +756,30 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
             
-            if not image_url:
+            # Проверяем, является ли статья видео-статьей (если нет изображения, но есть видео)
+            is_video = False
+            video_elem = soup.find('video') or soup.find('iframe') or soup.find('div', class_='video')
+            if video_elem:
+                is_video = True
+                logger.info(f"Global Research: обнаружена видео-статья: {title[:50]}")
+            
+            if not image_url and not is_video:
                 logger.warning(f"❌ Global Research: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            if not check_image_available(image_url):
+            if image_url and not check_image_available(image_url):
+                # Если изображение недоступно, но это видео-статья - пропускаем
+                if is_video:
+                    logger.info(f"Global Research: видео-статья без изображения, пропускаем: {title[:50]}")
+                    self.total_excluded += 1
+                    return None
                 logger.warning(f"❌ Global Research: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
                 self.total_excluded += 1
                 return None
             
-            logger.info(f"✅ Global Research: изображение доступно: {image_url}")
+            if image_url:
+                logger.info(f"✅ Global Research: изображение доступно: {image_url}")
 
             container = soup.find('div', itemprop='articleBody')
             if not container:
@@ -718,8 +809,14 @@ class NewsBot:
             content = '\n\n'.join(paragraphs)
             content = clean_globalresearch_content(content)
 
-            if len(content) < 150:
+            if len(content) < 150 and not is_video:
                 logger.warning(f"❌ Global Research: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
+                return None
+
+            # Если это видео-статья, но контента нет - пропускаем
+            if is_video and len(content) < 100:
+                logger.info(f"❌ Global Research: видео-статья без текста, пропускаем: {title[:50]}")
                 self.total_excluded += 1
                 return None
 
@@ -742,7 +839,7 @@ class NewsBot:
 
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:5]:  # Увеличено с 3 до 5
+        for article in ib_articles[:5]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
@@ -752,7 +849,7 @@ class NewsBot:
 
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:5]:  # Увеличено с 3 до 5
+        for article in gr_articles[:5]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
@@ -782,6 +879,7 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
+            title_ru = fix_title_encoding(title_ru)
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
 
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
@@ -804,7 +902,6 @@ class NewsBot:
                 if img_response and img_response.status_code == 200:
                     content_type = img_response.headers.get('Content-Type', '')
                     if 'image' in content_type:
-                        # Проверяем длину сообщения для фото
                         if len(message) <= 1024:
                             try:
                                 await self.bot.send_photo(
@@ -899,7 +996,6 @@ class NewsBot:
             logger.info("📭 Новых статей нет")
             return
 
-        # Публикуем все найденные статьи
         published_count = 0
         for article in news:
             if not self._can_post():
@@ -909,7 +1005,6 @@ class NewsBot:
             await self.publish(article)
             published_count += 1
             
-            # Задержка между публикациями
             if len(news) > 1 and published_count < len(news):
                 await asyncio.sleep(10)
         
