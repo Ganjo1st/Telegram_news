@@ -38,7 +38,7 @@ TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 # Интервалы публикации (секунды)
 MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '600'))   # 10 минут
 MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '1800'))  # 30 минут
-MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))  # Увеличили до 40
+MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
@@ -223,6 +223,15 @@ def clean_presstv_content(text: str) -> str:
         r'©.*?Press TV.*?(?:\n|$)',
         r'Source:.*?(?:\n|$)',
         r'By.*?(?:\n|$)',
+        # Удаляем текст о переводе на арабский
+        r'This text is also available in Arabic.*?(?:\n|$)',
+        r'Этот текст также доступен на арабском языке.*?(?:\n|$)',
+        r'Scroll down.*?(?:\n|$)',
+        r'Прокрутите вниз.*?(?:\n|$)',
+        r'This was done to.*?(?:\n|$)',
+        r'Это было сделано для того, чтобы.*?(?:\n|$)',
+        r'In San Francisco.*?(?:\n|$)',
+        r'В Сан-Франциско.*?(?:\n|$)',
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
     ]
@@ -429,24 +438,54 @@ class NewsBot:
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
+        """Обрезает текст до последнего предложения в пределах max_len, без троеточия"""
         if len(text) <= max_len:
             return text
 
+        # Ищем конец предложения (.!?) в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
-                return text[:last + 1].strip()
-
+                result = text[:last + 1].strip()
+                # Убеждаемся, что результат не обрывается на середине предложения
+                # Проверяем, что последний символ - это пунктуация
+                if result and result[-1] in '.!?':
+                    return result
+        
+        # Если нет конца предложения в пределах max_len, ищем последний пробел
         last_space = text.rfind(' ', 0, max_len)
-        if last_space != -1:
-            return text[:last_space].strip()
+        if last_space != -1 and last_space > max_len // 2:
+            result = text[:last_space].strip()
+            # Проверяем, что результат заканчивается на пунктуацию, если нет - добавляем точку
+            if result and result[-1] not in '.!?':
+                # Пробуем найти ближайшую пунктуацию перед обрезкой
+                for punct in ['.', '!', '?']:
+                    last_punct = result.rfind(punct)
+                    if last_punct != -1 and last_punct > len(result) // 2:
+                        return result[:last_punct + 1].strip()
+                # Если пунктуации нет, оставляем как есть (но это плохо)
+                return result
+            return result
 
-        return text[:max_len].strip()
+        # Крайний случай: просто обрезаем и добавляем точку, если нет пунктуации
+        result = text[:max_len].strip()
+        if result and result[-1] not in '.!?':
+            # Пробуем найти последнюю пунктуацию
+            for punct in ['.', '!', '?']:
+                last_punct = result.rfind(punct)
+                if last_punct != -1:
+                    return result[:last_punct + 1].strip()
+            # Если нет пунктуации, обрезаем по последнему слову и добавляем точку
+            last_space = result.rfind(' ')
+            if last_space != -1:
+                result = result[:last_space].strip()
+            return result + '.'
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         truncated = self._truncate_to_last_sentence(text, max_len)
 
+        # Дополнительная проверка: если первый абзац слишком короткий, добавляем второй
         paragraphs = truncated.split('\n\n')
         if len(paragraphs) == 1 and len(paragraphs[0]) < 200 and len(paragraphs[0]) < len(text) * 0.5:
             second_para_start = text.find('\n\n', len(paragraphs[0]))
@@ -875,14 +914,12 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # Пробуем h1
             h1 = soup.find('h1')
             if h1:
                 title = h1.get_text(strip=True)
                 title = fix_title_encoding(title)
                 logger.info(f"Press TV: заголовок найден в h1: '{title[:50]}'")
             
-            # Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
@@ -890,7 +927,6 @@ class NewsBot:
                     title = fix_title_encoding(title)
                     logger.info(f"Press TV: заголовок найден в og:title: '{title[:50]}'")
             
-            # Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
@@ -911,7 +947,6 @@ class NewsBot:
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
-            # Пробуем meta og:image
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 src = meta_img['content']
@@ -923,7 +958,6 @@ class NewsBot:
                     image_url = src
                 logger.info(f"Press TV: изображение найдено в og:image: {image_url}")
             
-            # Пробуем найти изображение в статье
             if not image_url:
                 article = soup.find('article') or soup.find('div', class_='content')
                 if article:
@@ -1050,6 +1084,7 @@ class NewsBot:
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = clean_globalresearch_content(content_ru)
+            content_ru = clean_presstv_content(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
