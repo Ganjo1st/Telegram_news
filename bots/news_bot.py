@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research
+Источники: InfoBrics, Global Research, Press TV
 """
 
 import os
@@ -35,10 +35,10 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
-# Интервалы публикации (секунды) - УМЕНЬШЕНЫ ДЛЯ ЧАЩЕ ПУБЛИКАЦИИ
+# Интервалы публикации (секунды)
 MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '600'))   # 10 минут
 MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '1800'))  # 30 минут
-MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '30'))
+MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))  # Увеличили до 40
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
@@ -53,7 +53,6 @@ MAX_MESSAGE = 4096
 EXCLUDED_KEYWORDS = [
     'donate', 'donation', 'fundraising',
     'пожертвование', 'пожертвовать',
-    # Исключаем видео-статьи (они не содержат текста)
     'video:', 'видео:', 'Video:',
     'youtube', 'YouTube',
     'global research daily', 'the news behind the news',
@@ -85,23 +84,19 @@ def is_news_article(title: str, content: str) -> bool:
     
     combined = (title + ' ' + content).lower()
     
-    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
-    # Исключаем видео-статьи
     if is_video_article(title, content):
         logger.info(f"❌ Исключена видео-статья: {title[:50]}...")
         return False
     
-    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
     if len(content) < 200:
         logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
     
-    # Проверка на служебный текст - только если более 50% текста служебный
     service_patterns = [
         r'click the share button',
         r'global research is a reader-funded',
@@ -213,31 +208,47 @@ def clean_globalresearch_content(text: str) -> str:
     
     return text.strip()
 
+def clean_presstv_content(text: str) -> str:
+    """Очищает текст Press TV от служебных блоков"""
+    if not text:
+        return text
+    
+    patterns = [
+        r'Press TV.*?(?:\n|$)',
+        r'Published On.*?(?:\n|$)',
+        r'Last Updated.*?(?:\n|$)',
+        r'Read more.*?(?:\n|$)',
+        r'Follow us on.*?(?:\n|$)',
+        r'Share this.*?(?:\n|$)',
+        r'©.*?Press TV.*?(?:\n|$)',
+        r'Source:.*?(?:\n|$)',
+        r'By.*?(?:\n|$)',
+        r'^[\s,.;:]+$',
+        r'^[,.\s]+$',
+    ]
+    
+    for pattern in patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
+    
+    text = text.strip()
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
 def fix_title_encoding(title: str) -> str:
     """Исправляет проблемы с кодировкой в заголовках"""
     if not title:
         return title
     
-    # Исправляем HTML-сущности
     title = html.unescape(title)
-    
-    # Исправляем распространенные проблемы с кавычками
     title = title.replace('&#x27;', "'")
     title = title.replace('&quot;', '"')
     title = title.replace('&amp;', '&')
     title = title.replace('&lt;', '<')
     title = title.replace('&gt;', '>')
-    
-    # Исправляем апострофы
     title = title.replace('&#39;', "'")
     title = title.replace('’', "'")
     title = title.replace('‘', "'")
-    
-    # Исправляем тире
-    title = title.replace('–', '—')
-    title = title.replace('—', '—')
-    
-    # Удаляем лишние пробелы
     title = re.sub(r'\s+', ' ', title).strip()
     
     return title
@@ -756,7 +767,6 @@ class NewsBot:
                             image_url = src
                         logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
             
-            # Проверяем, является ли статья видео-статьей (если нет изображения, но есть видео)
             is_video = False
             video_elem = soup.find('video') or soup.find('iframe') or soup.find('div', class_='video')
             if video_elem:
@@ -769,7 +779,6 @@ class NewsBot:
                 return None
             
             if image_url and not check_image_available(image_url):
-                # Если изображение недоступно, но это видео-статья - пропускаем
                 if is_video:
                     logger.info(f"Global Research: видео-статья без изображения, пропускаем: {title[:50]}")
                     self.total_excluded += 1
@@ -814,7 +823,6 @@ class NewsBot:
                 self.total_excluded += 1
                 return None
 
-            # Если это видео-статья, но контента нет - пропускаем
             if is_video and len(content) < 100:
                 logger.info(f"❌ Global Research: видео-статья без текста, пропускаем: {title[:50]}")
                 self.total_excluded += 1
@@ -831,12 +839,157 @@ class NewsBot:
             logger.error(f"Ошибка парсинга Global Research: {e}")
             return None
 
+    # ========== ПАРСИНГ PRESS TV ==========
+    def _get_presstv_articles(self) -> list:
+        """Получает список статей с Press TV через RSS"""
+        try:
+            feed = feedparser.parse('https://www.presstv.ir/Feed/FeedRss')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                title = fix_title_encoding(title)
+                
+                if not title or len(title) < 5:
+                    continue
+                
+                articles.append({
+                    'url': entry.link,
+                    'title': title
+                })
+                logger.info(f"Press TV RSS: найден заголовок '{title[:50]}'")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Press TV RSS: {e}")
+            return []
+
+    def _parse_presstv_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью Press TV"""
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = 'https://www.presstv.ir'
+
+            # === ПОИСК ЗАГОЛОВКА ===
+            title = None
+            
+            # Пробуем h1
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+                title = fix_title_encoding(title)
+                logger.info(f"Press TV: заголовок найден в h1: '{title[:50]}'")
+            
+            # Пробуем meta og:title
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+                    title = fix_title_encoding(title)
+                    logger.info(f"Press TV: заголовок найден в og:title: '{title[:50]}'")
+            
+            # Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    title = re.sub(r'\s*[-|]\s*Press TV.*$', '', title)
+                    title = fix_title_encoding(title)
+                    if title:
+                        logger.info(f"Press TV: заголовок найден в title: '{title[:50]}'")
+
+            if not title:
+                logger.warning(f"❌ Press TV: заголовок не найден для {url}")
+                self.total_excluded += 1
+                return None
+
+            title = title.strip()
+            logger.info(f"Press TV: итоговый заголовок '{title[:50]}'")
+
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
+            image_url = None
+            
+            # Пробуем meta og:image
+            meta_img = soup.find('meta', property='og:image')
+            if meta_img and meta_img.get('content'):
+                src = meta_img['content']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+                logger.info(f"Press TV: изображение найдено в og:image: {image_url}")
+            
+            # Пробуем найти изображение в статье
+            if not image_url:
+                article = soup.find('article') or soup.find('div', class_='content')
+                if article:
+                    img = article.find('img')
+                    if img and img.get('src'):
+                        src = img['src']
+                        if src.startswith('//'):
+                            image_url = 'https:' + src
+                        elif src.startswith('/'):
+                            image_url = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            image_url = src
+                        logger.info(f"Press TV: изображение найдено в article img: {image_url}")
+            
+            if not image_url:
+                logger.warning(f"❌ Press TV: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            if not check_image_available(image_url):
+                logger.warning(f"❌ Press TV: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            logger.info(f"✅ Press TV: изображение доступно: {image_url}")
+
+            # === ПОИСК КОНТЕНТА ===
+            container = soup.find('div', class_='content') or soup.find('article') or soup.find('main')
+            
+            paragraphs = []
+            if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30 and not text.startswith('Read more'):
+                        text = clean_presstv_content(text)
+                        if text:
+                            paragraphs.append(text)
+
+            content = '\n\n'.join(paragraphs)
+            content = clean_presstv_content(content)
+
+            if len(content) < 150:
+                logger.warning(f"❌ Press TV: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
+                return None
+
+            if not is_news_article(title, content):
+                logger.info(f"❌ Press TV: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
+                return None
+
+            self.total_found += 1
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Press TV', 'url': url}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Press TV: {e}")
+            return None
+
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
         self.total_found = 0
         self.total_excluded = 0
 
+        # 1. InfoBrics
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:5]:
@@ -847,6 +1000,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
+        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:5]:
@@ -856,6 +1010,17 @@ class NewsBot:
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
+
+        # 3. Press TV
+        logger.info("📰 Парсинг Press TV...")
+        pt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_presstv_articles)
+        for article in pt_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_presstv_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Press TV: {data['title'][:50]}...")
 
         self.total_found = len(items) + self.total_excluded
         logger.info(f"📊 Всего новых статей: {len(items)}")
@@ -894,7 +1059,6 @@ class NewsBot:
 
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -946,7 +1110,6 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # Фолбэк: публикация текстом
             logger.info("📝 Публикация текстом (без фото)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
