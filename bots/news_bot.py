@@ -46,6 +46,9 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
+# Сколько дней хранить данные (30 дней)
+CLEANUP_DAYS = 30
+
 MAX_CAPTION = 950
 MAX_MESSAGE = 4096
 
@@ -223,7 +226,6 @@ def clean_presstv_content(text: str) -> str:
         r'©.*?Press TV.*?(?:\n|$)',
         r'Source:.*?(?:\n|$)',
         r'By.*?(?:\n|$)',
-        # Удаляем текст о переводе на арабский
         r'This text is also available in Arabic.*?(?:\n|$)',
         r'Этот текст также доступен на арабском языке.*?(?:\n|$)',
         r'Scroll down.*?(?:\n|$)',
@@ -262,11 +264,64 @@ def fix_title_encoding(title: str) -> str:
     
     return title
 
+def cleanup_old_data(state: dict, meta: dict) -> tuple:
+    """
+    Очищает старые данные (старше CLEANUP_DAYS дней)
+    Возвращает очищенные state и meta
+    """
+    cutoff = get_local_time() - timedelta(days=CLEANUP_DAYS)
+    cutoff_str = cutoff.isoformat()
+    
+    logger.info(f"🧹 Очистка данных старше {CLEANUP_DAYS} дней ({cutoff.strftime('%Y-%m-%d')})")
+    
+    # === Очистка state (история публикаций) ===
+    old_count = len(state.get('posts_log', []))
+    
+    # Фильтруем posts_log
+    new_posts_log = []
+    for post in state.get('posts_log', []):
+        try:
+            post_time = datetime.fromisoformat(post.get('time', ''))
+            if post_time > cutoff:
+                new_posts_log.append(post)
+        except:
+            # Если не удалось распарсить время, оставляем
+            new_posts_log.append(post)
+    
+    state['posts_log'] = new_posts_log
+    new_count = len(new_posts_log)
+    logger.info(f"🧹 posts_log: {old_count} → {new_count} (удалено {old_count - new_count})")
+    
+    # === Очистка meta (метаданные статей) ===
+    old_meta_count = len(meta.get('posts', {}))
+    
+    new_posts = {}
+    for pid, data in meta.get('posts', {}).items():
+        try:
+            post_time = datetime.fromisoformat(data.get('time', ''))
+            if post_time > cutoff:
+                new_posts[pid] = data
+        except:
+            # Если не удалось распарсить время, оставляем
+            new_posts[pid] = data
+    
+    meta['posts'] = new_posts
+    new_meta_count = len(new_posts)
+    logger.info(f"🧹 posts_meta: {old_meta_count} → {new_meta_count} (удалено {old_meta_count - new_meta_count})")
+    
+    return state, meta
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
         self.state = self._load_state()
         self.meta = self._load_meta()
+        
+        # При запуске очищаем старые данные
+        self.state, self.meta = cleanup_old_data(self.state, self.meta)
+        self._save_state()
+        self._save_meta()
+        
         self.bot = Bot(token=TELEGRAM_TOKEN)
         self.translator = GoogleTranslator(source='en', target='ru')
         self.total_found = 0
@@ -315,15 +370,6 @@ class NewsBot:
 
     def _save_meta(self):
         try:
-            cutoff = get_local_time() - timedelta(days=30)
-            cleaned = {}
-            for pid, data in self.meta.get('posts', {}).items():
-                try:
-                    if datetime.fromisoformat(data.get('time', '')) > cutoff:
-                        cleaned[pid] = data
-                except:
-                    cleaned[pid] = data
-            self.meta['posts'] = cleaned
             with open(META_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.meta, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -447,8 +493,6 @@ class NewsBot:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
                 result = text[:last + 1].strip()
-                # Убеждаемся, что результат не обрывается на середине предложения
-                # Проверяем, что последний символ - это пунктуация
                 if result and result[-1] in '.!?':
                     return result
         
@@ -456,26 +500,20 @@ class NewsBot:
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1 and last_space > max_len // 2:
             result = text[:last_space].strip()
-            # Проверяем, что результат заканчивается на пунктуацию, если нет - добавляем точку
             if result and result[-1] not in '.!?':
-                # Пробуем найти ближайшую пунктуацию перед обрезкой
                 for punct in ['.', '!', '?']:
                     last_punct = result.rfind(punct)
                     if last_punct != -1 and last_punct > len(result) // 2:
                         return result[:last_punct + 1].strip()
-                # Если пунктуации нет, оставляем как есть (но это плохо)
                 return result
             return result
 
-        # Крайний случай: просто обрезаем и добавляем точку, если нет пунктуации
         result = text[:max_len].strip()
         if result and result[-1] not in '.!?':
-            # Пробуем найти последнюю пунктуацию
             for punct in ['.', '!', '?']:
                 last_punct = result.rfind(punct)
                 if last_punct != -1:
                     return result[:last_punct + 1].strip()
-            # Если нет пунктуации, обрезаем по последнему слову и добавляем точку
             last_space = result.rfind(' ')
             if last_space != -1:
                 result = result[:last_space].strip()
@@ -485,7 +523,6 @@ class NewsBot:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         truncated = self._truncate_to_last_sentence(text, max_len)
 
-        # Дополнительная проверка: если первый абзац слишком короткий, добавляем второй
         paragraphs = truncated.split('\n\n')
         if len(paragraphs) == 1 and len(paragraphs[0]) < 200 and len(paragraphs[0]) < len(text) * 0.5:
             second_para_start = text.find('\n\n', len(paragraphs[0]))
