@@ -59,13 +59,20 @@ EXCLUDED_KEYWORDS = [
     'youtube', 'YouTube',
     'global research daily', 'the news behind the news',
     'this week\'s most popular', 'most popular articles',
+    # Дополнительные ключевые слова для исключения
+    'reader-funded', 'become a member', 'membership',
+    'free books', 'subscribe to our',
+    'help us stay afloat', 'make a one-time or recurring donation',
+    'comment on global research articles', 'become a member of global research',
+    'click the share button', 'follow us on',
+    'global research is a reader-funded media',
 ]
 
 def is_video_article(title: str, content: str) -> bool:
     """Проверяет, является ли статья видео-статьей (без текста)"""
     combined = (title + ' ' + content).lower()
     video_patterns = [
-        r'video:',
+        r'^video:',
         r'видео:',
         r'youtube',
         r'you tube',
@@ -73,10 +80,60 @@ def is_video_article(title: str, content: str) -> bool:
         r'скриншот',
         r'featured image is a screenshot',
         r'recommended image is a screenshot',
+        r'documentary:',
+        r'документальный фильм:',
     ]
     for pattern in video_patterns:
         if re.search(pattern, combined, re.IGNORECASE):
             return True
+    return False
+
+def is_service_article(title: str, content: str) -> bool:
+    """Проверяет, является ли статья служебной (призывы к действию, реклама)"""
+    combined = (title + ' ' + content).lower()
+    
+    # Проверяем на ключевые слова, характерные для служебных статей
+    service_patterns = [
+        r'global research is a reader-funded media',
+        r'help us stay afloat',
+        r'become a member of global research',
+        r'comment on global research articles on our facebook page',
+        r'click the share button below to email/forward this article',
+        r'follow us on.*?(?:instagram|x|telegram channel)',
+        r'make a one-time or recurring donation',
+        r'become member of global research',
+        r'free books',
+        r'reader-funded',
+        r'пожертвование',
+        r'поддержать',
+        r'стать участником',
+        r'членство',
+        r'подписаться',
+        r'поделиться',
+        r'подписывайтесь',
+        r'помочь нам',
+        r'сделать пожертвование',
+        r'стать членом',
+        r'комментировать статьи',
+        r'this text is also available in arabic',
+        r'этот текст также доступен на арабском языке',
+        r'was this article helpful?',
+        r'была ли эта статья полезной?',
+        r'support our work',
+        r'поддержите нашу работу',
+        r'donate to global research',
+        r'пожертвовать global research',
+    ]
+    
+    service_chars = 0
+    for pattern in service_patterns:
+        matches = re.findall(pattern, combined, re.IGNORECASE)
+        service_chars += len(matches) * 50
+    
+    # Если более 30% текста - служебный, исключаем
+    if len(content) > 0 and service_chars / len(content) > 0.3:
+        return True
+    
     return False
 
 def is_news_article(title: str, content: str) -> bool:
@@ -86,37 +143,25 @@ def is_news_article(title: str, content: str) -> bool:
     
     combined = (title + ' ' + content).lower()
     
+    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
+    # Проверяем на видео-статьи
     if is_video_article(title, content):
         logger.info(f"❌ Исключена видео-статья: {title[:50]}...")
         return False
     
-    if len(content) < 200:
-        logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
+    # Проверяем на служебные статьи
+    if is_service_article(title, content):
+        logger.info(f"❌ Исключена служебная статья: {title[:50]}...")
         return False
     
-    service_patterns = [
-        r'click the share button',
-        r'global research is a reader-funded',
-        r'help us stay afloat',
-        r'become a member',
-        r'пожертвование',
-        r'поддержать',
-        r'стать участником',
-        r'screenshot',
-        r'скриншот',
-    ]
-    
-    service_chars = 0
-    for pattern in service_patterns:
-        service_chars += len(re.findall(pattern, combined, re.IGNORECASE)) * 50
-    
-    if len(content) > 0 and service_chars / len(content) > 0.5:
-        logger.info(f"❌ Исключена статья (слишком много служебного текста >50%): {title[:50]}...")
+    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
+    if len(content) < 200:
+        logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
     
     return True
@@ -190,6 +235,13 @@ def clean_globalresearch_content(text: str) -> str:
         r'Featured image is a screenshot.*?(?:\n|$)',
         r'^[\s,.;:]+$',
         r'^[,.\s]+$',
+        # Дополнительные паттерны для удаления призывов
+        r'Was this article helpful\?.*?(?:\n|$)',
+        r'Была ли эта статья полезной\?.*?(?:\n|$)',
+        r'Support our work.*?(?:\n|$)',
+        r'Поддержите нашу работу.*?(?:\n|$)',
+        r'Donate to Global Research.*?(?:\n|$)',
+        r'Пожертвовать Global Research.*?(?:\n|$)',
     ]
     
     for pattern in patterns:
@@ -528,19 +580,16 @@ class NewsBot:
         if not text:
             return text
         
-        # Пропускаем перевод очень коротких текстов
         if len(text) < 10:
             logger.info(f"⚠️ Текст слишком короткий для перевода: '{text[:30]}...'")
             return text
         
         try:
-            # Ограничиваем длину текста для перевода
             if len(text) > 3000:
                 text = text[:3000]
             
             result = self.translator.translate(text)
             
-            # Проверяем, что перевод выполнен успешно
             if result and result != text:
                 logger.info(f"✅ Перевод выполнен: '{result[:50]}...'")
                 return result
@@ -550,7 +599,6 @@ class NewsBot:
                 
         except Exception as e:
             logger.error(f"❌ Ошибка перевода: {e}")
-            # Если перевод не удался, возвращаем оригинальный текст
             return text
 
     # ========== ПАРСИНГ INFOBRICS ==========
@@ -1111,27 +1159,20 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             
-            # Переводим заголовок с проверкой
+            # Переводим заголовок
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            
-            # Если перевод не удался или результат совпадает с оригиналом, пробуем еще раз
             if not title_ru or title_ru == title_en:
                 logger.warning(f"⚠️ Первый перевод заголовка не удался, пробуем еще раз...")
                 title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            
-            # Если все еще не переведено, используем оригинал
             if not title_ru or title_ru == title_en:
                 logger.warning(f"⚠️ Заголовок остался на английском: '{title_en[:50]}'")
                 title_ru = title_en
             
             # Переводим контент
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
-            
-            # Если контент не переведен, пробуем еще раз
             if not content_ru or content_ru == content_en:
                 logger.warning(f"⚠️ Первый перевод контента не удался, пробуем еще раз...")
                 content_ru = await loop.run_in_executor(None, self._translate, content_en)
-            
             if not content_ru or content_ru == content_en:
                 content_ru = content_en
 
@@ -1144,7 +1185,6 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
 
