@@ -46,7 +46,6 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# Сколько дней хранить данные (30 дней)
 CLEANUP_DAYS = 30
 
 MAX_CAPTION = 950
@@ -265,19 +264,13 @@ def fix_title_encoding(title: str) -> str:
     return title
 
 def cleanup_old_data(state: dict, meta: dict) -> tuple:
-    """
-    Очищает старые данные (старше CLEANUP_DAYS дней)
-    Возвращает очищенные state и meta
-    """
+    """Очищает старые данные (старше CLEANUP_DAYS дней)"""
     cutoff = get_local_time() - timedelta(days=CLEANUP_DAYS)
     cutoff_str = cutoff.isoformat()
     
     logger.info(f"🧹 Очистка данных старше {CLEANUP_DAYS} дней ({cutoff.strftime('%Y-%m-%d')})")
     
-    # === Очистка state (история публикаций) ===
     old_count = len(state.get('posts_log', []))
-    
-    # Фильтруем posts_log
     new_posts_log = []
     for post in state.get('posts_log', []):
         try:
@@ -285,16 +278,13 @@ def cleanup_old_data(state: dict, meta: dict) -> tuple:
             if post_time > cutoff:
                 new_posts_log.append(post)
         except:
-            # Если не удалось распарсить время, оставляем
             new_posts_log.append(post)
     
     state['posts_log'] = new_posts_log
     new_count = len(new_posts_log)
     logger.info(f"🧹 posts_log: {old_count} → {new_count} (удалено {old_count - new_count})")
     
-    # === Очистка meta (метаданные статей) ===
     old_meta_count = len(meta.get('posts', {}))
-    
     new_posts = {}
     for pid, data in meta.get('posts', {}).items():
         try:
@@ -302,7 +292,6 @@ def cleanup_old_data(state: dict, meta: dict) -> tuple:
             if post_time > cutoff:
                 new_posts[pid] = data
         except:
-            # Если не удалось распарсить время, оставляем
             new_posts[pid] = data
     
     meta['posts'] = new_posts
@@ -317,7 +306,6 @@ class NewsBot:
         self.state = self._load_state()
         self.meta = self._load_meta()
         
-        # При запуске очищаем старые данные
         self.state, self.meta = cleanup_old_data(self.state, self.meta)
         self._save_state()
         self._save_meta()
@@ -484,11 +472,10 @@ class NewsBot:
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
-        """Обрезает текст до последнего предложения в пределах max_len, без троеточия"""
+        """Обрезает текст до последнего предложения в пределах max_len"""
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения (.!?) в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
@@ -496,7 +483,6 @@ class NewsBot:
                 if result and result[-1] in '.!?':
                     return result
         
-        # Если нет конца предложения в пределах max_len, ищем последний пробел
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1 and last_space > max_len // 2:
             result = text[:last_space].strip()
@@ -538,15 +524,33 @@ class NewsBot:
         return truncated
 
     def _translate(self, text: str) -> str:
-        if not text or len(text) < 10:
+        """Переводит текст на русский язык с повторными попытками"""
+        if not text:
             return text
+        
+        # Пропускаем перевод очень коротких текстов
+        if len(text) < 10:
+            logger.info(f"⚠️ Текст слишком короткий для перевода: '{text[:30]}...'")
+            return text
+        
         try:
+            # Ограничиваем длину текста для перевода
             if len(text) > 3000:
                 text = text[:3000]
+            
             result = self.translator.translate(text)
-            return result if result else text
+            
+            # Проверяем, что перевод выполнен успешно
+            if result and result != text:
+                logger.info(f"✅ Перевод выполнен: '{result[:50]}...'")
+                return result
+            else:
+                logger.warning(f"⚠️ Перевод не изменил текст: '{text[:50]}...'")
+                return text
+                
         except Exception as e:
-            logger.error(f"Ошибка перевода: {e}")
+            logger.error(f"❌ Ошибка перевода: {e}")
+            # Если перевод не удался, возвращаем оригинальный текст
             return text
 
     # ========== ПАРСИНГ INFOBRICS ==========
@@ -917,7 +921,6 @@ class NewsBot:
 
     # ========== ПАРСИНГ PRESS TV ==========
     def _get_presstv_articles(self) -> list:
-        """Получает список статей с Press TV через RSS"""
         try:
             feed = feedparser.parse('https://www.presstv.ir/Feed/FeedRss')
             articles = []
@@ -939,7 +942,6 @@ class NewsBot:
             return []
 
     def _parse_presstv_article(self, url: str) -> dict | None:
-        """Парсит отдельную статью Press TV"""
         try:
             resp = fetch_url(url)
             if not resp:
@@ -948,7 +950,6 @@ class NewsBot:
             soup = BeautifulSoup(resp.text, 'html.parser')
             base_url = 'https://www.presstv.ir'
 
-            # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
             h1 = soup.find('h1')
@@ -981,7 +982,6 @@ class NewsBot:
             title = title.strip()
             logger.info(f"Press TV: итоговый заголовок '{title[:50]}'")
 
-            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
             
             meta_img = soup.find('meta', property='og:image')
@@ -1021,7 +1021,6 @@ class NewsBot:
             
             logger.info(f"✅ Press TV: изображение доступно: {image_url}")
 
-            # === ПОИСК КОНТЕНТА ===
             container = soup.find('div', class_='content') or soup.find('article') or soup.find('main')
             
             paragraphs = []
@@ -1060,7 +1059,6 @@ class NewsBot:
         self.total_found = 0
         self.total_excluded = 0
 
-        # 1. InfoBrics
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:5]:
@@ -1071,7 +1069,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
-        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:5]:
@@ -1082,7 +1079,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
 
-        # 3. Press TV
         logger.info("📰 Парсинг Press TV...")
         pt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_presstv_articles)
         for article in pt_articles[:5]:
@@ -1114,10 +1110,32 @@ class NewsBot:
             logger.info(f"📝 Перевод: {title_en[:50]}...")
 
             loop = asyncio.get_event_loop()
+            
+            # Переводим заголовок с проверкой
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            title_ru = fix_title_encoding(title_ru)
+            
+            # Если перевод не удался или результат совпадает с оригиналом, пробуем еще раз
+            if not title_ru or title_ru == title_en:
+                logger.warning(f"⚠️ Первый перевод заголовка не удался, пробуем еще раз...")
+                title_ru = await loop.run_in_executor(None, self._translate, title_en)
+            
+            # Если все еще не переведено, используем оригинал
+            if not title_ru or title_ru == title_en:
+                logger.warning(f"⚠️ Заголовок остался на английском: '{title_en[:50]}'")
+                title_ru = title_en
+            
+            # Переводим контент
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
+            
+            # Если контент не переведен, пробуем еще раз
+            if not content_ru or content_ru == content_en:
+                logger.warning(f"⚠️ Первый перевод контента не удался, пробуем еще раз...")
+                content_ru = await loop.run_in_executor(None, self._translate, content_en)
+            
+            if not content_ru or content_ru == content_en:
+                content_ru = content_en
 
+            # Очищаем контент от служебных блоков
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = clean_globalresearch_content(content_ru)
@@ -1126,11 +1144,13 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
+            # Экранируем заголовок и обрезаем текст
             title_escaped = html.escape(title_ru)
             content_truncated = self._truncate_text(content_ru, is_caption=True)
 
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
+            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -1146,7 +1166,7 @@ class NewsBot:
                                     caption=message,
                                     parse_mode='Markdown'
                                 )
-                                logger.info("✅ Опубликовано С ФОТО")
+                                logger.info(f"✅ Опубликовано С ФОТО (заголовок: {title_ru[:50]}...)")
                                 self._mark_sent(url, title_en, content_en)
                                 self._log_post(url, title_en)
                                 self.total_published += 1
@@ -1167,7 +1187,7 @@ class NewsBot:
                                     caption=shorter_message,
                                     parse_mode='Markdown'
                                 )
-                                logger.info("✅ Опубликовано С ФОТО (обрезанный текст)")
+                                logger.info(f"✅ Опубликовано С ФОТО (обрезанный текст, заголовок: {title_ru[:50]}...)")
                                 self._mark_sent(url, title_en, content_en)
                                 self._log_post(url, title_en)
                                 self.total_published += 1
@@ -1182,7 +1202,8 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            logger.info("📝 Публикация текстом (без фото)")
+            # Фолбэк: публикация текстом
+            logger.info(f"📝 Публикация текстом (без фото, заголовок: {title_ru[:50]}...)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
