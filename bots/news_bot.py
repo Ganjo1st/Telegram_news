@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, Press TV
+Источники: InfoBrics (несколько лент), Global Research, Press TV
 """
 
 import os
@@ -59,7 +59,6 @@ EXCLUDED_KEYWORDS = [
     'youtube', 'YouTube',
     'global research daily', 'the news behind the news',
     'this week\'s most popular', 'most popular articles',
-    # Дополнительные ключевые слова для исключения
     'reader-funded', 'become a member', 'membership',
     'free books', 'subscribe to our',
     'help us stay afloat', 'make a one-time or recurring donation',
@@ -92,7 +91,6 @@ def is_service_article(title: str, content: str) -> bool:
     """Проверяет, является ли статья служебной (призывы к действию, реклама)"""
     combined = (title + ' ' + content).lower()
     
-    # Проверяем на ключевые слова, характерные для служебных статей
     service_patterns = [
         r'global research is a reader-funded media',
         r'help us stay afloat',
@@ -130,7 +128,6 @@ def is_service_article(title: str, content: str) -> bool:
         matches = re.findall(pattern, combined, re.IGNORECASE)
         service_chars += len(matches) * 50
     
-    # Если более 30% текста - служебный, исключаем
     if len(content) > 0 and service_chars / len(content) > 0.3:
         return True
     
@@ -143,23 +140,19 @@ def is_news_article(title: str, content: str) -> bool:
     
     combined = (title + ' ' + content).lower()
     
-    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
-    # Проверяем на видео-статьи
     if is_video_article(title, content):
         logger.info(f"❌ Исключена видео-статья: {title[:50]}...")
         return False
     
-    # Проверяем на служебные статьи
     if is_service_article(title, content):
         logger.info(f"❌ Исключена служебная статья: {title[:50]}...")
         return False
     
-    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
     if len(content) < 200:
         logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
@@ -233,15 +226,14 @@ def clean_globalresearch_content(text: str) -> str:
         r'Recommended image is a screenshot from the video.*?(?:\n|$)',
         r'Рекомендованное изображение — скриншот из видео.*?(?:\n|$)',
         r'Featured image is a screenshot.*?(?:\n|$)',
-        r'^[\s,.;:]+$',
-        r'^[,.\s]+$',
-        # Дополнительные паттерны для удаления призывов
         r'Was this article helpful\?.*?(?:\n|$)',
         r'Была ли эта статья полезной\?.*?(?:\n|$)',
         r'Support our work.*?(?:\n|$)',
         r'Поддержите нашу работу.*?(?:\n|$)',
         r'Donate to Global Research.*?(?:\n|$)',
         r'Пожертвовать Global Research.*?(?:\n|$)',
+        r'^[\s,.;:]+$',
+        r'^[,.\s]+$',
     ]
     
     for pattern in patterns:
@@ -601,40 +593,59 @@ class NewsBot:
             logger.error(f"❌ Ошибка перевода: {e}")
             return text
 
-    # ========== ПАРСИНГ INFOBRICS ==========
+    # ========== ПАРСИНГ INFOBRICS (НЕСКОЛЬКО ЛЕНТ) ==========
     def _get_infobrics_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://infobrics.org/rss/en')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '').strip()
-                title = fix_title_encoding(title)
-                
-                if not title or title == '{[title]}' or len(title) < 5:
-                    summary = entry.get('summary', '')
-                    summary = re.sub(r'<[^>]+>', '', summary)
-                    if summary:
-                        title = summary.split('.')[0].strip()
-                        if len(title) < 5:
-                            title = summary[:100].strip()
-                        title = fix_title_encoding(title)
-                    logger.info(f"InfoBrics: заголовок извлечен из summary: '{title[:50]}'")
-                
-                if not title or len(title) < 5:
-                    link = entry.get('link', '')
-                    url_id = link.split('/')[-1] if link else ''
-                    title = f"InfoBrics Article {url_id}"
-                    logger.warning(f"InfoBrics: создан заглушечный заголовок: '{title}'")
-
-                articles.append({
-                    'url': entry.link, 
-                    'title': title
-                })
-                logger.info(f"InfoBrics RSS: найден заголовок '{title[:50]}'")
-            return articles
-        except Exception as e:
-            logger.error(f"Ошибка InfoBrics RSS: {e}")
-            return []
+        """Получает список статей с InfoBrics из нескольких RSS-лент"""
+        all_articles = []
+        
+        # Основная лента
+        feeds = [
+            'https://infobrics.org/rss/en',
+            'https://infobrics.org/rss/en/economic/',
+            'https://infobrics.org/rss/en/politics/',
+            'https://infobrics.org/rss/en/society/',
+        ]
+        
+        for feed_url in feeds:
+            try:
+                feed = feedparser.parse(feed_url)
+                logger.info(f"📡 InfoBrics RSS ({feed_url.split('/')[-2] or 'main'}): {len(feed.entries)} статей")
+                for entry in feed.entries[:5]:
+                    title = entry.get('title', '').strip()
+                    title = fix_title_encoding(title)
+                    
+                    if not title or title == '{[title]}' or len(title) < 5:
+                        summary = entry.get('summary', '')
+                        summary = re.sub(r'<[^>]+>', '', summary)
+                        if summary:
+                            title = summary.split('.')[0].strip()
+                            if len(title) < 5:
+                                title = summary[:100].strip()
+                            title = fix_title_encoding(title)
+                    
+                    if not title or len(title) < 5:
+                        link = entry.get('link', '')
+                        url_id = link.split('/')[-1] if link else ''
+                        title = f"InfoBrics Article {url_id}"
+                    
+                    # Проверяем, не дублируется ли статья
+                    is_duplicate = False
+                    for existing in all_articles:
+                        if existing['url'] == entry.link:
+                            is_duplicate = True
+                            break
+                    
+                    if not is_duplicate:
+                        all_articles.append({
+                            'url': entry.link, 
+                            'title': title
+                        })
+                        logger.info(f"InfoBrics RSS: найден заголовок '{title[:50]}'")
+            except Exception as e:
+                logger.warning(f"Ошибка парсинга RSS {feed_url}: {e}")
+        
+        logger.info(f"📊 InfoBrics: найдено {len(all_articles)} уникальных статей")
+        return all_articles[:15]  # Возвращаем до 15 статей
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
         try:
@@ -1107,9 +1118,10 @@ class NewsBot:
         self.total_found = 0
         self.total_excluded = 0
 
-        logger.info("📰 Парсинг InfoBrics...")
+        # 1. InfoBrics - несколько лент
+        logger.info("📰 Парсинг InfoBrics (несколько лент)...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:5]:
+        for article in ib_articles[:7]:  # Увеличили до 7
             if self._is_duplicate(article['url'], article['title']):
                 continue
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
@@ -1117,6 +1129,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
+        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:5]:
@@ -1127,6 +1140,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
 
+        # 3. Press TV
         logger.info("📰 Парсинг Press TV...")
         pt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_presstv_articles)
         for article in pt_articles[:5]:
@@ -1159,7 +1173,6 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             
-            # Переводим заголовок
             title_ru = await loop.run_in_executor(None, self._translate, title_en)
             if not title_ru or title_ru == title_en:
                 logger.warning(f"⚠️ Первый перевод заголовка не удался, пробуем еще раз...")
@@ -1168,7 +1181,6 @@ class NewsBot:
                 logger.warning(f"⚠️ Заголовок остался на английском: '{title_en[:50]}'")
                 title_ru = title_en
             
-            # Переводим контент
             content_ru = await loop.run_in_executor(None, self._translate, content_en)
             if not content_ru or content_ru == content_en:
                 logger.warning(f"⚠️ Первый перевод контента не удался, пробуем еще раз...")
@@ -1176,7 +1188,6 @@ class NewsBot:
             if not content_ru or content_ru == content_en:
                 content_ru = content_en
 
-            # Очищаем контент от служебных блоков
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = clean_globalresearch_content(content_ru)
@@ -1190,7 +1201,6 @@ class NewsBot:
 
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # Публикация с фото
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -1242,7 +1252,6 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # Фолбэк: публикация текстом
             logger.info(f"📝 Публикация текстом (без фото, заголовок: {title_ru[:50]}...)")
             text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
