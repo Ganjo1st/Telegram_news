@@ -746,4 +746,679 @@ class NewsBot:
                     if title:
                         logger.info(f"InfoBrics: заголовок найден в title: '{title[:50]}'")
             
-            if not title
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+                    title = fix_title_encoding(title)
+                    logger.info(f"InfoBrics: заголовок найден в og:title: '{title[:50]}'")
+
+            if not title:
+                logger.warning(f"❌ InfoBrics: заголовок не найден для {url}")
+                self.total_excluded += 1
+                return None
+
+            title = title.strip()
+            logger.info(f"InfoBrics: итоговый заголовок '{title[:50]}'")
+
+            image_url = None
+            article_img = soup.find('img', class_='article__image')
+            if article_img and article_img.get('src'):
+                src = article_img['src']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+                logger.info(f"InfoBrics: изображение найдено в article__image: {image_url}")
+            
+            if not image_url:
+                meta_img = soup.find('meta', property='og:image')
+                if meta_img and meta_img.get('content'):
+                    src = meta_img['content']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
+                    logger.info(f"InfoBrics: изображение найдено в og:image: {image_url}")
+            
+            if not image_url:
+                logger.warning(f"❌ InfoBrics: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            if 'infobrics.org' not in image_url:
+                if not check_image_available(image_url):
+                    logger.warning(f"❌ InfoBrics: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                    self.total_excluded += 1
+                    return None
+            else:
+                logger.info(f"InfoBrics: пропущена проверка доступности для infobrics.org")
+            
+            logger.info(f"✅ InfoBrics: изображение доступно: {image_url}")
+
+            container = soup.find('div', class_='article__text')
+            if not container:
+                container = soup.find('article')
+            if not container:
+                container = soup.find('main')
+
+            paragraphs = []
+            if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
+                        text = re.sub(r'См\.\s*$', '', text)
+                        paragraphs.append(text)
+
+            if len(paragraphs) < 2:
+                logger.warning(f"❌ InfoBrics: недостаточно контента для {url}")
+                self.total_excluded += 1
+                return None
+
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                logger.warning(f"❌ InfoBrics: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
+                return None
+
+            if not is_news_article(title, content):
+                logger.info(f"❌ InfoBrics: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
+                return None
+
+            self.total_found += 1
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'InfoBrics', 'url': url}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга InfoBrics: {e}")
+            return None
+
+    # ========== ПАРСИНГ GLOBAL RESEARCH ==========
+    def _get_globalresearch_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.globalresearch.ca/feed')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                title = fix_title_encoding(title)
+                
+                if not title or len(title) < 5:
+                    summary = entry.get('summary', '')
+                    summary = re.sub(r'<[^>]+>', '', summary)
+                    if summary:
+                        title = summary.split('.')[0].strip()
+                        if len(title) < 5:
+                            title = summary[:100].strip()
+                        title = fix_title_encoding(title)
+                    logger.info(f"Global Research: заголовок извлечен из summary: '{title[:50]}'")
+
+                if not title or len(title) < 5:
+                    link = entry.get('link', '')
+                    url_id = link.split('/')[-1] if link else ''
+                    title = f"Global Research Article {url_id}"
+                    logger.warning(f"Global Research: создан заглушечный заголовок: '{title}'")
+
+                articles.append({
+                    'url': entry.link, 
+                    'title': title
+                })
+                logger.info(f"Global Research RSS: найден заголовок '{title[:50]}'")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Global Research RSS: {e}")
+            return []
+
+    def _parse_globalresearch_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                logger.warning(f"Global Research: не удалось загрузить страницу {url}")
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = 'https://www.globalresearch.ca'
+
+            title = None
+            
+            title_tag = soup.find('title')
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+                title = re.sub(r'\s*[-|]\s*(?:Global Research.*|Home.*)$', '', title)
+                title = fix_title_encoding(title)
+                if title:
+                    logger.info(f"Global Research: заголовок найден в title: '{title[:50]}'")
+            
+            if not title:
+                h2 = soup.find('h2', itemprop='headline')
+                if h2:
+                    title = h2.get_text(strip=True)
+                    title = fix_title_encoding(title)
+                    logger.info(f"Global Research: заголовок найден в h2[itemprop=headline]: '{title[:50]}'")
+            
+            if not title:
+                title_div = soup.find('div', class_='title')
+                if title_div:
+                    h2 = title_div.find('h2')
+                    if h2:
+                        title = h2.get_text(strip=True)
+                        title = fix_title_encoding(title)
+                        logger.info(f"Global Research: заголовок найден в div.title > h2: '{title[:50]}'")
+            
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+                    title = fix_title_encoding(title)
+                    logger.info(f"Global Research: заголовок найден в h1: '{title[:50]}'")
+            
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+                    title = fix_title_encoding(title)
+                    logger.info(f"Global Research: заголовок найден в og:title: '{title[:50]}'")
+
+            if not title:
+                feed = feedparser.parse('https://www.globalresearch.ca/feed')
+                for entry in feed.entries[:10]:
+                    if entry.link == url:
+                        title = entry.get('title', '').strip()
+                        title = fix_title_encoding(title)
+                        if title:
+                            logger.info(f"Global Research: заголовок из RSS (запасной): '{title[:50]}'")
+                        break
+
+            if not title:
+                logger.warning(f"❌ Global Research: заголовок не найден для {url}")
+                self.total_excluded += 1
+                return None
+
+            title = title.strip()
+            logger.info(f"Global Research: итоговый заголовок '{title[:50]}'")
+
+            image_url = None
+            
+            meta_img = soup.find('meta', property='og:image')
+            if meta_img and meta_img.get('content'):
+                src = meta_img['content']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+                logger.info(f"Global Research: изображение найдено в og:image: {image_url}")
+            
+            if not image_url:
+                img = soup.find('img', class_='attachment-single-post-thumbnail')
+                if img and img.get('src'):
+                    src = img['src']
+                    if src.startswith('//'):
+                        image_url = 'https:' + src
+                    elif src.startswith('/'):
+                        image_url = urljoin(base_url, src)
+                    elif src.startswith('http'):
+                        image_url = src
+                    logger.info(f"Global Research: изображение найдено в attachment-single-post-thumbnail: {image_url}")
+            
+            if not image_url:
+                thumbnail_div = soup.find('div', class_='postThumbnail')
+                if thumbnail_div:
+                    img = thumbnail_div.find('img')
+                    if img and img.get('src'):
+                        src = img['src']
+                        if src.startswith('//'):
+                            image_url = 'https:' + src
+                        elif src.startswith('/'):
+                            image_url = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            image_url = src
+                        logger.info(f"Global Research: изображение найдено в postThumbnail: {image_url}")
+            
+            is_video = False
+            video_elem = soup.find('video') or soup.find('iframe') or soup.find('div', class_='video')
+            if video_elem:
+                is_video = True
+                logger.info(f"Global Research: обнаружена видео-статья: {title[:50]}")
+            
+            if not image_url and not is_video:
+                logger.warning(f"❌ Global Research: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            if image_url and not check_image_available(image_url):
+                if is_video:
+                    logger.info(f"Global Research: видео-статья без изображения, пропускаем: {title[:50]}")
+                    self.total_excluded += 1
+                    return None
+                logger.warning(f"❌ Global Research: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            if image_url:
+                logger.info(f"✅ Global Research: изображение доступно: {image_url}")
+
+            container = soup.find('div', itemprop='articleBody')
+            if not container:
+                container = soup.find('div', class_='content')
+            if not container:
+                container = soup.find('div', class_='post-content')
+            if not container:
+                container = soup.find('div', class_='entry-content')
+            if not container:
+                container = soup.find('article')
+            if not container:
+                container = soup.find('main')
+
+            paragraphs = []
+            if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
+                        if not text.startswith('Copyright') and not text.startswith('©'):
+                            if not text.startswith('Image:'):
+                                text = clean_globalresearch_content(text)
+                                if text:
+                                    paragraphs.append(text)
+
+            content = '\n\n'.join(paragraphs)
+            content = clean_globalresearch_content(content)
+
+            if len(content) < 150 and not is_video:
+                logger.warning(f"❌ Global Research: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
+                return None
+
+            if is_video and len(content) < 100:
+                logger.info(f"❌ Global Research: видео-статья без текста, пропускаем: {title[:50]}")
+                self.total_excluded += 1
+                return None
+
+            if not is_news_article(title, content):
+                logger.info(f"❌ Global Research: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
+                return None
+
+            self.total_found += 1
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Global Research', 'url': url}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Global Research: {e}")
+            return None
+
+    # ========== ПАРСИНГ PRESS TV ==========
+    def _get_presstv_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.presstv.ir/Feed/FeedRss')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                title = fix_title_encoding(title)
+                
+                if not title or len(title) < 5:
+                    continue
+                
+                # Проверяем, не является ли статья на португальском
+                if is_portuguese_article(title, ''):
+                    logger.info(f"❌ Press TV: исключена португальская статья: {title[:50]}...")
+                    continue
+                
+                articles.append({
+                    'url': entry.link,
+                    'title': title
+                })
+                logger.info(f"Press TV RSS: найден заголовок '{title[:50]}'")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Press TV RSS: {e}")
+            return []
+
+    def _parse_presstv_article(self, url: str) -> dict | None:
+        try:
+            resp = fetch_url(url)
+            if not resp:
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            base_url = 'https://www.presstv.ir'
+
+            title = None
+            
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+                title = fix_title_encoding(title)
+                logger.info(f"Press TV: заголовок найден в h1: '{title[:50]}'")
+            
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+                    title = fix_title_encoding(title)
+                    logger.info(f"Press TV: заголовок найден в og:title: '{title[:50]}'")
+            
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    title = re.sub(r'\s*[-|]\s*Press TV.*$', '', title)
+                    title = fix_title_encoding(title)
+                    if title:
+                        logger.info(f"Press TV: заголовок найден в title: '{title[:50]}'")
+
+            if not title:
+                logger.warning(f"❌ Press TV: заголовок не найден для {url}")
+                self.total_excluded += 1
+                return None
+
+            title = title.strip()
+            logger.info(f"Press TV: итоговый заголовок '{title[:50]}'")
+
+            image_url = None
+            
+            meta_img = soup.find('meta', property='og:image')
+            if meta_img and meta_img.get('content'):
+                src = meta_img['content']
+                if src.startswith('//'):
+                    image_url = 'https:' + src
+                elif src.startswith('/'):
+                    image_url = urljoin(base_url, src)
+                elif src.startswith('http'):
+                    image_url = src
+                logger.info(f"Press TV: изображение найдено в og:image: {image_url}")
+            
+            if not image_url:
+                article = soup.find('article') or soup.find('div', class_='content')
+                if article:
+                    img = article.find('img')
+                    if img and img.get('src'):
+                        src = img['src']
+                        if src.startswith('//'):
+                            image_url = 'https:' + src
+                        elif src.startswith('/'):
+                            image_url = urljoin(base_url, src)
+                        elif src.startswith('http'):
+                            image_url = src
+                        logger.info(f"Press TV: изображение найдено в article img: {image_url}")
+            
+            if not image_url:
+                logger.warning(f"❌ Press TV: НЕТ ИЗОБРАЖЕНИЯ, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            if not check_image_available(image_url):
+                logger.warning(f"❌ Press TV: ИЗОБРАЖЕНИЕ НЕДОСТУПНО, статья пропущена: {title[:50]}")
+                self.total_excluded += 1
+                return None
+            
+            logger.info(f"✅ Press TV: изображение доступно: {image_url}")
+
+            container = soup.find('div', class_='content') or soup.find('article') or soup.find('main')
+            
+            paragraphs = []
+            if container:
+                for tag in container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                    tag.decompose()
+                for p in container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 30 and not text.startswith('Read more'):
+                        text = clean_presstv_content(text)
+                        if text:
+                            paragraphs.append(text)
+
+            content = '\n\n'.join(paragraphs)
+            content = clean_presstv_content(content)
+
+            if len(content) < 150:
+                logger.warning(f"❌ Press TV: контент слишком короткий ({len(content)} символов)")
+                self.total_excluded += 1
+                return None
+
+            if not is_news_article(title, content):
+                logger.info(f"❌ Press TV: статья исключена (не новостная): {title[:50]}")
+                self.total_excluded += 1
+                return None
+
+            self.total_found += 1
+            return {'title': title, 'content': content, 'image': image_url, 'source': 'Press TV', 'url': url}
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Press TV: {e}")
+            return None
+
+    # ========== СБОР НОВОСТЕЙ ==========
+    async def fetch_news(self) -> list:
+        items = []
+        self.total_found = 0
+        self.total_excluded = 0
+
+        # 1. InfoBrics - несколько лент
+        logger.info("📰 Парсинг InfoBrics (несколько лент)...")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for article in ib_articles[:7]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+
+        # 2. Global Research
+        logger.info("📰 Парсинг Global Research...")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+
+        # 3. Press TV
+        logger.info("📰 Парсинг Press TV...")
+        pt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_presstv_articles)
+        for article in pt_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_presstv_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Press TV: {data['title'][:50]}...")
+
+        self.total_found = len(items) + self.total_excluded
+        logger.info(f"📊 Всего новых статей: {len(items)}")
+        logger.info(f"📊 Найдено всего: {self.total_found}, исключено: {self.total_excluded}")
+        
+        return items
+
+    # ========== ПУБЛИКАЦИЯ ==========
+    async def publish(self, post: dict):
+        try:
+            title_en = post.get('title', '')
+            content_en = post.get('content', '')
+            url = post.get('url', '')
+            image_url = post.get('image')
+
+            if not title_en or not content_en:
+                logger.error("❌ Нет заголовка или содержимого")
+                return
+
+            logger.info(f"📝 Перевод: {title_en[:50]}...")
+
+            loop = asyncio.get_event_loop()
+            
+            title_ru = await loop.run_in_executor(None, self._translate, title_en)
+            if not title_ru or title_ru == title_en:
+                logger.warning(f"⚠️ Первый перевод заголовка не удался, пробуем еще раз...")
+                title_ru = await loop.run_in_executor(None, self._translate, title_en)
+            if not title_ru or title_ru == title_en:
+                logger.warning(f"⚠️ Заголовок остался на английском: '{title_en[:50]}'")
+                title_ru = title_en
+            
+            content_ru = await loop.run_in_executor(None, self._translate, content_en)
+            if not content_ru or content_ru == content_en:
+                logger.warning(f"⚠️ Первый перевод контента не удался, пробуем еще раз...")
+                content_ru = await loop.run_in_executor(None, self._translate, content_en)
+            if not content_ru or content_ru == content_en:
+                content_ru = content_en
+
+            content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
+            content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
+            content_ru = clean_globalresearch_content(content_ru)
+            content_ru = clean_presstv_content(content_ru)
+
+            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
+            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+
+            title_escaped = html.escape(title_ru)
+            content_truncated = self._truncate_text(content_ru, is_caption=True)
+
+            message = f"*{title_escaped}*\n\n{content_truncated}"
+
+            if image_url:
+                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
+                img_response = fetch_url(image_url, timeout=15)
+
+                if img_response and img_response.status_code == 200:
+                    content_type = img_response.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        if len(message) <= 1024:
+                            try:
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=img_response.content,
+                                    caption=message,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info(f"✅ Опубликовано С ФОТО (заголовок: {title_ru[:50]}...)")
+                                self._mark_sent(url, title_en, content_en)
+                                self._log_post(url, title_en)
+                                self.total_published += 1
+                                
+                                self.queue_count = len(self.state['posts_log'])
+                                logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
+                                return
+                            except TelegramError as e:
+                                logger.warning(f"Ошибка отправки фото: {e}")
+                        else:
+                            shorter_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=True)}"
+                            if len(shorter_message) > 1024:
+                                shorter_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru[:500], is_caption=True)}"
+                            try:
+                                await self.bot.send_photo(
+                                    chat_id=CHANNEL_ID,
+                                    photo=img_response.content,
+                                    caption=shorter_message,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info(f"✅ Опубликовано С ФОТО (обрезанный текст, заголовок: {title_ru[:50]}...)")
+                                self._mark_sent(url, title_en, content_en)
+                                self._log_post(url, title_en)
+                                self.total_published += 1
+                                
+                                self.queue_count = len(self.state['posts_log'])
+                                logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
+                                return
+                            except TelegramError as e:
+                                logger.warning(f"Ошибка отправки фото (обрезанный текст): {e}")
+                    else:
+                        logger.warning(f"URL не ведёт на изображение: {content_type}")
+                else:
+                    logger.warning("Не удалось загрузить изображение")
+
+            logger.info(f"📝 Публикация текстом (без фото, заголовок: {title_ru[:50]}...)")
+            text_message = f"*{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=text_message,
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
+            logger.info("✅ Опубликовано ТЕКСТОМ")
+
+            self._mark_sent(url, title_en, content_en)
+            self._log_post(url, title_en)
+            self.total_published += 1
+            
+            self.queue_count = len(self.state['posts_log'])
+            logger.info(f"📊 В очереди (неопубликовано): {self.queue_count} статей")
+
+        except TelegramError as e:
+            error_msg = str(e)
+            if "Can't parse entities" in error_msg:
+                logger.warning("Ошибка Markdown, отправляем без форматирования")
+                try:
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=f"{title_ru}\n\n{content_ru}",
+                        parse_mode=None
+                    )
+                    self._mark_sent(url, title_en, content_en)
+                    self._log_post(url, title_en)
+                    self.total_published += 1
+                except Exception as e2:
+                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
+            else:
+                logger.error(f"❌ Ошибка Telegram: {e}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка публикации: {e}")
+
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
+    async def run_once(self):
+        logger.info("=" * 50)
+        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
+        logger.info("=" * 50)
+
+        news = await self.fetch_news()
+
+        if not news:
+            logger.info("📭 Новых статей нет")
+            return
+
+        published_count = 0
+        for article in news:
+            if not self._can_post():
+                logger.info(f"⏸️ Достигнут лимит публикаций, опубликовано {published_count} статей")
+                break
+            
+            await self.publish(article)
+            published_count += 1
+            
+            if len(news) > 1 and published_count < len(news):
+                await asyncio.sleep(10)
+        
+        logger.info(f"📊 Опубликовано статей: {published_count} из {len(news)}")
+
+    async def run_forever(self):
+        logger.info("🤖 Бот запущен в бесконечном режиме")
+        while True:
+            try:
+                await self.run_once()
+                delay = self._next_delay()
+                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
+                await asyncio.sleep(delay)
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка: {e}")
+                await asyncio.sleep(300)
+
+async def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN не задан!")
+        return
+    if not CHANNEL_ID:
+        logger.error("❌ CHANNEL_ID не задан!")
+        return
+
+    bot = NewsBot()
+    if 'GITHUB_ACTIONS' in os.environ:
+        await bot.run_once()
+    else:
+        await bot.run_forever()
+
+if __name__ == '__main__':
+    asyncio.run(main())
