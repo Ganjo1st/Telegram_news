@@ -4,3 +4,4 @@ feedparser==6.0.10
 python-telegram-bot==20.7
 deep-translator==1.11.4
 lxml==4.9.4
+charset-normalizer==3.3.2
