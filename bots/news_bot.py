@@ -22,7 +22,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator, PonsTranslator
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -36,7 +36,7 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
 # Интервалы публикации (секунды)
-MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '600'))   # 10 минут
+MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '300'))   # 5 минут (было 600)
 MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '1800'))  # 30 минут
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))
 TIMEZONE_OFFSET = 7
@@ -65,19 +65,39 @@ EXCLUDED_KEYWORDS = [
     'comment on global research articles', 'become a member of global research',
     'click the share button', 'follow us on',
     'global research is a reader-funded media',
-    # Португальские ключевые слова
     'anos', 'faleceu', 'nascimento', 'morreu', 'nasceu',
     'completa', 'aniversário', 'vivo', 'viva',
 ]
 
-# === ЯЗЫКИ КОТОРЫЕ НЕ ПУБЛИКУЕМ ===
-EXCLUDED_LANGUAGES = ['pt', 'es', 'fr', 'de', 'it', 'ar', 'fa', 'he', 'ja', 'ko', 'zh', 'hi', 'tr']
+def translate_with_fallback(text: str, source: str = 'en', target: str = 'ru') -> str:
+    """Переводит текст с использованием нескольких переводчиков (запасные варианты)"""
+    if not text or len(text) < 10:
+        return text
+    
+    # Список переводчиков для fallback
+    translators = [
+        ('Google', lambda: GoogleTranslator(source=source, target=target).translate(text)),
+        ('MyMemory', lambda: MyMemoryTranslator(source=source, target=target).translate(text)),
+        ('Pons', lambda: PonsTranslator(source=source, target=target).translate(text)),
+    ]
+    
+    for name, translate_func in translators:
+        try:
+            result = translate_func()
+            if result and result != text:
+                logger.info(f"✅ Перевод выполнен ({name}): '{result[:50]}...'")
+                return result
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка {name} переводчика: {e}")
+            continue
+    
+    logger.warning(f"⚠️ Все переводчики не смогли перевести текст: '{text[:50]}...'")
+    return text
 
 def is_portuguese_article(title: str, content: str) -> bool:
     """Проверяет, является ли статья на португальском или другом нежелательном языке"""
     combined = (title + ' ' + content).lower()
     
-    # Португальские маркеры
     pt_patterns = [
         r'anos',
         r'faleceu',
@@ -101,10 +121,9 @@ def is_portuguese_article(title: str, content: str) -> bool:
         if re.search(pattern, combined, re.IGNORECASE):
             return True
     
-    # Проверяем наличие ссылок в тексте (признак не новостной статьи)
     url_pattern = r'https?://[^\s]+'
     urls = re.findall(url_pattern, combined)
-    if len(urls) > 2:  # Если больше 2 ссылок - это скорее всего не новость
+    if len(urls) > 2:
         logger.info(f"❌ Обнаружено {len(urls)} ссылок, статья исключена")
         return True
     
@@ -164,7 +183,6 @@ def is_service_article(title: str, content: str) -> bool:
         r'поддержите нашу работу',
         r'donate to global research',
         r'пожертвовать global research',
-        # Португальские служебные фразы
         r'fontes:',
         r'fonte:',
         r'sources:',
@@ -188,33 +206,27 @@ def is_news_article(title: str, content: str) -> bool:
     
     combined = (title + ' ' + content).lower()
     
-    # Проверяем на португальский язык
     if is_portuguese_article(title, content):
         logger.info(f"❌ Исключена португальская/не новостная статья: {title[:50]}...")
         return False
     
-    # Проверяем на служебные ключевые слова
     for keyword in EXCLUDED_KEYWORDS:
         if keyword.lower() in combined:
             logger.info(f"❌ Исключена статья (ключевое слово '{keyword}'): {title[:50]}...")
             return False
     
-    # Проверяем на видео-статьи
     if is_video_article(title, content):
         logger.info(f"❌ Исключена видео-статья: {title[:50]}...")
         return False
     
-    # Проверяем на служебные статьи
     if is_service_article(title, content):
         logger.info(f"❌ Исключена служебная статья: {title[:50]}...")
         return False
     
-    # Исключаем статьи с очень коротким содержанием (менее 200 символов)
     if len(content) < 200:
         logger.info(f"❌ Исключена статья (слишком короткий контент): {title[:50]}...")
         return False
     
-    # Проверяем, содержит ли статья признаки биографии/некролога
     bio_patterns = [
         r'faleceu', r'morreu', r'nasceu', r'nascimento',
         r'completa', r'aniversário', r'anos', r'se fosse vivo',
@@ -430,7 +442,6 @@ class NewsBot:
         self._save_meta()
         
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        self.translator = GoogleTranslator(source='en', target='ru')
         self.total_found = 0
         self.total_excluded = 0
         self.total_published = 0
@@ -642,38 +653,11 @@ class NewsBot:
 
         return truncated
 
-    def _translate(self, text: str) -> str:
-        """Переводит текст на русский язык с повторными попытками"""
-        if not text:
-            return text
-        
-        if len(text) < 10:
-            logger.info(f"⚠️ Текст слишком короткий для перевода: '{text[:30]}...'")
-            return text
-        
-        try:
-            if len(text) > 3000:
-                text = text[:3000]
-            
-            result = self.translator.translate(text)
-            
-            if result and result != text:
-                logger.info(f"✅ Перевод выполнен: '{result[:50]}...'")
-                return result
-            else:
-                logger.warning(f"⚠️ Перевод не изменил текст: '{text[:50]}...'")
-                return text
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка перевода: {e}")
-            return text
-
     # ========== ПАРСИНГ INFOBRICS (НЕСКОЛЬКО ЛЕНТ) ==========
     def _get_infobrics_articles(self) -> list:
         """Получает список статей с InfoBrics из нескольких RSS-лент"""
         all_articles = []
         
-        # Основная лента
         feeds = [
             'https://infobrics.org/rss/en',
             'https://infobrics.org/rss/en/economic/',
@@ -1064,7 +1048,6 @@ class NewsBot:
                 if not title or len(title) < 5:
                     continue
                 
-                # Проверяем, не является ли статья на португальском
                 if is_portuguese_article(title, ''):
                     logger.info(f"❌ Press TV: исключена португальская статья: {title[:50]}...")
                     continue
@@ -1197,7 +1180,6 @@ class NewsBot:
         self.total_found = 0
         self.total_excluded = 0
 
-        # 1. InfoBrics - несколько лент
         logger.info("📰 Парсинг InfoBrics (несколько лент)...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:7]:
@@ -1208,7 +1190,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
-        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:5]:
@@ -1219,7 +1200,6 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
 
-        # 3. Press TV
         logger.info("📰 Парсинг Press TV...")
         pt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_presstv_articles)
         for article in pt_articles[:5]:
@@ -1252,21 +1232,11 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             
-            title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            if not title_ru or title_ru == title_en:
-                logger.warning(f"⚠️ Первый перевод заголовка не удался, пробуем еще раз...")
-                title_ru = await loop.run_in_executor(None, self._translate, title_en)
-            if not title_ru or title_ru == title_en:
-                logger.warning(f"⚠️ Заголовок остался на английском: '{title_en[:50]}'")
-                title_ru = title_en
-            
-            content_ru = await loop.run_in_executor(None, self._translate, content_en)
-            if not content_ru or content_ru == content_en:
-                logger.warning(f"⚠️ Первый перевод контента не удался, пробуем еще раз...")
-                content_ru = await loop.run_in_executor(None, self._translate, content_en)
-            if not content_ru or content_ru == content_en:
-                content_ru = content_en
+            # Используем функцию с fallback переводчиками
+            title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
+            content_ru = await loop.run_in_executor(None, translate_with_fallback, content_en)
 
+            # Очищаем контент от служебных блоков
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = clean_globalresearch_content(content_ru)
