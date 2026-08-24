@@ -2,7 +2,7 @@ name: Run News Bot
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # Каждые 10 минут вместо 20
+    - cron: '*/10 * * * *'
   workflow_dispatch:
     inputs:
       test_mode:
@@ -39,9 +39,9 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          MIN_POST_INTERVAL: '600'   # 10 минут
-          MAX_POST_INTERVAL: '1800'  # 30 минут
-          MAX_POSTS_PER_DAY: '30'    # Увеличили до 30
+          MIN_POST_INTERVAL: '600'
+          MAX_POST_INTERVAL: '1800'
+          MAX_POSTS_PER_DAY: '30'
           TIMEZONE_OFFSET: '7'
           REQUEST_TIMEOUT: '15'
           TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
@@ -51,5 +51,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git pull origin main --rebase
           git add state_news_bot.json posts_meta.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Update state [skip ci]" && git push)
