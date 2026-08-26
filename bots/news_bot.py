@@ -15,16 +15,13 @@ import re
 import html
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 import requests
 import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-
-# Используем googletrans вместо deep_translator (более стабильный)
-from googletrans import Translator
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -49,6 +46,62 @@ META_FILE = 'posts_meta.json'
 
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
+
+# ========== ФУНКЦИИ ПЕРЕВОДА (без внешних библиотек) ==========
+def translate_text(text: str) -> str:
+    """
+    Переводит текст с английского на русский используя Google Translate API напрямую
+    """
+    if not text:
+        return ""
+    
+    # Если текст уже на русском, возвращаем как есть
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    try:
+        # Обрезаем длинные тексты
+        if len(text) > 2000:
+            text = text[:2000]
+        
+        # Кодируем текст для URL
+        encoded_text = quote(text)
+        
+        # Формируем запрос к Google Translate
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={encoded_text}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Извлекаем перевод из ответа
+            if data and len(data) > 0 and len(data[0]) > 0:
+                translated = ''.join([part[0] for part in data[0] if part[0]])
+                if translated:
+                    logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
+                    return translated
+        
+        # Если не получилось через Google API, пробуем через deep_translator
+        try:
+            from deep_translator import GoogleTranslator
+            translator = GoogleTranslator(source='en', target='ru')
+            result = translator.translate(text)
+            if result:
+                logger.info(f"✅ Перевод выполнен через deep_translator. Длина: {len(result)} символов")
+                return result
+        except Exception as e:
+            logger.warning(f"deep_translator не сработал: {e}")
+        
+        logger.warning("⚠️ Не удалось перевести текст, возвращаем оригинал")
+        return text
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка перевода: {e}")
+        return text
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
@@ -127,9 +180,6 @@ class NewsBot:
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        # Используем googletrans
-        self.translator = Translator()
-        # Флаг тестового режима
         self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
     def _load_state(self) -> dict:
@@ -288,7 +338,7 @@ class NewsBot:
 
     def _next_delay(self) -> int:
         if self.test_mode:
-            return 60  # В тестовом режиме проверяем каждую минуту
+            return 60
         delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
@@ -313,36 +363,6 @@ class NewsBot:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         return self._truncate_to_last_sentence(text, max_len)
 
-    def _translate_text(self, text: str) -> str:
-        """
-        Надежный перевод текста с английского на русский с использованием googletrans
-        """
-        if not text:
-            return ""
-        
-        # Если текст уже на русском, возвращаем как есть
-        if re.search('[а-яА-Я]', text):
-            return text
-        
-        try:
-            # Обрезаем длинные тексты для API
-            if len(text) > 3000:
-                text = text[:3000]
-            
-            # Пробуем перевести
-            result = self.translator.translate(text, src='en', dest='ru')
-            
-            if result and result.text:
-                logger.info(f"✅ Перевод выполнен. Длина: {len(result.text)} символов")
-                return result.text
-            else:
-                logger.warning("⚠️ Перевод вернул пустой результат")
-                return text
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка перевода: {e}")
-            return text
-
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
         """Получает список статей с InfoBrics через RSS"""
@@ -353,20 +373,15 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '').strip()
                 
-                # Если заголовок пустой или шаблонный
                 if not title or title == '{[title]}' or len(title) < 5:
-                    # Пробуем взять из summary
                     summary = entry.get('summary', '')
                     if summary:
-                        # Удаляем HTML теги
                         summary = re.sub(r'<[^>]+>', '', summary)
-                        # Берем первое предложение
                         title = summary.split('.')[0].strip()
                         if len(title) < 5 and len(summary) > 10:
                             title = summary[:100].strip()
                     
                     if not title or len(title) < 5:
-                        # Создаем заголовок из URL
                         link = entry.get('link', '')
                         title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
                 
@@ -419,12 +434,10 @@ class NewsBot:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    # Удаляем название сайта
                     title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
                     logger.info(f"Найден title: {title[:50]}...")
             
-            # 5. Если ничего не нашли
             if not title or title == '{[title]}':
                 title = "InfoBrics Article"
             
@@ -439,36 +452,29 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # Пробуем разные классы
             for class_name in ['article__text', 'article-content', 'post-content', 'entry-content', 'content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     content_container = container
                     break
             
-            # Если не нашли, пробуем article
             if not content_container:
                 content_container = soup.find('article')
             
-            # Если не нашли, пробуем main
             if not content_container:
                 content_container = soup.find('main')
             
             paragraphs = []
             if content_container:
-                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 30:
-                        # Пропускаем служебные фразы
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
             
-            # Если контента мало, пробуем найти в main
             if len(paragraphs) < 2:
                 main = soup.find('main')
                 if main:
@@ -509,24 +515,18 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '').strip()
                 
-                # Если заголовок пустой или слишком короткий
                 if not title or len(title) < 5:
-                    # Пробуем взять из summary
                     summary = entry.get('summary', '')
                     if summary:
-                        # Удаляем HTML теги
                         summary = re.sub(r'<[^>]+>', '', summary)
-                        # Берем первое предложение
                         title = summary.split('.')[0].strip()
                         if len(title) < 5 and len(summary) > 10:
                             title = summary[:100].strip()
                     
                     if not title or len(title) < 5:
-                        # Создаем заголовок из URL
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
                 
-                # Очищаем заголовок от лишнего
                 title = re.sub(r'\s+', ' ', title).strip()
                 
                 articles.append({
@@ -553,7 +553,7 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем h1.entry-title (основной заголовок на Global Research)
+            # 1. Пробуем h1.entry-title
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
@@ -578,12 +578,10 @@ class NewsBot:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    # Удаляем название сайта из title
                     title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
                     logger.info(f"Найден title: {title[:50]}...")
             
-            # 5. Если ничего не нашли
             if not title:
                 title = "Global Research Article"
             
@@ -598,36 +596,29 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # Пробуем разные классы
             for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     content_container = container
                     break
             
-            # Если не нашли, пробуем article
             if not content_container:
                 content_container = soup.find('article')
             
-            # Если не нашли, пробуем main
             if not content_container:
                 content_container = soup.find('main')
             
             paragraphs = []
             if content_container:
-                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 30:
-                        # Пропускаем служебные фразы
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
             
-            # Если контента мало, пробуем найти в main
             if len(paragraphs) < 2:
                 main = soup.find('main')
                 if main:
@@ -705,38 +696,37 @@ class NewsBot:
             loop = asyncio.get_event_loop()
             
             # Переводим заголовок
-            title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+            title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
             # Если перевод не удался, пробуем еще раз
             if not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
-                title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+                title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
-            # Переводим контент по частям, если он длинный
+            # Переводим контент по частям
             content_ru = ""
-            if len(content_en) > 3000:
-                # Разбиваем на части по 2000 символов
+            if len(content_en) > 2000:
                 parts = []
-                for i in range(0, len(content_en), 2000):
-                    part = content_en[i:i+2000]
-                    translated_part = await loop.run_in_executor(None, self._translate_text, part)
+                for i in range(0, len(content_en), 1500):
+                    part = content_en[i:i+1500]
+                    translated_part = await loop.run_in_executor(None, translate_text, part)
                     parts.append(translated_part)
                 content_ru = " ".join(parts)
             else:
-                content_ru = await loop.run_in_executor(None, self._translate_text, content_en)
+                content_ru = await loop.run_in_executor(None, translate_text, content_en)
             
             # Проверяем перевод контента
             if not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                if len(content_en) > 3000:
+                if len(content_en) > 2000:
                     parts = []
-                    for i in range(0, len(content_en), 2000):
-                        part = content_en[i:i+2000]
-                        translated_part = await loop.run_in_executor(None, self._translate_text, part)
+                    for i in range(0, len(content_en), 1500):
+                        part = content_en[i:i+1500]
+                        translated_part = await loop.run_in_executor(None, translate_text, part)
                         parts.append(translated_part)
                     content_ru = " ".join(parts)
                 else:
-                    content_ru = await loop.run_in_executor(None, self._translate_text, content_en)
+                    content_ru = await loop.run_in_executor(None, translate_text, content_en)
 
             # Очистка от мусора
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
