@@ -47,10 +47,10 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ФУНКЦИЯ ПЕРЕВОДА (с несколькими методами) ==========
+# ========== ФУНКЦИЯ ПЕРЕВОДА (прямой запрос к Google Translate) ==========
 def translate_text(text: str) -> str:
     """
-    Переводит текст с английского на русский используя несколько методов
+    Переводит текст с английского на русский используя Google Translate API напрямую
     """
     if not text:
         return ""
@@ -59,41 +59,40 @@ def translate_text(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
     
-    # Обрезаем длинные тексты
-    if len(text) > 3000:
-        text = text[:3000]
-    
-    # Метод 1: Прямой запрос к Google Translate API
     try:
+        # Обрезаем длинные тексты
+        if len(text) > 3000:
+            text = text[:3000]
+        
+        # Кодируем текст для URL
         encoded_text = quote(text)
+        
+        # Формируем запрос к Google Translate
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={encoded_text}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
+            # Извлекаем перевод из ответа
             if data and len(data) > 0 and len(data[0]) > 0:
                 translated = ''.join([part[0] for part in data[0] if part[0]])
                 if translated:
                     logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
                     return translated
+        else:
+            logger.warning(f"Google API вернул статус {response.status_code}")
+        
+        logger.warning("⚠️ Не удалось перевести текст через Google API, возвращаем оригинал")
+        return text
+        
     except Exception as e:
-        logger.warning(f"Google API не сработал: {e}")
-    
-    # Метод 2: deep_translator
-    try:
-        from deep_translator import GoogleTranslator
-        translator = GoogleTranslator(source='en', target='ru')
-        result = translator.translate(text)
-        if result:
-            logger.info(f"✅ Перевод выполнен через deep_translator. Длина: {len(result)} символов")
-            return result
-    except Exception as e:
-        logger.warning(f"deep_translator не сработал: {e}")
-    
-    # Если ничего не сработало, возвращаем оригинал
-    logger.warning("⚠️ Не удалось перевести текст, возвращаем оригинал")
-    return text
+        logger.error(f"❌ Ошибка перевода: {e}")
+        return text
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
