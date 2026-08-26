@@ -129,6 +129,8 @@ class NewsBot:
         self.bot = Bot(token=TELEGRAM_TOKEN)
         # Создаем переводчик с явными параметрами
         self.translator = GoogleTranslator(source='en', target='ru')
+        # Флаг тестового режима
+        self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
     def _load_state(self) -> dict:
         try:
@@ -247,6 +249,11 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
+        # В тестовом режиме публикуем всегда
+        if self.test_mode:
+            logger.info("🧪 Тестовый режим: публикация разрешена")
+            return True
+            
         now = get_local_time()
         hour = now.hour
         if 23 <= hour or hour < 7:
@@ -280,6 +287,8 @@ class NewsBot:
         return True
 
     def _next_delay(self) -> int:
+        if self.test_mode:
+            return 60  # В тестовом режиме проверяем каждую минуту
         delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
@@ -487,17 +496,25 @@ class NewsBot:
             for entry in feed.entries[:5]:
                 title = entry.get('title', '').strip()
                 
+                # Если заголовок пустой или слишком короткий
                 if not title or len(title) < 5:
+                    # Пробуем взять из summary
                     summary = entry.get('summary', '')
                     if summary:
+                        # Удаляем HTML теги
                         summary = re.sub(r'<[^>]+>', '', summary)
+                        # Берем первое предложение
                         title = summary.split('.')[0].strip()
                         if len(title) < 5 and len(summary) > 10:
                             title = summary[:100].strip()
                     
                     if not title or len(title) < 5:
+                        # Создаем заголовок из URL
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
+                
+                # Очищаем заголовок от лишнего
+                title = re.sub(r'\s+', ' ', title).strip()
                 
                 articles.append({
                     'url': entry.link,
@@ -523,28 +540,42 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем h1.entry-title
+            # 1. Пробуем h1.entry-title (основной заголовок на Global Research)
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
+                logger.info(f"Найден заголовок h1.entry-title: {title[:50]}...")
             
             # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
+                    logger.info(f"Найден заголовок h1: {title[:50]}...")
             
             # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"Найден заголовок og:title: {title[:50]}...")
             
+            # 4. Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    # Удаляем название сайта из title
+                    title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
+                    title = title.strip()
+                    logger.info(f"Найден заголовок title: {title[:50]}...")
+            
+            # 5. Если ничего не нашли
             if not title:
                 title = "Global Research Article"
             
             title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"Заголовок Global Research: {title[:50]}...")
+            logger.info(f"Итоговый заголовок Global Research: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
@@ -554,29 +585,36 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
+            # Пробуем разные классы
             for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     content_container = container
                     break
             
+            # Если не нашли, пробуем article
             if not content_container:
                 content_container = soup.find('article')
             
+            # Если не нашли, пробуем main
             if not content_container:
                 content_container = soup.find('main')
             
             paragraphs = []
             if content_container:
+                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
+                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 30:
+                        # Пропускаем служебные фразы
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
             
+            # Если контента мало, пробуем найти в main
             if len(paragraphs) < 2:
                 main = soup.find('main')
                 if main:
