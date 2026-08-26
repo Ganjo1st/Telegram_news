@@ -1,36 +1,39 @@
 {
   "sent_links": [
-    "https://infobrics.org/en/post/102833/",
-    "https://infobrics.org/en/post/102831/",
     "https://infobrics.org/en/post/102830/",
     "https://infobrics.org/en/post/102827/",
-    "https://infobrics.org/en/post/102826/",
     "https://infobrics.org/en/post/102825/",
-    "https://infobrics.org/en/post/102824/",
+    "https://infobrics.org/en/post/102826/",
+    "https://infobrics.org/en/post/102831/",
+    "https://infobrics.org/en/post/102879/",
+    "https://infobrics.org/en/post/102833/",
     "https://infobrics.org/en/post/102823/",
+    "https://infobrics.org/en/post/102824/",
     "https://infobrics.org/en/post/102821/"
   ],
   "sent_hashes": [
-    "6e88b3b1fced187795851b668a4184ec",
-    "fc78176a16bf7ae2a3cc82bce53b7f7c",
-    "0f0b75fa0b1c288ed97659d2f4025a0b",
-    "0fa9ce82ae4b331ae43727e5c2790e80",
-    "16aad65fa734a145ef3bbf5d099c90b7",
     "093b0f88dcc7f14f92a2d00e736c4197",
-    "0c92aa1ffa093b8825e92edaaed881e6",
+    "c1d2814ed5510460ab0e3d6430c75b2e",
+    "47d45a067a6b82486d5af2199ef1aa3d",
     "39468d02bea66497f6402658136b4427",
-    "47d45a067a6b82486d5af2199ef1aa3d"
+    "fc78176a16bf7ae2a3cc82bce53b7f7c",
+    "6e88b3b1fced187795851b668a4184ec",
+    "0fa9ce82ae4b331ae43727e5c2790e80",
+    "0c92aa1ffa093b8825e92edaaed881e6",
+    "0f0b75fa0b1c288ed97659d2f4025a0b",
+    "16aad65fa734a145ef3bbf5d099c90b7"
   ],
   "sent_titles": [
-    "why russia and china learned to love their border the strategic logic behind a new rail crossing",
-    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
-    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029",
-    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones",
-    "the us has made nuclear threats against russia before and they are not worth taking seriously",
-    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
+    "toothless nato deploys 100k troops across eastern europe",
     "russia liberates the town of sudzha in kursk region ukraine loses another propaganda point",
     "sweden officially joins nato after final approval from hungary",
-    "toothless nato deploys 100k troops across eastern europe"
+    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones",
+    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
+    "the us has made nuclear threats against russia before and they are not worth taking seriously",
+    "brics portal",
+    "why russia and china learned to love their border the strategic logic behind a new rail crossing",
+    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
+    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029"
   ],
   "posts_log": [
     {
@@ -77,6 +80,11 @@
       "link": "https://infobrics.org/en/post/102821/",
       "title": "Toothless NATO deploys 100k troops across Eastern Europe",
       "time": "2026-08-24T08:54:07.021551"
+    },
+    {
+      "link": "https://infobrics.org/en/post/102879/",
+      "title": "BRICS portal",
+      "time": "2026-08-26T20:48:24.881759+00:00"
     }
   ]
 }
