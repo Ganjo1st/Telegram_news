@@ -61,7 +61,11 @@ BLACKLIST_TITLES = [
     'rest in peace',
     'memorial',
     'fundraiser',
-    'donate'
+    'donate',
+    'portal',
+    'welcome',
+    'about us',
+    'contact us'
 ]
 
 BLACKLIST_CONTENT = [
@@ -71,14 +75,13 @@ BLACKLIST_CONTENT = [
     'click here',
     'read more',
     'support our work',
-    'make a donation'
+    'make a donation',
+    'thank you for your support'
 ]
 
 # ========== ФУНКЦИЯ ПЕРЕВОДА ==========
 def translate_text(text: str) -> str:
-    """
-    Переводит текст с английского на русский используя Google Translate API
-    """
+    """Переводит текст с английского на русский"""
     if not text:
         return ""
     
@@ -137,6 +140,7 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
 
 def extract_image_url(soup, base_url: str) -> str | None:
     """Извлекает URL изображения из страницы"""
+    # 1. og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         img_url = meta_img['content']
@@ -147,11 +151,23 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img_url.startswith('http'):
             return img_url
     
+    # 2. twitter:image
+    meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta_twitter and meta_twitter.get('content'):
+        img_url = meta_twitter['content']
+        if img_url.startswith('//'):
+            return 'https:' + img_url
+        if img_url.startswith('/'):
+            return urljoin(base_url, img_url)
+        if img_url.startswith('http'):
+            return img_url
+    
+    # 3. Ищем в article
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
             src = img.get('src', '')
-            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation']):
+            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header']):
                 continue
             if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                 if src.startswith('//'):
@@ -161,22 +177,39 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 if src.startswith('http'):
                     return src
     
+    # 4. Любое изображение
+    for img in soup.find_all('img', src=True):
+        src = img.get('src', '')
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header']):
+            continue
+        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if src.startswith('//'):
+                return 'https:' + src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
+    
     return None
 
 def is_blacklisted(title: str, content: str = "") -> bool:
-    """Проверяет, является ли статья не-новостью (реклама, некролог и т.д.)"""
+    """Проверяет, является ли статья не-новостью"""
     title_lower = title.lower()
     content_lower = content.lower()
     
     for word in BLACKLIST_TITLES:
         if word in title_lower:
-            logger.info(f"❌ Статья отклонена (стоп-слово в заголовке: '{word}'): {title[:50]}")
+            logger.info(f"❌ Статья отклонена (стоп-слово в заголовке: '{word}')")
             return True
+    
+    if content and len(content) < 200:
+        logger.info(f"❌ Статья отклонена (слишком короткий контент: {len(content)} символов)")
+        return True
     
     if content:
         for word in BLACKLIST_CONTENT:
             if word in content_lower:
-                logger.info(f"❌ Статья отклонена (стоп-слово в контенте: '{word}'): {title[:50]}")
+                logger.info(f"❌ Статья отклонена (стоп-слово в контенте: '{word}')")
                 return True
     
     return False
@@ -192,14 +225,16 @@ def clean_content(text: str) -> str:
     text = re.sub(r'[Ss]ubscribe.*?(?=[.!?]|$)', '', text)
     text = re.sub(r'[Cc]lick\s+[Hh]ere.*?(?=[.!?]|$)', '', text)
     text = re.sub(r'[Rr]ead\s+[Mm]ore.*?(?=[.!?]|$)', '', text)
+    text = re.sub(r'[Ff]ollow\s+[Uu]s.*?(?=[.!?]|$)', '', text)
     
     # Удаляем упоминания источников
     text = re.sub(r'[Ss]ource:.*?(?=[.!?]|$)', '', text)
+    text = re.sub(r'[Vv]ia.*?(?=[.!?]|$)', '', text)
     
-    # Удаляем лишние ссылки и призывы
+    # Удаляем ссылки
     text = re.sub(r'\[.*?\]\(.*?\)', '', text)
     
-    # Очищаем от множественных пробелов и пустых строк
+    # Удаляем лишние пробелы и переносы
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
@@ -386,6 +421,7 @@ class NewsBot:
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
+        """Получает список статей с InfoBrics через RSS"""
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
@@ -401,6 +437,12 @@ class NewsBot:
                     if not title or len(title) < 5:
                         link = entry.get('link', '')
                         title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
+                
+                # Пропускаем пустые или слишком общие заголовки
+                if title.lower() in ['brics portal', 'portal', 'info brics']:
+                    logger.info(f"❌ Пропущен общий заголовок: {title}")
+                    continue
+                
                 articles.append({'url': entry.link, 'title': title})
             return articles
         except Exception as e:
@@ -408,6 +450,7 @@ class NewsBot:
             return []
 
     def _parse_infobrics_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью InfoBrics"""
         try:
             response = fetch_url(url)
             if not response:
@@ -416,19 +459,26 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Поиск заголовка
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
+            
+            # 1. h1
             h1 = soup.find('h1')
             if h1:
                 title = h1.get_text(strip=True)
                 if title == '{[title]}':
                     title = None
             
+            # 2. og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    # Пропускаем общие заголовки
+                    if title.lower() in ['brics portal', 'portal']:
+                        title = None
             
+            # 3. title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
@@ -436,15 +486,16 @@ class NewsBot:
                     title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
             
-            if not title:
+            if not title or title.lower() in ['brics portal', 'portal']:
+                logger.warning(f"❌ Не удалось найти заголовок или он общий")
                 return None
             
             title = re.sub(r'\s+', ' ', title).strip()
 
-            # Поиск изображения
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
 
-            # Поиск контента
+            # === ПОИСК КОНТЕНТА ===
             content_container = None
             for class_name in ['article__text', 'article-content', 'post-content', 'entry-content', 'content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
@@ -471,7 +522,7 @@ class NewsBot:
             if len(content) < 150:
                 return None
 
-            # Фильтрация не-новостей
+            # Фильтрация
             if is_blacklisted(title, content):
                 return None
 
@@ -489,6 +540,7 @@ class NewsBot:
 
     # ========== ПАРСИНГ GLOBAL RESEARCH ==========
     def _get_globalresearch_articles(self) -> list:
+        """Получает список статей с Global Research через RSS"""
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
@@ -505,7 +557,7 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
                 
-                # Проверяем заголовок на стоп-слова
+                # Проверяем на стоп-слова
                 if is_blacklisted(title):
                     continue
                 
@@ -516,6 +568,7 @@ class NewsBot:
             return []
 
     def _parse_globalresearch_article(self, url: str) -> dict | None:
+        """Парсит отдельную статью Global Research"""
         try:
             response = fetch_url(url)
             if not response:
@@ -527,36 +580,41 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # Пробуем h1.entry-title (основной заголовок)
+            # 1. h1.entry-title (основной заголовок)
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
+                logger.info(f"✅ Найден заголовок h1.entry-title: {title[:50]}...")
             
-            # Пробуем h1
+            # 2. h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
+                    logger.info(f"✅ Найден заголовок h1: {title[:50]}...")
             
-            # Пробуем meta og:title
+            # 3. og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"✅ Найден заголовок og:title: {title[:50]}...")
             
-            # Пробуем title
+            # 4. title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
+                    logger.info(f"✅ Найден заголовок title: {title[:50]}...")
             
             if not title:
+                logger.warning(f"❌ Не удалось найти заголовок")
                 return None
             
             title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"✅ Найден заголовок: {title[:50]}...")
+            logger.info(f"📌 Итоговый заголовок: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
@@ -581,11 +639,9 @@ class NewsBot:
             
             paragraphs = []
             if content_container:
-                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     # Фильтруем короткие и служебные параграфы
@@ -593,19 +649,19 @@ class NewsBot:
                         paragraphs.append(text)
             
             if len(paragraphs) < 2:
-                logger.warning(f"❌ Недостаточно контента для {url}")
+                logger.warning(f"❌ Недостаточно контента ({len(paragraphs)} параграфов)")
                 return None
 
             content = '\n\n'.join(paragraphs)
             
-            # Очищаем контент от призывов и ссылок
+            # Очищаем контент
             content = clean_content(content)
             
             if len(content) < 150:
                 logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
-            # Фильтрация не-новостей
+            # Фильтрация
             if is_blacklisted(title, content):
                 return None
 
@@ -625,7 +681,7 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
 
-        # 1. InfoBrics
+        # 1. InfoBrics - берем до 3 статей
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:3]:
@@ -636,7 +692,7 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
-        # 2. Global Research
+        # 2. Global Research - берем до 3 статей
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:3]:
@@ -666,7 +722,8 @@ class NewsBot:
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             
-            logger.info(f"📝 Начинается перевод: {title_en[:50]}...")
+            logger.info(f"📝 Перевод заголовка: {title_en[:50]}...")
+            logger.info(f"📝 Перевод {len(caption_text)} символов текста")
 
             # Перевод
             loop = asyncio.get_event_loop()
