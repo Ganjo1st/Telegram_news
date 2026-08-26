@@ -14,7 +14,7 @@ import hashlib
 import re
 import html
 import random
-import time
+import shutil
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, quote
 
@@ -48,52 +48,11 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ФУНКЦИЯ ПЕРЕВОДА С РАЗБИВКОЙ НА ЧАСТИ ==========
-def translate_text_chunk(text: str) -> str:
-    """
-    Переводит один фрагмент текста (до 500 символов)
-    """
-    if not text:
-        return ""
-    
-    # Если текст уже на русском, возвращаем как есть
-    if re.search('[а-яА-Я]', text):
-        return text
-    
-    # Метод 1: deep_translator
-    try:
-        from deep_translator import GoogleTranslator
-        translator = GoogleTranslator(source='en', target='ru')
-        result = translator.translate(text)
-        if result:
-            logger.info(f"✅ Перевод фрагмента через deep_translator. Длина: {len(result)} символов")
-            return result
-    except Exception as e:
-        logger.warning(f"deep_translator не сработал: {e}")
-    
-    # Метод 2: MyMemory API (с лимитом 500 символов)
-    try:
-        # Обрезаем до 500 символов для MyMemory
-        if len(text) > 480:
-            text = text[:480]
-        url = f"https://api.mymemory.translated.net/get?q={quote(text)}&langpair=en|ru"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'responseData' in data and 'translatedText' in data['responseData']:
-                result = data['responseData']['translatedText']
-                if result:
-                    logger.info(f"✅ Перевод фрагмента через MyMemory API. Длина: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"MyMemory API не сработал: {e}")
-    
-    # Если ничего не сработало, возвращаем оригинал
-    return text
-
+# ========== ФУНКЦИЯ ПЕРЕВОДА (прямой запрос к Google Translate) ==========
 def translate_text(text: str) -> str:
     """
-    Переводит длинный текст, разбивая на фрагменты по 450 символов
+    Переводит текст с английского на русский используя Google Translate API напрямую
+    (рабочий метод из прошлых версий)
     """
     if not text:
         return ""
@@ -102,26 +61,51 @@ def translate_text(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
     
-    # Разбиваем текст на фрагменты по 450 символов (с запасом для MyMemory)
-    chunks = []
-    for i in range(0, len(text), 450):
-        chunk = text[i:i+450]
-        chunks.append(chunk)
-    
-    logger.info(f"📝 Разбивка текста на {len(chunks)} фрагментов для перевода")
-    
-    translated_chunks = []
-    for i, chunk in enumerate(chunks):
-        logger.info(f"🔄 Перевод фрагмента {i+1}/{len(chunks)}...")
-        translated = translate_text_chunk(chunk)
-        translated_chunks.append(translated)
-        # Пауза между запросами
-        if i < len(chunks) - 1:
-            time.sleep(0.5)
-    
-    result = " ".join(translated_chunks)
-    logger.info(f"✅ Перевод завершен. Итоговая длина: {len(result)} символов")
-    return result
+    try:
+        # Кодируем текст для URL
+        encoded_text = quote(text)
+        
+        # Формируем запрос к Google Translate
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={encoded_text}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Извлекаем перевод из ответа
+            if data and len(data) > 0 and len(data[0]) > 0:
+                translated = ''.join([part[0] for part in data[0] if part[0]])
+                if translated:
+                    logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
+                    return translated
+        
+        # Если Google API не сработал, пробуем MyMemory (с лимитом 500 символов)
+        try:
+            # Обрезаем до 450 символов для MyMemory
+            if len(text) > 450:
+                text = text[:450]
+            url = f"https://api.mymemory.translated.net/get?q={quote(text)}&langpair=en|ru"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and 'responseData' in data and 'translatedText' in data['responseData']:
+                    result = data['responseData']['translatedText']
+                    if result:
+                        logger.info(f"✅ Перевод выполнен через MyMemory API. Длина: {len(result)} символов")
+                        return result
+        except Exception as e:
+            logger.warning(f"MyMemory API не сработал: {e}")
+        
+        logger.warning("⚠️ Не удалось перевести текст, возвращаем оригинал")
+        return text
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка перевода: {e}")
+        return text
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
@@ -194,9 +178,55 @@ def extract_image_url(soup, base_url: str) -> str | None:
     
     return None
 
+def clean_old_data():
+    """Очищает старые файлы состояния и метаданных"""
+    try:
+        # Очищаем state_news_bot.json
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Оставляем только последние 7 дней публикаций
+            cutoff = get_local_time() - timedelta(days=7)
+            if 'posts_log' in data:
+                data['posts_log'] = [
+                    post for post in data['posts_log']
+                    if datetime.fromisoformat(post['time']) > cutoff
+                ]
+            
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info("🧹 state_news_bot.json очищен от старых записей")
+        
+        # Очищаем posts_meta.json (оставляем только 7 дней)
+        if os.path.exists(META_FILE):
+            with open(META_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if 'posts' in data:
+                cutoff = get_local_time() - timedelta(days=7)
+                cleaned_posts = {}
+                for pid, post_data in data['posts'].items():
+                    try:
+                        if datetime.fromisoformat(post_data.get('time', '')) > cutoff:
+                            cleaned_posts[pid] = post_data
+                    except:
+                        cleaned_posts[pid] = post_data
+                data['posts'] = cleaned_posts
+            
+            with open(META_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info("🧹 posts_meta.json очищен от старых записей")
+            
+    except Exception as e:
+        logger.error(f"Ошибка очистки данных: {e}")
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
+        # Очищаем старые данные при запуске
+        clean_old_data()
+        
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
@@ -244,7 +274,7 @@ class NewsBot:
 
     def _save_meta(self):
         try:
-            cutoff = get_local_time() - timedelta(days=30)
+            cutoff = get_local_time() - timedelta(days=7)
             cleaned = {}
             for pid, data in self.meta.get('posts', {}).items():
                 try:
@@ -716,40 +746,36 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
+            # === ПОДГОТОВКА ТЕКСТА ДЛЯ ПУБЛИКАЦИИ ===
+            # Берем только первые 1024 символа для подписи к фото
+            caption_text = content_en[:MAX_CAPTION]
+            # Обрезаем до последнего предложения
+            caption_text = self._truncate_text(caption_text, is_caption=True)
+            
             logger.info(f"📝 Начинается перевод: {title_en[:50]}...")
+            logger.info(f"📝 Переводится {len(caption_text)} символов текста для подписи")
 
-            # === ПЕРЕВОД ===
+            # === ПЕРЕВОД ТОЛЬКО ТОГО, ЧТО БУДЕТ ОПУБЛИКОВАНО ===
             loop = asyncio.get_event_loop()
             
             # Переводим заголовок
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
-            # Если перевод не удался, пробуем еще раз
-            if not re.search('[а-яА-Я]', title_ru):
-                logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
-                title_ru = await loop.run_in_executor(None, translate_text, title_en)
-            
-            # Переводим контент с разбивкой на части
-            content_ru = await loop.run_in_executor(None, translate_text, content_en)
-            
-            # Проверяем перевод контента
-            if not re.search('[а-яА-Я]', content_ru):
-                logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                content_ru = await loop.run_in_executor(None, translate_text, content_en)
+            # Переводим только ту часть контента, которая будет опубликована
+            content_ru = await loop.run_in_executor(None, translate_text, caption_text)
 
             # Очистка от мусора
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
 
-            # Сохраняем метаданные
+            # Сохраняем метаданные с оригинальным контентом
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
             # Формируем сообщение на РУССКОМ
             title_escaped = html.escape(title_ru)
-            content_truncated = self._truncate_text(content_ru, is_caption=True)
-            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
+            message = f"📰 *{title_escaped}*\n\n{content_ru}"
 
             # === ПУБЛИКАЦИЯ С ФОТО ===
             if image_url:
@@ -779,10 +805,9 @@ class NewsBot:
 
             # === ПУБЛИКАЦИЯ ТЕКСТОМ ===
             logger.info("📝 Публикация текстом (без фото)")
-            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
-                text=text_message,
+                text=message,
                 parse_mode='Markdown',
                 disable_web_page_preview=False
             )
