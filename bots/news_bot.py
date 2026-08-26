@@ -838,4 +838,22 @@ class NewsBot:
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f
+                logger.error(f"❌ Критическая ошибка: {e}")
+                await asyncio.sleep(300)
+
+async def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN не задан!")
+        return
+    if not CHANNEL_ID:
+        logger.error("❌ CHANNEL_ID не задан!")
+        return
+
+    bot = NewsBot()
+    if 'GITHUB_ACTIONS' in os.environ:
+        await bot.run_once()
+    else:
+        await bot.run_forever()
+
+if __name__ == '__main__':
+    asyncio.run(main())
