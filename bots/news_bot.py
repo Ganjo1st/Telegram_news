@@ -15,7 +15,7 @@ import re
 import html
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin
 
 import requests
 import feedparser
@@ -23,7 +23,18 @@ from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
 
-# ========== НАСТРОЙКА ==========
+# ========== НАСТРОЙКА ПЕРЕВОДЧИКА ==========
+try:
+    from deep_translator import GoogleTranslator
+    TRANSLATOR_AVAILABLE = True
+    logger_initial = logging.getLogger('news_bot_init')
+    logger_initial.info("✅ deep_translator загружен успешно")
+except ImportError:
+    TRANSLATOR_AVAILABLE = False
+    logger_initial = logging.getLogger('news_bot_init')
+    logger_initial.warning("⚠️ deep_translator не найден, перевод будет отключен")
+
+# ========== НАСТРОЙКА ЛОГГИРОВАНИЯ ==========
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -47,10 +58,10 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ФУНКЦИЯ ПЕРЕВОДА (прямой запрос к Google Translate) ==========
+# ========== ФУНКЦИЯ ПЕРЕВОДА ==========
 def translate_text(text: str) -> str:
     """
-    Переводит текст с английского на русский используя Google Translate API напрямую
+    Переводит текст с английского на русский используя deep_translator
     """
     if not text:
         return ""
@@ -59,35 +70,25 @@ def translate_text(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
     
+    if not TRANSLATOR_AVAILABLE:
+        logger.warning("⚠️ Переводчик недоступен, возвращаем оригинал")
+        return text
+    
     try:
         # Обрезаем длинные тексты
-        if len(text) > 5000:
-            text = text[:5000]
+        if len(text) > 4000:
+            text = text[:4000]
         
-        # Кодируем текст для URL
-        encoded_text = quote(text)
+        translator = GoogleTranslator(source='en', target='ru')
+        result = translator.translate(text)
         
-        # Формируем запрос к Google Translate
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={encoded_text}"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            # Извлекаем перевод из ответа
-            if data and len(data) > 0 and len(data[0]) > 0:
-                translated = ''.join([part[0] for part in data[0] if part[0]])
-                if translated:
-                    logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
-                    return translated
-        
-        logger.warning("⚠️ Не удалось перевести текст через Google API, возвращаем оригинал")
-        return text
-        
+        if result:
+            logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
+            return result
+        else:
+            logger.warning("⚠️ Перевод вернул пустой результат")
+            return text
+            
     except Exception as e:
         logger.error(f"❌ Ошибка перевода: {e}")
         return text
@@ -433,7 +434,6 @@ class NewsBot:
             
             # 5. Если ничего не нашли
             if not title or title == '{[title]}':
-                # Пробуем извлечь из URL
                 url_id = url.split('/')[-1]
                 title = f"InfoBrics Article {url_id}"
             
@@ -694,14 +694,14 @@ class NewsBot:
             # Переводим заголовок
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
-            # Если перевод не удался, пробуем еще раз (но уже без проверки на кириллицу)
+            # Если перевод не удался, пробуем еще раз
             if not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
                 title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
             # Переводим контент по частям
             content_ru = ""
-            if len(content_en) > 5000:
+            if len(content_en) > 4000:
                 parts = []
                 for i in range(0, len(content_en), 3000):
                     part = content_en[i:i+3000]
@@ -714,7 +714,7 @@ class NewsBot:
             # Проверяем перевод контента
             if not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                if len(content_en) > 5000:
+                if len(content_en) > 4000:
                     parts = []
                     for i in range(0, len(content_en), 3000):
                         part = content_en[i:i+3000]
