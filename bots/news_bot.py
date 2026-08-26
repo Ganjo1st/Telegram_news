@@ -47,7 +47,7 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ФУНКЦИИ ПЕРЕВОДА (без внешних библиотек) ==========
+# ========== ФУНКЦИЯ ПЕРЕВОДА (прямой запрос к Google Translate) ==========
 def translate_text(text: str) -> str:
     """
     Переводит текст с английского на русский используя Google Translate API напрямую
@@ -61,8 +61,8 @@ def translate_text(text: str) -> str:
     
     try:
         # Обрезаем длинные тексты
-        if len(text) > 2000:
-            text = text[:2000]
+        if len(text) > 5000:
+            text = text[:5000]
         
         # Кодируем текст для URL
         encoded_text = quote(text)
@@ -85,18 +85,7 @@ def translate_text(text: str) -> str:
                     logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
                     return translated
         
-        # Если не получилось через Google API, пробуем через deep_translator
-        try:
-            from deep_translator import GoogleTranslator
-            translator = GoogleTranslator(source='en', target='ru')
-            result = translator.translate(text)
-            if result:
-                logger.info(f"✅ Перевод выполнен через deep_translator. Длина: {len(result)} символов")
-                return result
-        except Exception as e:
-            logger.warning(f"deep_translator не сработал: {e}")
-        
-        logger.warning("⚠️ Не удалось перевести текст, возвращаем оригинал")
+        logger.warning("⚠️ Не удалось перевести текст через Google API, возвращаем оригинал")
         return text
         
     except Exception as e:
@@ -180,7 +169,10 @@ class NewsBot:
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
+        # Флаг тестового режима - отключает все ограничения
         self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+        if self.test_mode:
+            logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ: все ограничения отключены")
 
     def _load_state(self) -> dict:
         try:
@@ -301,7 +293,7 @@ class NewsBot:
     def _can_post(self) -> bool:
         # В тестовом режиме публикуем всегда
         if self.test_mode:
-            logger.info("🧪 Тестовый режим: публикация разрешена")
+            logger.info("🧪 Тестовый режим: публикация разрешена (ограничения отключены)")
             return True
             
         now = get_local_time()
@@ -338,7 +330,7 @@ class NewsBot:
 
     def _next_delay(self) -> int:
         if self.test_mode:
-            return 60
+            return 60  # В тестовом режиме проверяем каждую минуту
         delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
@@ -413,24 +405,25 @@ class NewsBot:
             h1 = soup.find('h1')
             if h1:
                 title = h1.get_text(strip=True)
-                logger.info(f"Найден h1: {title[:50]}...")
+                if title != '{[title]}':
+                    logger.info(f"Найден h1: {title[:50]}...")
             
             # 2. Пробуем meta og:title
-            if not title:
+            if not title or title == '{[title]}':
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
                     logger.info(f"Найден og:title: {title[:50]}...")
             
             # 3. Пробуем entry-title
-            if not title:
+            if not title or title == '{[title]}':
                 entry_title = soup.find('h2', class_='entry-title')
                 if entry_title:
                     title = entry_title.get_text(strip=True)
                     logger.info(f"Найден entry-title: {title[:50]}...")
             
             # 4. Пробуем title тег
-            if not title:
+            if not title or title == '{[title]}':
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
@@ -438,8 +431,11 @@ class NewsBot:
                     title = title.strip()
                     logger.info(f"Найден title: {title[:50]}...")
             
+            # 5. Если ничего не нашли
             if not title or title == '{[title]}':
-                title = "InfoBrics Article"
+                # Пробуем извлечь из URL
+                url_id = url.split('/')[-1]
+                title = f"InfoBrics Article {url_id}"
             
             title = re.sub(r'\s+', ' ', title).strip()
             logger.info(f"Итоговый заголовок InfoBrics: {title[:50]}...")
@@ -698,17 +694,17 @@ class NewsBot:
             # Переводим заголовок
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
-            # Если перевод не удался, пробуем еще раз
+            # Если перевод не удался, пробуем еще раз (но уже без проверки на кириллицу)
             if not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
                 title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
             # Переводим контент по частям
             content_ru = ""
-            if len(content_en) > 2000:
+            if len(content_en) > 5000:
                 parts = []
-                for i in range(0, len(content_en), 1500):
-                    part = content_en[i:i+1500]
+                for i in range(0, len(content_en), 3000):
+                    part = content_en[i:i+3000]
                     translated_part = await loop.run_in_executor(None, translate_text, part)
                     parts.append(translated_part)
                 content_ru = " ".join(parts)
@@ -718,10 +714,10 @@ class NewsBot:
             # Проверяем перевод контента
             if not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                if len(content_en) > 2000:
+                if len(content_en) > 5000:
                     parts = []
-                    for i in range(0, len(content_en), 1500):
-                        part = content_en[i:i+1500]
+                    for i in range(0, len(content_en), 3000):
+                        part = content_en[i:i+3000]
                         translated_part = await loop.run_in_executor(None, translate_text, part)
                         parts.append(translated_part)
                     content_ru = " ".join(parts)
