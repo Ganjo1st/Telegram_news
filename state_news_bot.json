@@ -1,48 +1,50 @@
 {
   "sent_links": [
-    "https://infobrics.org/en/post/102876/",
-    "https://www.globalresearch.ca/european-solidarity-risk-10-countries-restore-border-checks/5938010",
-    "https://infobrics.org/en/post/102824/",
-    "https://infobrics.org/en/post/102874/",
     "https://infobrics.org/en/post/102826/",
-    "https://infobrics.org/en/post/102825/",
-    "https://infobrics.org/en/post/102831/",
     "https://infobrics.org/en/post/102833/",
-    "https://infobrics.org/en/post/102823/",
     "https://infobrics.org/en/post/102821/",
-    "https://infobrics.org/en/post/102879/",
     "https://infobrics.org/en/post/102830/",
+    "https://infobrics.org/en/post/102827/",
+    "https://infobrics.org/en/post/102876/",
+    "https://infobrics.org/en/post/102823/",
+    "https://infobrics.org/en/post/102824/",
+    "https://infobrics.org/en/post/102879/",
     "https://www.globalresearch.ca/memory-dr-david-halpin/5938059",
-    "https://infobrics.org/en/post/102827/"
+    "https://infobrics.org/en/post/102825/",
+    "https://infobrics.org/en/post/102880/",
+    "https://infobrics.org/en/post/102874/",
+    "https://infobrics.org/en/post/102831/",
+    "https://www.globalresearch.ca/european-solidarity-risk-10-countries-restore-border-checks/5938010"
   ],
   "sent_hashes": [
-    "16aad65fa734a145ef3bbf5d099c90b7",
-    "2e15d3dbec50da5e9c0901d96b8191e1",
-    "3c9ecd5c9a1c74c5ecdcc98c95e3e8f3",
-    "093b0f88dcc7f14f92a2d00e736c4197",
-    "0c92aa1ffa093b8825e92edaaed881e6",
-    "6af9c5ed9d8250091d7781c87ee0a62d",
-    "0f0b75fa0b1c288ed97659d2f4025a0b",
-    "47d45a067a6b82486d5af2199ef1aa3d",
-    "0fa9ce82ae4b331ae43727e5c2790e80",
-    "39468d02bea66497f6402658136b4427",
-    "c1d2814ed5510460ab0e3d6430c75b2e",
+    "6e88b3b1fced187795851b668a4184ec",
     "fc78176a16bf7ae2a3cc82bce53b7f7c",
     "fed235249ce5ec91cf5c298bee21c7ee",
-    "6e88b3b1fced187795851b668a4184ec"
+    "47d45a067a6b82486d5af2199ef1aa3d",
+    "0fa9ce82ae4b331ae43727e5c2790e80",
+    "093b0f88dcc7f14f92a2d00e736c4197",
+    "b9ef4d032c4e4d419f3c7130dae8571b",
+    "c1d2814ed5510460ab0e3d6430c75b2e",
+    "16aad65fa734a145ef3bbf5d099c90b7",
+    "0f0b75fa0b1c288ed97659d2f4025a0b",
+    "39468d02bea66497f6402658136b4427",
+    "0c92aa1ffa093b8825e92edaaed881e6",
+    "3c9ecd5c9a1c74c5ecdcc98c95e3e8f3",
+    "2e15d3dbec50da5e9c0901d96b8191e1",
+    "6af9c5ed9d8250091d7781c87ee0a62d"
   ],
   "sent_titles": [
-    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
-    "toothless nato deploys 100k troops across eastern europe",
-    "the us has made nuclear threats against russia before and they are not worth taking seriously",
-    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
-    "russia liberates the town of sudzha in kursk region ukraine loses another propaganda point",
     "sweden officially joins nato after final approval from hungary",
-    "global research",
-    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029",
     "why russia and china learned to love their border the strategic logic behind a new rail crossing",
+    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
+    "global research",
+    "the us has made nuclear threats against russia before and they are not worth taking seriously",
+    "russia liberates the town of sudzha in kursk region ukraine loses another propaganda point",
     "brics portal",
-    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones"
+    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
+    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones",
+    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029",
+    "toothless nato deploys 100k troops across eastern europe"
   ],
   "posts_log": [
     {
@@ -114,6 +116,11 @@
       "link": "https://www.globalresearch.ca/memory-dr-david-halpin/5938059",
       "title": "Global Research",
       "time": "2026-08-26T21:12:02.584050+00:00"
+    },
+    {
+      "link": "https://infobrics.org/en/post/102880/",
+      "title": "BRICS portal",
+      "time": "2026-08-26T21:24:50.329098+00:00"
     }
   ]
 }
