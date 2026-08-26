@@ -23,8 +23,8 @@ from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
 
-# Импортируем переводчик с явным указанием
-from deep_translator import GoogleTranslator
+# Используем googletrans вместо deep_translator (более стабильный)
+from googletrans import Translator
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -127,8 +127,8 @@ class NewsBot:
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        # Создаем переводчик с явными параметрами
-        self.translator = GoogleTranslator(source='en', target='ru')
+        # Используем googletrans
+        self.translator = Translator()
         # Флаг тестового режима
         self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
@@ -315,7 +315,7 @@ class NewsBot:
 
     def _translate_text(self, text: str) -> str:
         """
-        Надежный перевод текста с английского на русский
+        Надежный перевод текста с английского на русский с использованием googletrans
         """
         if not text:
             return ""
@@ -326,15 +326,15 @@ class NewsBot:
         
         try:
             # Обрезаем длинные тексты для API
-            if len(text) > 4000:
-                text = text[:4000]
+            if len(text) > 3000:
+                text = text[:3000]
             
             # Пробуем перевести
-            result = self.translator.translate(text)
+            result = self.translator.translate(text, src='en', dest='ru')
             
-            if result and len(result) > 0:
-                logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
-                return result
+            if result and result.text:
+                logger.info(f"✅ Перевод выполнен. Длина: {len(result.text)} символов")
+                return result.text
             else:
                 logger.warning("⚠️ Перевод вернул пустой результат")
                 return text
@@ -398,25 +398,38 @@ class NewsBot:
             h1 = soup.find('h1')
             if h1:
                 title = h1.get_text(strip=True)
+                logger.info(f"Найден h1: {title[:50]}...")
             
             # 2. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"Найден og:title: {title[:50]}...")
             
             # 3. Пробуем entry-title
             if not title:
                 entry_title = soup.find('h2', class_='entry-title')
                 if entry_title:
                     title = entry_title.get_text(strip=True)
+                    logger.info(f"Найден entry-title: {title[:50]}...")
             
-            # 4. Если ничего не нашли
+            # 4. Пробуем title тег
+            if not title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    # Удаляем название сайта
+                    title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
+                    title = title.strip()
+                    logger.info(f"Найден title: {title[:50]}...")
+            
+            # 5. Если ничего не нашли
             if not title or title == '{[title]}':
                 title = "InfoBrics Article"
             
             title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"Заголовок InfoBrics: {title[:50]}...")
+            logger.info(f"Итоговый заголовок InfoBrics: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
@@ -544,21 +557,21 @@ class NewsBot:
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
-                logger.info(f"Найден заголовок h1.entry-title: {title[:50]}...")
+                logger.info(f"Найден h1.entry-title: {title[:50]}...")
             
             # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-                    logger.info(f"Найден заголовок h1: {title[:50]}...")
+                    logger.info(f"Найден h1: {title[:50]}...")
             
             # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    logger.info(f"Найден заголовок og:title: {title[:50]}...")
+                    logger.info(f"Найден og:title: {title[:50]}...")
             
             # 4. Пробуем title тег
             if not title:
@@ -568,7 +581,7 @@ class NewsBot:
                     # Удаляем название сайта из title
                     title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
-                    logger.info(f"Найден заголовок title: {title[:50]}...")
+                    logger.info(f"Найден title: {title[:50]}...")
             
             # 5. Если ничего не нашли
             if not title:
@@ -701,11 +714,11 @@ class NewsBot:
             
             # Переводим контент по частям, если он длинный
             content_ru = ""
-            if len(content_en) > 4000:
-                # Разбиваем на части по 3000 символов
+            if len(content_en) > 3000:
+                # Разбиваем на части по 2000 символов
                 parts = []
-                for i in range(0, len(content_en), 3000):
-                    part = content_en[i:i+3000]
+                for i in range(0, len(content_en), 2000):
+                    part = content_en[i:i+2000]
                     translated_part = await loop.run_in_executor(None, self._translate_text, part)
                     parts.append(translated_part)
                 content_ru = " ".join(parts)
@@ -715,10 +728,10 @@ class NewsBot:
             # Проверяем перевод контента
             if not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                if len(content_en) > 4000:
+                if len(content_en) > 3000:
                     parts = []
-                    for i in range(0, len(content_en), 3000):
-                        part = content_en[i:i+3000]
+                    for i in range(0, len(content_en), 2000):
+                        part = content_en[i:i+2000]
                         translated_part = await loop.run_in_executor(None, self._translate_text, part)
                         parts.append(translated_part)
                     content_ru = " ".join(parts)
@@ -825,22 +838,4 @@ class NewsBot:
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"❌ Критическая ошибка: {e}")
-                await asyncio.sleep(300)
-
-async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан!")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан!")
-        return
-
-    bot = NewsBot()
-    if 'GITHUB_ACTIONS' in os.environ:
-        await bot.run_once()
-    else:
-        await bot.run_forever()
-
-if __name__ == '__main__':
-    asyncio.run(main())
+                logger.error(f
