@@ -48,10 +48,10 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ФУНКЦИЯ ПЕРЕВОДА (несколько методов) ==========
-def translate_text(text: str) -> str:
+# ========== ФУНКЦИЯ ПЕРЕВОДА С РАЗБИВКОЙ НА ЧАСТИ ==========
+def translate_text_chunk(text: str) -> str:
     """
-    Переводит текст с английского на русский используя несколько методов
+    Переводит один фрагмент текста (до 500 символов)
     """
     if not text:
         return ""
@@ -60,45 +60,22 @@ def translate_text(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
     
-    # Обрезаем длинные тексты
-    if len(text) > 3000:
-        text = text[:3000]
-    
     # Метод 1: deep_translator
     try:
         from deep_translator import GoogleTranslator
         translator = GoogleTranslator(source='en', target='ru')
         result = translator.translate(text)
         if result:
-            logger.info(f"✅ Перевод выполнен через deep_translator. Длина: {len(result)} символов")
+            logger.info(f"✅ Перевод фрагмента через deep_translator. Длина: {len(result)} символов")
             return result
     except Exception as e:
         logger.warning(f"deep_translator не сработал: {e}")
     
-    # Метод 2: Прямой запрос к Google Translate API с паузой
+    # Метод 2: MyMemory API (с лимитом 500 символов)
     try:
-        time.sleep(1)  # Пауза для избежания 429 ошибки
-        encoded_text = quote(text)
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q={encoded_text}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0 and len(data[0]) > 0:
-                translated = ''.join([part[0] for part in data[0] if part[0]])
-                if translated:
-                    logger.info(f"✅ Перевод выполнен через Google API. Длина: {len(translated)} символов")
-                    return translated
-        elif response.status_code == 429:
-            logger.warning("Google API вернул 429, пробуем другой метод...")
-    except Exception as e:
-        logger.warning(f"Google API не сработал: {e}")
-    
-    # Метод 3: MyMemory API (бесплатный переводчик)
-    try:
+        # Обрезаем до 500 символов для MyMemory
+        if len(text) > 480:
+            text = text[:480]
         url = f"https://api.mymemory.translated.net/get?q={quote(text)}&langpair=en|ru"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
@@ -106,14 +83,45 @@ def translate_text(text: str) -> str:
             if data and 'responseData' in data and 'translatedText' in data['responseData']:
                 result = data['responseData']['translatedText']
                 if result:
-                    logger.info(f"✅ Перевод выполнен через MyMemory API. Длина: {len(result)} символов")
+                    logger.info(f"✅ Перевод фрагмента через MyMemory API. Длина: {len(result)} символов")
                     return result
     except Exception as e:
         logger.warning(f"MyMemory API не сработал: {e}")
     
     # Если ничего не сработало, возвращаем оригинал
-    logger.warning("⚠️ Не удалось перевести текст, возвращаем оригинал")
     return text
+
+def translate_text(text: str) -> str:
+    """
+    Переводит длинный текст, разбивая на фрагменты по 450 символов
+    """
+    if not text:
+        return ""
+    
+    # Если текст уже на русском, возвращаем как есть
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    # Разбиваем текст на фрагменты по 450 символов (с запасом для MyMemory)
+    chunks = []
+    for i in range(0, len(text), 450):
+        chunk = text[i:i+450]
+        chunks.append(chunk)
+    
+    logger.info(f"📝 Разбивка текста на {len(chunks)} фрагментов для перевода")
+    
+    translated_chunks = []
+    for i, chunk in enumerate(chunks):
+        logger.info(f"🔄 Перевод фрагмента {i+1}/{len(chunks)}...")
+        translated = translate_text_chunk(chunk)
+        translated_chunks.append(translated)
+        # Пауза между запросами
+        if i < len(chunks) - 1:
+            time.sleep(0.5)
+    
+    result = " ".join(translated_chunks)
+    logger.info(f"✅ Перевод завершен. Итоговая длина: {len(result)} символов")
+    return result
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
@@ -721,30 +729,13 @@ class NewsBot:
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
                 title_ru = await loop.run_in_executor(None, translate_text, title_en)
             
-            # Переводим контент по частям
-            content_ru = ""
-            if len(content_en) > 3000:
-                parts = []
-                for i in range(0, len(content_en), 2000):
-                    part = content_en[i:i+2000]
-                    translated_part = await loop.run_in_executor(None, translate_text, part)
-                    parts.append(translated_part)
-                content_ru = " ".join(parts)
-            else:
-                content_ru = await loop.run_in_executor(None, translate_text, content_en)
+            # Переводим контент с разбивкой на части
+            content_ru = await loop.run_in_executor(None, translate_text, content_en)
             
             # Проверяем перевод контента
             if not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, повторная попытка...")
-                if len(content_en) > 3000:
-                    parts = []
-                    for i in range(0, len(content_en), 2000):
-                        part = content_en[i:i+2000]
-                        translated_part = await loop.run_in_executor(None, translate_text, part)
-                        parts.append(translated_part)
-                    content_ru = " ".join(parts)
-                else:
-                    content_ru = await loop.run_in_executor(None, translate_text, content_en)
+                content_ru = await loop.run_in_executor(None, translate_text, content_en)
 
             # Очистка от мусора
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
