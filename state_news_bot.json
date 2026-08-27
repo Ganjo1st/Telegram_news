@@ -1,6 +1,18 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": []
+  "sent_links": [
+    "https://infobrics.org/en/post/102892/"
+  ],
+  "sent_hashes": [
+    "bd208823b5498f10448d2e8a83d3521c"
+  ],
+  "sent_titles": [
+    "title"
+  ],
+  "posts_log": [
+    {
+      "link": "https://infobrics.org/en/post/102892/",
+      "title": "{[title]}",
+      "time": "2026-08-28T00:14:29.323192+00:00"
+    }
+  ]
 }
