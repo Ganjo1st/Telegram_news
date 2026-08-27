@@ -240,7 +240,19 @@ def clean_content(text: str) -> str:
     # Удаляем ссылки
     text = re.sub(r'\[.*?\]\(.*?\)', '', text)
     
-    # Нормализуем переносы - убираем лишние пустые строки
+    # Удаляем длинные вступления авторов и сокращаем их
+    # Шаблон: "Имя Фамилия, должность, организация, еще что-то" -> "Имя Фамилия - должность"
+    text = re.sub(
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:member\s+of\s+the\s+)?([A-Za-z\s]+?)(?:,\s*[A-Za-z\s]+?)?(?:,\s*[A-Za-z\s]+?)?(?=[.!?]|$)',
+        r'\1 - \2',
+        text
+    )
+    
+    # Сокращаем длинные должности
+    text = re.sub(r'research\s+assistant\s+at\s+the\s+Center\s+for\s+Geostrategic\s+Studies', 'researcher at Center for Geostrategic Studies', text, flags=re.IGNORECASE)
+    text = re.sub(r'member\s+of\s+the\s+BRICS\s+Journalists\s+Association', 'BRICS journalist', text, flags=re.IGNORECASE)
+    
+    # Нормализуем переносы
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
@@ -268,7 +280,6 @@ def is_complete_sentence(text: str) -> bool:
     """Проверяет, заканчивается ли текст полным предложением"""
     if not text:
         return False
-    # Проверяем, заканчивается ли текст на . ! ? или ...
     return re.search(r'[.!?…]\s*$', text)
 
 def ensure_complete_sentence(text: str) -> str:
@@ -276,18 +287,32 @@ def ensure_complete_sentence(text: str) -> str:
     if not text:
         return ""
     
-    # Ищем последний конец предложения (. ! ?)
     for punct in ['.', '!', '?']:
         last = text.rfind(punct)
         if last != -1 and last > len(text) // 2:
             return text[:last + 1].strip()
     
-    # Если нет знаков препинания, пробуем найти последнюю точку
     last_dot = text.rfind('.')
     if last_dot != -1:
         return text[:last_dot + 1].strip()
     
     return text
+
+def clean_title(title: str) -> str:
+    """Очищает заголовок от названий источников и лишних символов"""
+    if not title:
+        return ""
+    
+    # Удаляем "БРИКС Россия |", "BRICS Russia |" и подобное
+    title = re.sub(r'^(?:БРИКС\s+Россия\s*[|:]\s*|BRICS\s+Russia\s*[|:]\s*|InfoBrics\s*[|:]\s*|Global Research\s*[|:]\s*)', '', title, flags=re.IGNORECASE)
+    
+    # Удаляем "📰" и другие эмодзи в начале
+    title = re.sub(r'^[📰🗞️📄📑]+\s*', '', title)
+    
+    # Удаляем "|" в конце
+    title = re.sub(r'\s*[|:]\s*$', '', title)
+    
+    return title.strip()
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -453,7 +478,6 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
@@ -468,7 +492,6 @@ class NewsBot:
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         truncated = self._truncate_to_last_sentence(text, max_len)
-        # Убеждаемся, что текст заканчивается полным предложением
         return ensure_complete_sentence(truncated)
 
     # ========== ПАРСИНГ INFOBRICS ==========
@@ -495,7 +518,10 @@ class NewsBot:
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
                 
-                if title.lower() in ['brics portal', 'portal', 'info brics']:
+                # Очищаем заголовок от названий источников
+                title = clean_title(title)
+                
+                if title.lower() in ['brics portal', 'portal', 'info brics'] or len(title) < 5:
                     continue
                 
                 articles.append({'url': entry.link, 'title': title})
@@ -524,8 +550,6 @@ class NewsBot:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    if title.lower() in ['brics portal', 'portal']:
-                        title = None
             
             if not title:
                 title_tag = soup.find('title')
@@ -534,10 +558,15 @@ class NewsBot:
                     title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
             
-            if not title or title.lower() in ['brics portal', 'portal']:
+            if not title:
                 return None
             
+            # Очищаем заголовок
+            title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
+            
+            if len(title) < 5 or title.lower() in ['brics portal', 'portal']:
+                return None
 
             image_url = extract_image_url(soup, base_url)
 
@@ -605,6 +634,9 @@ class NewsBot:
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
                 
+                # Очищаем заголовок
+                title = clean_title(title)
+                
                 if is_blacklisted(title):
                     continue
                 
@@ -649,7 +681,12 @@ class NewsBot:
             if not title:
                 return None
             
+            # Очищаем заголовок
+            title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
+            
+            if len(title) < 5:
+                return None
 
             image_url = extract_image_url(soup, base_url)
 
@@ -739,9 +776,8 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Подготовка текста для публикации - берем только первые 1024 символа
+            # Подготовка текста для публикации
             caption_text = content_en[:MAX_CAPTION]
-            # Обрезаем до полного предложения
             caption_text = self._truncate_text(caption_text, is_caption=True)
             
             logger.info(f"📝 Перевод заголовка: {title_en[:50]}...")
@@ -766,7 +802,7 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            # Формируем сообщение - только заголовок и текст, без иконок и источников
+            # Формируем сообщение - только заголовок и текст
             title_escaped = html.escape(title_ru)
             message = f"{title_escaped}\n\n{content_ru}"
 
