@@ -1,53 +1,55 @@
 {
   "sent_links": [
-    "https://infobrics.org/en/post/102831/",
-    "https://infobrics.org/en/post/102821/",
-    "https://infobrics.org/en/post/102833/",
-    "https://infobrics.org/en/post/102879/",
     "https://infobrics.org/en/post/102830/",
-    "https://infobrics.org/en/post/102827/",
-    "https://infobrics.org/en/post/102874/",
-    "https://infobrics.org/en/post/102880/",
-    "https://infobrics.org/en/post/102876/",
-    "https://infobrics.org/en/post/102823/",
-    "https://infobrics.org/en/post/102824/",
-    "https://www.globalresearch.ca/european-solidarity-risk-10-countries-restore-border-checks/5938010",
-    "https://www.globalresearch.ca/memory-dr-david-halpin/5938059",
-    "https://infobrics.org/en/post/102825/",
     "https://infobrics.org/en/post/102826/",
-    "https://infobrics.org/en/post/102882/"
+    "https://infobrics.org/en/post/102825/",
+    "https://infobrics.org/en/post/102821/",
+    "https://infobrics.org/en/post/102874/",
+    "https://infobrics.org/en/post/102882/",
+    "https://www.globalresearch.ca/ucrania-intensifica-perseguicao-religiosa/5938018",
+    "https://infobrics.org/en/post/102824/",
+    "https://infobrics.org/en/post/102880/",
+    "https://www.globalresearch.ca/european-solidarity-risk-10-countries-restore-border-checks/5938010",
+    "https://infobrics.org/en/post/102879/",
+    "https://infobrics.org/en/post/102827/",
+    "https://infobrics.org/en/post/102823/",
+    "https://infobrics.org/en/post/102876/",
+    "https://infobrics.org/en/post/102833/",
+    "https://infobrics.org/en/post/102831/",
+    "https://www.globalresearch.ca/memory-dr-david-halpin/5938059"
   ],
   "sent_hashes": [
-    "47d45a067a6b82486d5af2199ef1aa3d",
-    "b9ef4d032c4e4d419f3c7130dae8571b",
+    "c7ce53f517bfad64dae6058c9a5ff6b7",
     "3c9ecd5c9a1c74c5ecdcc98c95e3e8f3",
-    "0f0b75fa0b1c288ed97659d2f4025a0b",
-    "34ad7bd65d8105d8b4046c93227631c5",
-    "2e15d3dbec50da5e9c0901d96b8191e1",
-    "39468d02bea66497f6402658136b4427",
-    "0c92aa1ffa093b8825e92edaaed881e6",
     "093b0f88dcc7f14f92a2d00e736c4197",
+    "0c92aa1ffa093b8825e92edaaed881e6",
+    "47d45a067a6b82486d5af2199ef1aa3d",
     "fed235249ce5ec91cf5c298bee21c7ee",
-    "0fa9ce82ae4b331ae43727e5c2790e80",
     "6af9c5ed9d8250091d7781c87ee0a62d",
+    "16aad65fa734a145ef3bbf5d099c90b7",
+    "2e15d3dbec50da5e9c0901d96b8191e1",
     "6e88b3b1fced187795851b668a4184ec",
-    "c1d2814ed5510460ab0e3d6430c75b2e",
+    "0fa9ce82ae4b331ae43727e5c2790e80",
+    "b9ef4d032c4e4d419f3c7130dae8571b",
+    "39468d02bea66497f6402658136b4427",
     "fc78176a16bf7ae2a3cc82bce53b7f7c",
-    "16aad65fa734a145ef3bbf5d099c90b7"
+    "34ad7bd65d8105d8b4046c93227631c5",
+    "0f0b75fa0b1c288ed97659d2f4025a0b",
+    "c1d2814ed5510460ab0e3d6430c75b2e"
   ],
   "sent_titles": [
-    "brics russia poland pushes european legion ukrainian veterans against russia",
-    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
-    "toothless nato deploys 100k troops across eastern europe",
     "the us has made nuclear threats against russia before and they are not worth taking seriously",
-    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029",
-    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
-    "sweden officially joins nato after final approval from hungary",
-    "global research",
-    "russia liberates the town of sudzha in kursk region ukraine loses another propaganda point",
     "brics portal",
+    "russia recaptures sudzha ukraine loses its last foothold in kursk region",
+    "global research",
+    "donald trump imposed new tariffs on chinese goods but in return china took tough countermeasures",
+    "russia liberates the town of sudzha in kursk region ukraine loses another propaganda point",
     "why russia and china learned to love their border the strategic logic behind a new rail crossing",
-    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones"
+    "taiwan buys 2bn worth of us military equipment over next few years to be delivered in 2027 2029",
+    "brics russia poland pushes european legion ukrainian veterans against russia",
+    "sweden officially joins nato after final approval from hungary",
+    "ukraine launches massive drone attack on moscow oblast russian air defense intercepts 11 drones",
+    "toothless nato deploys 100k troops across eastern europe"
   ],
   "posts_log": [
     {
@@ -129,6 +131,11 @@
       "link": "https://infobrics.org/en/post/102882/",
       "title": "BRICS Russia | Poland pushes for “European Legion”",
       "time": "2026-08-27T08:04:38.476509+00:00"
+    },
+    {
+      "link": "https://www.globalresearch.ca/ucrania-intensifica-perseguicao-religiosa/5938018",
+      "title": "Global Research",
+      "time": "2026-08-27T18:09:33.484090+00:00"
     }
   ]
 }
