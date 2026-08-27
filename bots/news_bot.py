@@ -44,7 +44,7 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-MAX_CAPTION = 1024  # Максимум для подписи к фото (Telegram ограничение)
+MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
 # Стоп-слова для фильтрации не-новостей
@@ -759,8 +759,9 @@ class NewsBot:
 
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
+            subtitle = None
             
-            # 1. Пробуем h2.title itemprop="headline" (основной заголовок статьи)
+            # 1. Пробуем h2.title itemprop="headline" (ОСНОВНОЙ ЗАГОЛОВОК)
             title_h2 = soup.find('h2', class_='title', attrs={'itemprop': 'headline'})
             if title_h2:
                 title = title_h2.get_text(strip=True)
@@ -769,17 +770,12 @@ class NewsBot:
                 else:
                     title = None
             
-            # 2. Пробуем strong внутри div.title (реальный заголовок статьи)
+            # 2. Пробуем h3.subtitle (подзаголовок, может быть частью заголовка)
             if not title:
-                title_div = soup.find('div', class_='title')
-                if title_div:
-                    strong = title_div.find('strong')
-                    if strong:
-                        title = strong.get_text(strip=True)
-                        if title and len(title) > 5:
-                            logger.info(f"✅ Найден strong в title: {title[:50]}...")
-                        else:
-                            title = None
+                subtitle_h3 = soup.find('h3', class_='subtitle')
+                if subtitle_h3:
+                    subtitle = subtitle_h3.get_text(strip=True)
+                    logger.info(f"✅ Найден h3.subtitle: {subtitle[:50]}...")
             
             # 3. Пробуем h1.entry-title
             if not title:
@@ -827,6 +823,10 @@ class NewsBot:
                 logger.warning(f"❌ Не удалось найти заголовок для {url}")
                 return None
             
+            # Если есть подзаголовок, добавляем его к заголовку (через двоеточие)
+            if subtitle:
+                title = f"{title}: {subtitle}"
+            
             # Очищаем заголовок от названия сайта
             title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
@@ -858,12 +858,18 @@ class NewsBot:
                     content_container = entry_content
                     logger.info("✅ Найден контейнер entry-content")
                 else:
-                    # 3. Пробуем другие классы
-                    for class_name in ['post-content', 'article-content']:
-                        container = soup.find('div', class_=re.compile(class_name))
-                        if container:
-                            content_container = container
-                            break
+                    # 3. Пробуем div.article__text
+                    article_text = soup.find('div', class_='article__text')
+                    if article_text:
+                        content_container = article_text
+                        logger.info("✅ Найден контейнер article__text")
+                    else:
+                        # 4. Пробуем другие классы
+                        for class_name in ['post-content', 'article-content']:
+                            container = soup.find('div', class_=re.compile(class_name))
+                            if container:
+                                content_container = container
+                                break
             
             if not content_container:
                 content_container = soup.find('article')
