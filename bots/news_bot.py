@@ -241,7 +241,6 @@ def clean_content(text: str) -> str:
     text = re.sub(r'\[.*?\]\(.*?\)', '', text)
     
     # Удаляем длинные вступления авторов и сокращаем их
-    # Шаблон: "Имя Фамилия, должность, организация, еще что-то" -> "Имя Фамилия - должность"
     text = re.sub(
         r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:member\s+of\s+the\s+)?([A-Za-z\s]+?)(?:,\s*[A-Za-z\s]+?)?(?:,\s*[A-Za-z\s]+?)?(?=[.!?]|$)',
         r'\1 - \2',
@@ -304,7 +303,7 @@ def clean_title(title: str) -> str:
         return ""
     
     # Удаляем "БРИКС Россия |", "BRICS Russia |" и подобное
-    title = re.sub(r'^(?:БРИКС\s+Россия\s*[|:]\s*|BRICS\s+Russia\s*[|:]\s*|InfoBrics\s*[|:]\s*|Global Research\s*[|:]\s*)', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'^(?:БРИКС\s+Россия\s*[|:]\s*|BRICS\s+Russia\s*[|:]\s*|InfoBrics\s*[|:]\s*|Global Research\s*[|:]\s*|GE\s+Global\s+Research\s*[|:]\s*)', '', title, flags=re.IGNORECASE)
     
     # Удаляем "📰" и другие эмодзи в начале
     title = re.sub(r'^[📰🗞️📄📑]+\s*', '', title)
@@ -518,7 +517,6 @@ class NewsBot:
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
                 
-                # Очищаем заголовок от названий источников
                 title = clean_title(title)
                 
                 if title.lower() in ['brics portal', 'portal', 'info brics'] or len(title) < 5:
@@ -561,7 +559,6 @@ class NewsBot:
             if not title:
                 return None
             
-            # Очищаем заголовок
             title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
             
@@ -634,7 +631,6 @@ class NewsBot:
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
                 
-                # Очищаем заголовок
                 title = clean_title(title)
                 
                 if is_blacklisted(title):
@@ -655,73 +651,106 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
+            # 1. Пробуем h1.entry-title (основной заголовок на Global Research)
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
+                logger.info(f"✅ Найден h1.entry-title: {title[:50]}...")
             
+            # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
+                    logger.info(f"✅ Найден h1: {title[:50]}...")
             
+            # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"✅ Найден og:title: {title[:50]}...")
             
+            # 4. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
+                    logger.info(f"✅ Найден title: {title[:50]}...")
             
             if not title:
+                logger.warning(f"❌ Не удалось найти заголовок для {url}")
                 return None
             
-            # Очищаем заголовок
+            # Очищаем заголовок от названия сайта
             title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
             
-            if len(title) < 5:
+            # Если заголовок слишком короткий или это не новость
+            if len(title) < 10 or title.lower() in ['global research', 'ge global research']:
+                logger.warning(f"❌ Заголовок '{title}' не является новостью")
                 return None
+            
+            logger.info(f"📌 Итоговый заголовок: {title[:50]}...")
 
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
 
+            # === ПОИСК КОНТЕНТА ===
             content_container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content']:
-                container = soup.find('div', class_=re.compile(class_name))
-                if container:
-                    content_container = container
-                    break
             
+            # Пробуем entry-content (основной контейнер контента)
+            entry_content = soup.find('div', class_='entry-content')
+            if entry_content:
+                content_container = entry_content
+            else:
+                # Пробуем другие классы
+                for class_name in ['post-content', 'content', 'article-content']:
+                    container = soup.find('div', class_=re.compile(class_name))
+                    if container:
+                        content_container = container
+                        break
+            
+            # Если не нашли, пробуем article
             if not content_container:
                 content_container = soup.find('article')
             
+            # Если не нашли, пробуем main
             if not content_container:
                 content_container = soup.find('main')
             
             paragraphs = []
             if content_container:
-                for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                # Удаляем ненужные теги
+                for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe', 'div.sharedaddy', 'div.wp-block-group']):
                     tag.decompose()
                 
+                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Фильтруем короткие и служебные параграфы
                     if len(text) > 40 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
             if len(paragraphs) < 2:
+                logger.warning(f"❌ Недостаточно контента ({len(paragraphs)} параграфов)")
                 return None
 
             content = '\n\n'.join(paragraphs)
+            
+            # Очищаем контент
             content = clean_content(content)
             
             if len(content) < 150:
+                logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
+            # Фильтрация
             if is_blacklisted(title, content):
                 return None
 
