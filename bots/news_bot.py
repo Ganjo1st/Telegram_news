@@ -251,7 +251,7 @@ def clean_content(text: str) -> str:
     text = re.sub(r'research\s+assistant\s+at\s+the\s+Center\s+for\s+Geostrategic\s+Studies', 'researcher at Center for Geostrategic Studies', text, flags=re.IGNORECASE)
     text = re.sub(r'member\s+of\s+the\s+BRICS\s+Journalists\s+Association', 'BRICS journalist', text, flags=re.IGNORECASE)
     
-    # Нормализуем переносы - убираем лишние пустые строки
+    # Нормализуем переносы
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
@@ -286,13 +286,15 @@ def ensure_complete_sentence(text: str) -> str:
     if not text:
         return ""
     
-    # Ищем последний конец предложения (. ! ?)
     for punct in ['.', '!', '?']:
         last = text.rfind(punct)
-        if last != -1 and last > len(text) // 3:  # Не обрезаем слишком рано
+        if last != -1 and last > len(text) // 3:
             return text[:last + 1].strip()
     
-    # Если нет знаков препинания, возвращаем как есть
+    last_dot = text.rfind('.')
+    if last_dot != -1:
+        return text[:last_dot + 1].strip()
+    
     return text
 
 def clean_title(title: str) -> str:
@@ -324,7 +326,6 @@ def clean_old_data():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Очищаем posts_log
             if 'posts_log' in data:
                 data['posts_log'] = [
                     post for post in data['posts_log']
@@ -518,10 +519,9 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
-            if last != -1 and last > max_len // 3:  # Не обрезаем слишком рано
+            if last != -1 and last > max_len // 3:
                 return text[:last + 1].strip()
 
         last_space = text.rfind(' ', 0, max_len)
@@ -592,7 +592,7 @@ class NewsBot:
                 else:
                     title = None
             
-            # 2. Пробуем h1 (пропускаем если это {[title]})
+            # 2. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
@@ -681,7 +681,6 @@ class NewsBot:
                     tag.decompose()
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Пропускаем слишком короткие и служебные параграфы
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
@@ -761,41 +760,56 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем h2.title itemprop="headline" (основной заголовок)
+            # 1. Пробуем h2.title itemprop="headline" (основной заголовок статьи)
             title_h2 = soup.find('h2', class_='title', attrs={'itemprop': 'headline'})
             if title_h2:
                 title = title_h2.get_text(strip=True)
-                logger.info(f"✅ Найден h2.title: {title[:50]}...")
+                if title and len(title) > 5:
+                    logger.info(f"✅ Найден h2.title: {title[:50]}...")
+                else:
+                    title = None
             
-            # 2. Пробуем h1.entry-title
-            if not title:
-                entry_title = soup.find('h1', class_='entry-title')
-                if entry_title:
-                    title = entry_title.get_text(strip=True)
-                    logger.info(f"✅ Найден h1.entry-title: {title[:50]}...")
-            
-            # 3. Пробуем strong внутри div.title (реальный заголовок статьи)
+            # 2. Пробуем strong внутри div.title (реальный заголовок статьи)
             if not title:
                 title_div = soup.find('div', class_='title')
                 if title_div:
                     strong = title_div.find('strong')
                     if strong:
                         title = strong.get_text(strip=True)
-                        logger.info(f"✅ Найден strong в title: {title[:50]}...")
+                        if title and len(title) > 5:
+                            logger.info(f"✅ Найден strong в title: {title[:50]}...")
+                        else:
+                            title = None
+            
+            # 3. Пробуем h1.entry-title
+            if not title:
+                entry_title = soup.find('h1', class_='entry-title')
+                if entry_title:
+                    title = entry_title.get_text(strip=True)
+                    if title and len(title) > 5:
+                        logger.info(f"✅ Найден h1.entry-title: {title[:50]}...")
+                    else:
+                        title = None
             
             # 4. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-                    logger.info(f"✅ Найден h1: {title[:50]}...")
+                    if title and len(title) > 5:
+                        logger.info(f"✅ Найден h1: {title[:50]}...")
+                    else:
+                        title = None
             
             # 5. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    logger.info(f"✅ Найден og:title: {title[:50]}...")
+                    if title and len(title) > 5:
+                        logger.info(f"✅ Найден og:title: {title[:50]}...")
+                    else:
+                        title = None
             
             # 6. Пробуем title тег
             if not title:
@@ -804,7 +818,10 @@ class NewsBot:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*(?:Global Research|GE Global Research)\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
-                    logger.info(f"✅ Найден title: {title[:50]}...")
+                    if title and len(title) > 5:
+                        logger.info(f"✅ Найден title: {title[:50]}...")
+                    else:
+                        title = None
             
             if not title:
                 logger.warning(f"❌ Не удалось найти заголовок для {url}")
@@ -817,7 +834,8 @@ class NewsBot:
             # Если заголовок слишком короткий или это не новость
             if len(title) < 10 or title.lower() in ['global research', 'ge global research']:
                 logger.warning(f"❌ Заголовок '{title}' не является новостью")
-                return None            
+                return None
+            
             logger.info(f"📌 Итоговый заголовок: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
@@ -931,7 +949,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Подготовка текста для публикации - берем максимум для подписи
+            # Подготовка текста для публикации
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             
@@ -946,14 +964,14 @@ class NewsBot:
             # Очистка переведенного контента
             content_ru = clean_content(content_ru)
             
-            # Нормализация форматирования - убираем лишние переносы
+            # Нормализация форматирования
             content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
             content_ru = re.sub(r'\s+', ' ', content_ru)
             
             # Убеждаемся, что текст заканчивается полным предложением
             content_ru = ensure_complete_sentence(content_ru)
 
-            # Сохраняем метаданные с ссылкой на источник
+            # Сохраняем метаданные
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
