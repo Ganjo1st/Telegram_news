@@ -542,42 +542,85 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # === ПОИСК ЗАГОЛОВКА ===
             title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
-                if title == '{[title]}':
-                    title = None
             
+            # 1. Пробуем div.title title--big (основной заголовок)
+            title_div = soup.find('div', class_='title title--big')
+            if title_div:
+                title = title_div.get_text(strip=True)
+                logger.info(f"✅ Найден заголовок title--big: {title[:50]}...")
+            
+            # 2. Пробуем h1
+            if not title:
+                h1 = soup.find('h1')
+                if h1:
+                    title = h1.get_text(strip=True)
+                    logger.info(f"✅ Найден h1: {title[:50]}...")
+            
+            # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
+                    logger.info(f"✅ Найден og:title: {title[:50]}...")
             
+            # 4. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
+                    logger.info(f"✅ Найден title: {title[:50]}...")
             
             if not title:
+                logger.warning(f"❌ Не удалось найти заголовок для {url}")
                 return None
             
             title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
             
             if len(title) < 5 or title.lower() in ['brics portal', 'portal']:
+                logger.warning(f"❌ Заголовок '{title}' не является новостью")
                 return None
+            
+            logger.info(f"📌 Итоговый заголовок InfoBrics: {title[:50]}...")
 
-            image_url = extract_image_url(soup, base_url)
+            # === ПОИСК ИЗОБРАЖЕНИЯ ===
+            image_url = None
+            # Пробуем img.article__image
+            article_img = soup.find('img', class_='article__image')
+            if article_img and article_img.get('src'):
+                img_src = article_img['src']
+                if img_src.startswith('//'):
+                    image_url = 'https:' + img_src
+                elif img_src.startswith('/'):
+                    image_url = urljoin(base_url, img_src)
+                elif img_src.startswith('http'):
+                    image_url = img_src
+                logger.info(f"✅ Найдено изображение article__image: {image_url[:50]}...")
+            
+            if not image_url:
+                image_url = extract_image_url(soup, base_url)
+                if image_url:
+                    logger.info(f"✅ Найдено изображение через extract: {image_url[:50]}...")
 
+            # === ПОИСК КОНТЕНТА ===
             content_container = None
-            for class_name in ['article__text', 'article-content', 'post-content', 'entry-content', 'content', 'main-content']:
-                container = soup.find('div', class_=re.compile(class_name))
-                if container:
-                    content_container = container
-                    break
+            
+            # 1. Пробуем div.article__text (основной контейнер)
+            article_text = soup.find('div', class_='article__text')
+            if article_text:
+                content_container = article_text
+                logger.info("✅ Найден контейнер article__text")
+            else:
+                # 2. Пробуем другие классы
+                for class_name in ['article-content', 'post-content', 'entry-content', 'content', 'main-content']:
+                    container = soup.find('div', class_=re.compile(class_name))
+                    if container:
+                        content_container = container
+                        break
             
             if not content_container:
                 content_container = soup.find('article') or soup.find('main')
@@ -592,10 +635,12 @@ class NewsBot:
                         paragraphs.append(text)
             
             if len(paragraphs) < 2:
+                logger.warning(f"❌ Недостаточно контента ({len(paragraphs)} параграфов)")
                 return None
 
             content = '\n\n'.join(paragraphs)
             if len(content) < 150:
+                logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
             if is_blacklisted(title, content):
@@ -642,9 +687,9 @@ class NewsBot:
                 if is_blacklisted(title):
                     continue
                 
-                # Пропускаем статьи с поддомена substack (они часто 403)
-                if 'substack.com' in entry.link:
-                    logger.info(f"⏭️ Пропущен substack: {title[:30]}...")
+                # Пропускаем статьи с поддоменов (часто 403 или не-новости)
+                if 'substack.com' in entry.link or 'asia-pacificresearch.com' in entry.link:
+                    logger.info(f"⏭️ Пропущен внешний домен: {title[:30]}...")
                     continue
                 
                 articles.append({'url': entry.link, 'title': title})
@@ -665,32 +710,48 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем h1.entry-title (основной заголовок)
-            entry_title = soup.find('h1', class_='entry-title')
-            if entry_title:
-                title = entry_title.get_text(strip=True)
-                logger.info(f"✅ Найден h1.entry-title: {title[:50]}...")
+            # 1. Пробуем h2.title itemprop="headline" (основной заголовок)
+            title_h2 = soup.find('h2', class_='title', attrs={'itemprop': 'headline'})
+            if title_h2:
+                title = title_h2.get_text(strip=True)
+                logger.info(f"✅ Найден h2.title: {title[:50]}...")
             
-            # 2. Пробуем h1
+            # 2. Пробуем h1.entry-title
+            if not title:
+                entry_title = soup.find('h1', class_='entry-title')
+                if entry_title:
+                    title = entry_title.get_text(strip=True)
+                    logger.info(f"✅ Найден h1.entry-title: {title[:50]}...")
+            
+            # 3. Пробуем strong внутри div.title (реальный заголовок статьи)
+            if not title:
+                title_div = soup.find('div', class_='title')
+                if title_div:
+                    strong = title_div.find('strong')
+                    if strong:
+                        title = strong.get_text(strip=True)
+                        logger.info(f"✅ Найден strong в title: {title[:50]}...")
+            
+            # 4. Пробуем h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
                     logger.info(f"✅ Найден h1: {title[:50]}...")
             
-            # 3. Пробуем meta og:title
+            # 5. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
                     logger.info(f"✅ Найден og:title: {title[:50]}...")
             
-            # 4. Пробуем title тег
+            # 6. Пробуем title тег
             if not title:
                 title_tag = soup.find('title')
                 if title_tag:
                     title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'\s*[|–-]\s*(?:Global Research|GE Global Research)\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
                     logger.info(f"✅ Найден title: {title[:50]}...")
             
@@ -711,20 +772,30 @@ class NewsBot:
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
+            if image_url:
+                logger.info(f"✅ Найдено изображение: {image_url[:50]}...")
 
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # Пробуем entry-content
-            entry_content = soup.find('div', class_='entry-content')
-            if entry_content:
-                content_container = entry_content
+            # 1. Пробуем div.content itemprop="articleBody" (основной контейнер)
+            content_div = soup.find('div', class_='content', attrs={'itemprop': 'articleBody'})
+            if content_div:
+                content_container = content_div
+                logger.info("✅ Найден контейнер content[itemprop=articleBody]")
             else:
-                for class_name in ['post-content', 'content', 'article-content']:
-                    container = soup.find('div', class_=re.compile(class_name))
-                    if container:
-                        content_container = container
-                        break
+                # 2. Пробуем div.entry-content
+                entry_content = soup.find('div', class_='entry-content')
+                if entry_content:
+                    content_container = entry_content
+                    logger.info("✅ Найден контейнер entry-content")
+                else:
+                    # 3. Пробуем другие классы
+                    for class_name in ['post-content', 'article-content']:
+                        container = soup.find('div', class_=re.compile(class_name))
+                        if container:
+                            content_container = container
+                            break
             
             if not content_container:
                 content_container = soup.find('article')
@@ -734,11 +805,14 @@ class NewsBot:
             
             paragraphs = []
             if content_container:
+                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe', 'div.sharedaddy', 'div.wp-block-group']):
                     tag.decompose()
                 
+                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Фильтруем короткие и служебные параграфы
                     if len(text) > 40 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
