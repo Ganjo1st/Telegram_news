@@ -44,7 +44,7 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-MAX_CAPTION = 1024
+MAX_CAPTION = 2048  # Увеличиваем до 2048 символов для подписи к фото
 MAX_MESSAGE = 4096
 
 # Стоп-слова для фильтрации не-новостей
@@ -251,7 +251,7 @@ def clean_content(text: str) -> str:
     text = re.sub(r'research\s+assistant\s+at\s+the\s+Center\s+for\s+Geostrategic\s+Studies', 'researcher at Center for Geostrategic Studies', text, flags=re.IGNORECASE)
     text = re.sub(r'member\s+of\s+the\s+BRICS\s+Journalists\s+Association', 'BRICS journalist', text, flags=re.IGNORECASE)
     
-    # Нормализуем переносы
+    # Нормализуем переносы - убираем лишние пустые строки
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
@@ -259,10 +259,6 @@ def clean_content(text: str) -> str:
 
 def is_today_article(published_date) -> bool:
     """Проверяет, опубликована ли статья сегодня"""
-    # В тестовом режиме пропускаем все статьи
-    if os.getenv('TEST_MODE', 'false').lower() == 'true':
-        return True
-    
     if not published_date:
         return True
     
@@ -317,9 +313,55 @@ def clean_title(title: str) -> str:
     
     return title.strip()
 
+def clean_old_data():
+    """Очищает старые данные (старше 7 дней)"""
+    try:
+        cutoff = get_local_time() - timedelta(days=7)
+        
+        # Очищаем state_news_bot.json
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Очищаем posts_log
+            if 'posts_log' in data:
+                data['posts_log'] = [
+                    post for post in data['posts_log']
+                    if datetime.fromisoformat(post['time']) > cutoff
+                ]
+            
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info("🧹 state_news_bot.json очищен от старых записей")
+        
+        # Очищаем posts_meta.json
+        if os.path.exists(META_FILE):
+            with open(META_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if 'posts' in data:
+                cleaned_posts = {}
+                for pid, post_data in data['posts'].items():
+                    try:
+                        if datetime.fromisoformat(post_data.get('time', '')) > cutoff:
+                            cleaned_posts[pid] = post_data
+                    except:
+                        cleaned_posts[pid] = post_data
+                data['posts'] = cleaned_posts
+            
+            with open(META_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info("🧹 posts_meta.json очищен от старых записей")
+            
+    except Exception as e:
+        logger.error(f"Ошибка очистки данных: {e}")
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
+        # Очищаем старые данные при запуске
+        clean_old_data()
+        
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
@@ -366,21 +408,13 @@ class NewsBot:
 
     def _save_meta(self):
         try:
-            cutoff = get_local_time() - timedelta(days=30)
-            cleaned = {}
-            for pid, data in self.meta.get('posts', {}).items():
-                try:
-                    if datetime.fromisoformat(data.get('time', '')) > cutoff:
-                        cleaned[pid] = data
-                except:
-                    cleaned[pid] = data
-            self.meta['posts'] = cleaned
             with open(META_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.meta, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Ошибка сохранения мета: {e}")
 
     def _add_to_meta(self, post_id: str, source: str, url: str, title: str, content_preview: str = ""):
+        """Сохраняет метаданные статьи в posts_meta.json"""
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
@@ -389,6 +423,8 @@ class NewsBot:
             'time': get_local_time().isoformat()
         }
         self._save_meta()
+        logger.info(f"📝 Метаданные сохранены: {source} - {title[:50]}...")
+        logger.info(f"🔗 Источник: {url}")
 
     def _normalize_title(self, title: str) -> str:
         if not title:
@@ -545,7 +581,7 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем div.title title--big (основной заголовок)
+            # 1. Пробуем div.title.title--big (основной заголовок)
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
@@ -881,7 +917,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Подготовка текста для публикации
+            # Подготовка текста для публикации - берем больше текста
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             
@@ -903,7 +939,7 @@ class NewsBot:
             # Убеждаемся, что текст заканчивается полным предложением
             content_ru = ensure_complete_sentence(content_ru)
 
-            # Сохраняем метаданные
+            # Сохраняем метаданные с ссылкой на источник
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
