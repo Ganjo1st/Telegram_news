@@ -259,6 +259,10 @@ def clean_content(text: str) -> str:
 
 def is_today_article(published_date) -> bool:
     """Проверяет, опубликована ли статья сегодня"""
+    # В тестовом режиме пропускаем все статьи
+    if os.getenv('TEST_MODE', 'false').lower() == 'true':
+        return True
+    
     if not published_date:
         return True
     
@@ -512,7 +516,8 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
                 
-                if hasattr(entry, 'published'):
+                # Проверяем дату только если не тестовый режим
+                if not self.test_mode and hasattr(entry, 'published'):
                     if not is_today_article(entry.published):
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
@@ -626,7 +631,8 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
                 
-                if hasattr(entry, 'published'):
+                # Проверяем дату только если не тестовый режим
+                if not self.test_mode and hasattr(entry, 'published'):
                     if not is_today_article(entry.published):
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
                         continue
@@ -634,6 +640,11 @@ class NewsBot:
                 title = clean_title(title)
                 
                 if is_blacklisted(title):
+                    continue
+                
+                # Пропускаем статьи с поддомена substack (они часто 403)
+                if 'substack.com' in entry.link:
+                    logger.info(f"⏭️ Пропущен substack: {title[:30]}...")
                     continue
                 
                 articles.append({'url': entry.link, 'title': title})
@@ -654,7 +665,7 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем h1.entry-title (основной заголовок на Global Research)
+            # 1. Пробуем h1.entry-title (основной заголовок)
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
@@ -704,36 +715,30 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # Пробуем entry-content (основной контейнер контента)
+            # Пробуем entry-content
             entry_content = soup.find('div', class_='entry-content')
             if entry_content:
                 content_container = entry_content
             else:
-                # Пробуем другие классы
                 for class_name in ['post-content', 'content', 'article-content']:
                     container = soup.find('div', class_=re.compile(class_name))
                     if container:
                         content_container = container
                         break
             
-            # Если не нашли, пробуем article
             if not content_container:
                 content_container = soup.find('article')
             
-            # Если не нашли, пробуем main
             if not content_container:
                 content_container = soup.find('main')
             
             paragraphs = []
             if content_container:
-                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe', 'div.sharedaddy', 'div.wp-block-group']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Фильтруем короткие и служебные параграфы
                     if len(text) > 40 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
@@ -742,15 +747,12 @@ class NewsBot:
                 return None
 
             content = '\n\n'.join(paragraphs)
-            
-            # Очищаем контент
             content = clean_content(content)
             
             if len(content) < 150:
                 logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
-            # Фильтрация
             if is_blacklisted(title, content):
                 return None
 
