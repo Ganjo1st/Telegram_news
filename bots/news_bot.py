@@ -34,9 +34,9 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
 # Интервалы публикации (секунды)
-MIN_INTERVAL = 2100  # 35 минут
-MAX_INTERVAL = 7200  # 2 часа
-MAX_POSTS_PER_DAY = 24
+MIN_INTERVAL = 1800  # 30 минут
+MAX_INTERVAL = 3600  # 1 час
+MAX_POSTS_PER_DAY = 30
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
@@ -65,7 +65,9 @@ BLACKLIST_TITLES = [
     'portal',
     'welcome',
     'about us',
-    'contact us'
+    'contact us',
+    'support our work',
+    'become a patron'
 ]
 
 BLACKLIST_CONTENT = [
@@ -76,7 +78,10 @@ BLACKLIST_CONTENT = [
     'read more',
     'support our work',
     'make a donation',
-    'thank you for your support'
+    'thank you for your support',
+    'become a patron',
+    'patreon',
+    'paypal'
 ]
 
 # ========== ФУНКЦИЯ ПЕРЕВОДА ==========
@@ -167,7 +172,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
     if article:
         for img in article.find_all('img', src=True):
             src = img.get('src', '')
-            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header']):
+            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header', 'print']):
                 continue
             if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                 if src.startswith('//'):
@@ -180,7 +185,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
     # 4. Любое изображение
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header']):
+        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag', 'donation', 'header', 'print']):
             continue
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
@@ -226,6 +231,7 @@ def clean_content(text: str) -> str:
     text = re.sub(r'[Cc]lick\s+[Hh]ere.*?(?=[.!?]|$)', '', text)
     text = re.sub(r'[Rr]ead\s+[Mm]ore.*?(?=[.!?]|$)', '', text)
     text = re.sub(r'[Ff]ollow\s+[Uu]s.*?(?=[.!?]|$)', '', text)
+    text = re.sub(r'[Bb]ecome\s+[Aa]\s+[Pp]atron.*?(?=[.!?]|$)', '', text)
     
     # Удаляем упоминания источников
     text = re.sub(r'[Ss]ource:.*?(?=[.!?]|$)', '', text)
@@ -234,11 +240,30 @@ def clean_content(text: str) -> str:
     # Удаляем ссылки
     text = re.sub(r'\[.*?\]\(.*?\)', '', text)
     
-    # Удаляем лишние пробелы и переносы
+    # Нормализуем переносы - убираем лишние пустые строки
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
+
+def is_today_article(published_date) -> bool:
+    """Проверяет, опубликована ли статья сегодня"""
+    if not published_date:
+        return True  # Если дата не указана, пропускаем
+    
+    try:
+        # Парсим дату из RSS
+        if hasattr(published_date, 'timetuple'):
+            pub_date = datetime.fromtimestamp(time.mktime(published_date.timetuple()))
+        else:
+            pub_date = datetime.strptime(published_date, '%a, %d %b %Y %H:%M:%S %z')
+        
+        now = get_local_time()
+        # Сравниваем только дату (без времени)
+        return pub_date.date() == now.date()
+    except Exception as e:
+        logger.warning(f"Ошибка проверки даты: {e}")
+        return True  # Если не можем проверить, пропускаем
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -425,7 +450,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:  # Берем больше статей
                 title = entry.get('title', '').strip()
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -438,9 +463,14 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
                 
-                # Пропускаем пустые или слишком общие заголовки
+                # Проверяем дату публикации
+                if hasattr(entry, 'published'):
+                    if not is_today_article(entry.published):
+                        logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
+                        continue
+                
+                # Пропускаем общие заголовки
                 if title.lower() in ['brics portal', 'portal', 'info brics']:
-                    logger.info(f"❌ Пропущен общий заголовок: {title}")
                     continue
                 
                 articles.append({'url': entry.link, 'title': title})
@@ -474,7 +504,6 @@ class NewsBot:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    # Пропускаем общие заголовки
                     if title.lower() in ['brics portal', 'portal']:
                         title = None
             
@@ -487,7 +516,6 @@ class NewsBot:
                     title = title.strip()
             
             if not title or title.lower() in ['brics portal', 'portal']:
-                logger.warning(f"❌ Не удалось найти заголовок или он общий")
                 return None
             
             title = re.sub(r'\s+', ' ', title).strip()
@@ -544,7 +572,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]:  # Берем больше статей
                 title = entry.get('title', '').strip()
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -556,6 +584,12 @@ class NewsBot:
                     if not title or len(title) < 5:
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
+                
+                # Проверяем дату публикации
+                if hasattr(entry, 'published'):
+                    if not is_today_article(entry.published):
+                        logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
+                        continue
                 
                 # Проверяем на стоп-слова
                 if is_blacklisted(title):
@@ -584,21 +618,19 @@ class NewsBot:
             entry_title = soup.find('h1', class_='entry-title')
             if entry_title:
                 title = entry_title.get_text(strip=True)
-                logger.info(f"✅ Найден заголовок h1.entry-title: {title[:50]}...")
+                logger.info(f"✅ Найден заголовок: {title[:50]}...")
             
             # 2. h1
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-                    logger.info(f"✅ Найден заголовок h1: {title[:50]}...")
             
             # 3. og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    logger.info(f"✅ Найден заголовок og:title: {title[:50]}...")
             
             # 4. title тег
             if not title:
@@ -607,19 +639,14 @@ class NewsBot:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*Global Research\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
-                    logger.info(f"✅ Найден заголовок title: {title[:50]}...")
             
             if not title:
-                logger.warning(f"❌ Не удалось найти заголовок")
                 return None
             
             title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"📌 Итоговый заголовок: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
-            if image_url:
-                logger.info(f"✅ Найдено изображение: {image_url[:50]}...")
 
             # === ПОИСК КОНТЕНТА ===
             content_container = None
@@ -644,12 +671,10 @@ class NewsBot:
                 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Фильтруем короткие и служебные параграфы
                     if len(text) > 40 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
             if len(paragraphs) < 2:
-                logger.warning(f"❌ Недостаточно контента ({len(paragraphs)} параграфов)")
                 return None
 
             content = '\n\n'.join(paragraphs)
@@ -658,7 +683,6 @@ class NewsBot:
             content = clean_content(content)
             
             if len(content) < 150:
-                logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
             # Фильтрация
@@ -681,10 +705,10 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
 
-        # 1. InfoBrics - берем до 3 статей
+        # 1. InfoBrics - берем до 5 статей
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:3]:
+        for article in ib_articles[:5]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
@@ -692,10 +716,10 @@ class NewsBot:
                 items.append(data)
                 logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
 
-        # 2. Global Research - берем до 3 статей
+        # 2. Global Research - берем до 5 статей
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:3]:
+        for article in gr_articles[:5]:
             if self._is_duplicate(article['url'], article['title']):
                 continue
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
@@ -733,7 +757,7 @@ class NewsBot:
             # Очистка переведенного контента
             content_ru = clean_content(content_ru)
             
-            # Нормализация пробелов и переносов
+            # Нормализация форматирования - убираем лишние переносы
             content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
             content_ru = re.sub(r'\s+', ' ', content_ru)
 
