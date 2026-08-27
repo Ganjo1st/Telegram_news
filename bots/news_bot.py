@@ -44,7 +44,7 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-MAX_CAPTION = 2048  # Увеличиваем до 2048 символов для подписи к фото
+MAX_CAPTION = 1024  # Максимум для подписи к фото (Telegram ограничение)
 MAX_MESSAGE = 4096
 
 # Стоп-слова для фильтрации не-новостей
@@ -190,10 +190,10 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
                 return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+                if src.startswith('/'):
+                    return urljoin(base_url, src)
+                if src.startswith('http'):
+                    return src
     
     return None
 
@@ -286,15 +286,13 @@ def ensure_complete_sentence(text: str) -> str:
     if not text:
         return ""
     
+    # Ищем последний конец предложения (. ! ?)
     for punct in ['.', '!', '?']:
         last = text.rfind(punct)
-        if last != -1 and last > len(text) // 2:
+        if last != -1 and last > len(text) // 3:  # Не обрезаем слишком рано
             return text[:last + 1].strip()
     
-    last_dot = text.rfind('.')
-    if last_dot != -1:
-        return text[:last_dot + 1].strip()
-    
+    # Если нет знаков препинания, возвращаем как есть
     return text
 
 def clean_title(title: str) -> str:
@@ -310,6 +308,9 @@ def clean_title(title: str) -> str:
     
     # Удаляем "|" в конце
     title = re.sub(r'\s*[|:]\s*$', '', title)
+    
+    # Удаляем шаблон {[title]}
+    title = re.sub(r'\{[^}]*\}', '', title)
     
     return title.strip()
 
@@ -517,9 +518,10 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
+        # Ищем конец предложения в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
-            if last != -1 and last > max_len // 2:
+            if last != -1 and last > max_len // 3:  # Не обрезаем слишком рано
                 return text[:last + 1].strip()
 
         last_space = text.rfind(' ', 0, max_len)
@@ -585,21 +587,30 @@ class NewsBot:
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
-                logger.info(f"✅ Найден заголовок title--big: {title[:50]}...")
+                if title and title != '{[title]}':
+                    logger.info(f"✅ Найден заголовок title--big: {title[:50]}...")
+                else:
+                    title = None
             
-            # 2. Пробуем h1
+            # 2. Пробуем h1 (пропускаем если это {[title]})
             if not title:
                 h1 = soup.find('h1')
                 if h1:
                     title = h1.get_text(strip=True)
-                    logger.info(f"✅ Найден h1: {title[:50]}...")
+                    if title and title != '{[title]}':
+                        logger.info(f"✅ Найден h1: {title[:50]}...")
+                    else:
+                        title = None
             
             # 3. Пробуем meta og:title
             if not title:
                 meta_title = soup.find('meta', property='og:title')
                 if meta_title and meta_title.get('content'):
                     title = meta_title['content']
-                    logger.info(f"✅ Найден og:title: {title[:50]}...")
+                    if title and title != 'BRICS portal':
+                        logger.info(f"✅ Найден og:title: {title[:50]}...")
+                    else:
+                        title = None
             
             # 4. Пробуем title тег
             if not title:
@@ -608,7 +619,10 @@ class NewsBot:
                     title = title_tag.get_text(strip=True)
                     title = re.sub(r'\s*[|–-]\s*InfoBrics\s*$', '', title, flags=re.IGNORECASE)
                     title = title.strip()
-                    logger.info(f"✅ Найден title: {title[:50]}...")
+                    if title and title != 'BRICS portal':
+                        logger.info(f"✅ Найден title: {title[:50]}...")
+                    else:
+                        title = None
             
             if not title:
                 logger.warning(f"❌ Не удалось найти заголовок для {url}")
@@ -667,6 +681,7 @@ class NewsBot:
                     tag.decompose()
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Пропускаем слишком короткие и служебные параграфы
                     if len(text) > 30 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
@@ -802,8 +817,7 @@ class NewsBot:
             # Если заголовок слишком короткий или это не новость
             if len(title) < 10 or title.lower() in ['global research', 'ge global research']:
                 logger.warning(f"❌ Заголовок '{title}' не является новостью")
-                return None
-            
+                return None            
             logger.info(f"📌 Итоговый заголовок: {title[:50]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
@@ -917,7 +931,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Подготовка текста для публикации - берем больше текста
+            # Подготовка текста для публикации - берем максимум для подписи
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             
@@ -932,7 +946,7 @@ class NewsBot:
             # Очистка переведенного контента
             content_ru = clean_content(content_ru)
             
-            # Нормализация форматирования
+            # Нормализация форматирования - убираем лишние переносы
             content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
             content_ru = re.sub(r'\s+', ' ', content_ru)
             
