@@ -33,10 +33,10 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
-# Интервалы публикации (секунды)
-MIN_INTERVAL = 1800  # 30 минут
-MAX_INTERVAL = 3600  # 1 час
-MAX_POSTS_PER_DAY = 30
+# Интервалы публикации (секунды) - уменьшаем для большего количества постов
+MIN_INTERVAL = 900   # 15 минут
+MAX_INTERVAL = 1800  # 30 минут
+MAX_POSTS_PER_DAY = 40  # Увеличиваем до 40
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
@@ -190,10 +190,10 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
                 return 'https:' + src
-                if src.startswith('/'):
-                    return urljoin(base_url, src)
-                if src.startswith('http'):
-                    return src
+            if src.startswith('/'):
+                return urljoin(base_url, src)
+            if src.startswith('http'):
+                return src
     
     return None
 
@@ -259,6 +259,10 @@ def clean_content(text: str) -> str:
 
 def is_today_article(published_date) -> bool:
     """Проверяет, опубликована ли статья сегодня"""
+    # В тестовом режиме пропускаем все статьи
+    if os.getenv('TEST_MODE', 'false').lower() == 'true':
+        return True
+    
     if not published_date:
         return True
     
@@ -482,8 +486,9 @@ class NewsBot:
             
         now = get_local_time()
         hour = now.hour
-        if 23 <= hour or hour < 7:
-            return False
+        # Отключаем ночное ограничение для теста
+        # if 23 <= hour or hour < 7:
+        #     return False
 
         today = now.date()
         today_posts = 0
@@ -541,7 +546,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:10]:
+            for entry in feed.entries[:15]:  # Увеличиваем до 15
                 title = entry.get('title', '').strip()
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -554,7 +559,7 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
                 
-                # Проверяем дату только если не тестовый режим
+                # В ТЕСТОВОМ РЕЖИМЕ ПРОПУСКАЕМ ПРОВЕРКУ ДАТЫ
                 if not self.test_mode and hasattr(entry, 'published'):
                     if not is_today_article(entry.published):
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
@@ -713,7 +718,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:10]:
+            for entry in feed.entries[:15]:  # Увеличиваем до 15
                 title = entry.get('title', '').strip()
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -726,7 +731,7 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
                 
-                # Проверяем дату только если не тестовый режим
+                # В ТЕСТОВОМ РЕЖИМЕ ПРОПУСКАЕМ ПРОВЕРКУ ДАТЫ
                 if not self.test_mode and hasattr(entry, 'published'):
                     if not is_today_article(entry.published):
                         logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
@@ -770,7 +775,7 @@ class NewsBot:
                 else:
                     title = None
             
-            # 2. Пробуем h3.subtitle (подзаголовок, может быть частью заголовка)
+            # 2. Пробуем h3.subtitle (подзаголовок)
             if not title:
                 subtitle_h3 = soup.find('h3', class_='subtitle')
                 if subtitle_h3:
@@ -819,12 +824,17 @@ class NewsBot:
                     else:
                         title = None
             
+            # Если нашли только подзаголовок, используем его как заголовок
+            if not title and subtitle:
+                title = subtitle
+                logger.info(f"✅ Используем подзаголовок как заголовок: {title[:50]}...")
+            
             if not title:
                 logger.warning(f"❌ Не удалось найти заголовок для {url}")
                 return None
             
-            # Если есть подзаголовок, добавляем его к заголовку (через двоеточие)
-            if subtitle:
+            # Если есть подзаголовок и заголовок, объединяем
+            if subtitle and title != subtitle:
                 title = f"{title}: {subtitle}"
             
             # Очищаем заголовок от названия сайта
