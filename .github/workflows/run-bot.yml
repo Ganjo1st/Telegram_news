@@ -30,9 +30,9 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-          TEST_MODE: true  # ВКЛЮЧАЕМ ТЕСТОВЫЙ РЕЖИМ
-          MIN_POST_INTERVAL: 300  # 5 минут
-          MAX_POST_INTERVAL: 600  # 10 минут
+          TEST_MODE: true  # <-- ИЗМЕНИТЬ на true
+          MIN_POST_INTERVAL: 300
+          MAX_POST_INTERVAL: 600
           MAX_POSTS_PER_DAY: 50
           TIMEZONE_OFFSET: 7
           REQUEST_TIMEOUT: 15
