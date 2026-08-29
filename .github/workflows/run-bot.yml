@@ -2,26 +2,17 @@ name: Run News Bot
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
-  workflow_dispatch:
-    inputs:
-      test_mode:
-        description: 'Тестовый режим (отключает ограничения интервалов)'
-        type: boolean
-        default: false
-        required: false
+    - cron: '*/15 * * * *'  # Каждые 15 минут
+  workflow_dispatch:  # Ручной запуск
 
 jobs:
   run-news-bot:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    runs-on: ubuntu-24.04
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -37,19 +28,21 @@ jobs:
 
       - name: Run News Bot
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          MIN_POST_INTERVAL: '600'
-          MAX_POST_INTERVAL: '1800'
-          MAX_POSTS_PER_DAY: '30'
-          TIMEZONE_OFFSET: '7'
-          REQUEST_TIMEOUT: '15'
-          TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
-        run: python bots/news_bot.py
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          TEST_MODE: true  # ВКЛЮЧАЕМ ТЕСТОВЫЙ РЕЖИМ
+          MIN_POST_INTERVAL: 300  # 5 минут
+          MAX_POST_INTERVAL: 600  # 10 минут
+          MAX_POSTS_PER_DAY: 50
+          TIMEZONE_OFFSET: 7
+          REQUEST_TIMEOUT: 15
+        run: |
+          python bots/news_bot.py
 
       - name: Commit and push state files
+        if: always()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add state_news_bot.json posts_meta.json
+          git add state_news_bot.json posts_meta.json || true
           git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Update state [skip ci]" && git push)
