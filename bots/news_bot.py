@@ -33,6 +33,11 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
+# Интервалы публикации (секунды) - читаем из переменных окружения
+MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '900'))  # 15 минут по умолчанию
+MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '1800'))  # 30 минут по умолчанию
+MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))
+
 # Интервалы публикации (секунды) - уменьшаем для большего количества постов
 MIN_INTERVAL = 900   # 15 минут
 MAX_INTERVAL = 1800  # 30 минут
