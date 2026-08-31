@@ -634,33 +634,62 @@ class NewsBot:
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
-    async def publish(self, post: dict):
+    async def publish_all(self, posts: list):
+        """Публикует все переданные статьи"""
+        published = 0
+        for i, post in enumerate(posts):
+            # Проверяем лимиты перед каждой публикацией
+            if not self._can_post():
+                logger.info(f"⏸️ Достигнут лимит, опубликовано {published} статей из {len(posts)}")
+                break
+            
+            logger.info(f"📤 Публикация {i+1}/{len(posts)}: {post.get('title', '')[:50]}...")
+            
+            try:
+                await self._publish_single(post)
+                published += 1
+                # Небольшая пауза между публикациями
+                await asyncio.sleep(10)
+            except Exception as e:
+                logger.error(f"❌ Ошибка публикации: {e}")
+        
+        logger.info(f"✅ Всего опубликовано {published} статей из {len(posts)}")
+
+    async def _publish_single(self, post: dict):
+        """Публикует одну статью"""
         try:
             title_en = post.get('title', '')
             content_en = post.get('content', '')
             url = post.get('url', '')
             image_url = post.get('image')
+            
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
+            
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             logger.info(f"📝 Перевод заголовка: {title_en[:50]}...")
             logger.info(f"📝 Перевод {len(caption_text)} символов текста")
+            
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             content_ru = await loop.run_in_executor(None, translate_text, caption_text)
             content_ru = clean_content(content_ru)
             content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
             content_ru = re.sub(r'\s+', ' ', content_ru)
+            
             if content_ru and not re.search(r'[.!?…]\s*$', content_ru):
                 last_dot = content_ru.rfind('.')
                 if last_dot != -1 and last_dot > len(content_ru) // 2:
                     content_ru = content_ru[:last_dot + 1]
+            
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+            
             title_escaped = html.escape(title_ru)
             message = f"{title_escaped}\n\n{content_ru}"
+            
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -680,6 +709,7 @@ class NewsBot:
                             return
                         except TelegramError as e:
                             logger.warning(f"Ошибка отправки фото: {e}")
+            
             logger.info("📝 Публикация текстом (без фото)")
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
@@ -690,6 +720,7 @@ class NewsBot:
             logger.info("✅ Опубликовано ТЕКСТОМ (переведено на русский)")
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
+            
         except TelegramError as e:
             error_msg = str(e)
             if "Can't parse entities" in error_msg:
@@ -714,14 +745,17 @@ class NewsBot:
         logger.info("=" * 50)
         logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
         logger.info("=" * 50)
+        
         news = await self.fetch_news()
+        
         if not news:
             logger.info("📭 Новых статей нет")
             return
-        if not self._can_post():
-            logger.info("⏸️ Публикация отложена (ограничения)")
-            return
-        await self.publish(news[0])
+        
+        logger.info(f"📊 Найдено {len(news)} новых статей")
+        
+        # Публикуем все статьи (с учетом лимитов)
+        await self.publish_all(news)
 
     async def run_forever(self):
         logger.info("🤖 Бот запущен в бесконечном режиме")
