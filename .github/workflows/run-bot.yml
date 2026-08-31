@@ -2,8 +2,8 @@ name: Run News Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Каждые 15 минут
-  workflow_dispatch:  # Ручной запуск
+    - cron: '*/30 * * * *'  # Каждые 30 минут
+  workflow_dispatch:
 
 jobs:
   run-news-bot:
@@ -30,7 +30,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-          TEST_MODE: true  # <-- ИЗМЕНИТЬ на true
+          TEST_MODE: true
           MIN_POST_INTERVAL: 300
           MAX_POST_INTERVAL: 600
           MAX_POSTS_PER_DAY: 50
