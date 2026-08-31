@@ -44,6 +44,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || true  # Добавлено: сначала тянем изменения
+          git fetch origin main
+          git reset --soft origin/main
           git add state_news_bot.json posts_meta.json || true
           git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Update state [skip ci]" && git push)
