@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, Sputnik, RT, ZeroHedge
+Источники: InfoBrics, Global Research
 """
 
 import os
@@ -36,7 +36,6 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 # Проверяем наличие токена
 if not TELEGRAM_TOKEN:
     logger.error("❌ TELEGRAM_TOKEN не задан! Проверьте секреты GitHub Actions.")
-    logger.error("Используйте секреты: TELEGRAM_BOT_TOKEN и TELEGRAM_CHANNEL_ID")
     exit(1)
 
 if not CHANNEL_ID:
@@ -474,7 +473,6 @@ class NewsBot:
                         title = f"Global Research Article {link.split('/')[-1] if link else ''}"
                 title = clean_title(title)
                 if 'substack.com' in entry.link or 'asia-pacificresearch.com' in entry.link:
-                    logger.info(f"⏭️ Пропущен внешний домен: {title[:30]}...")
                     continue
                 articles.append({'url': entry.link, 'title': title})
             return articles
@@ -606,197 +604,6 @@ class NewsBot:
             logger.error(f"Ошибка парсинга Global Research: {e}")
             return None
 
-    # ========== ПАРСИНГ SPUTNIK ==========
-    def _get_sputnik_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://sputnikglobe.com/export/rss2/archive/index.xml')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '').strip()
-                if not title or len(title) < 5:
-                    continue
-                # Пропускаем статьи с видео
-                if 'video' in title.lower() or 'photo' in title.lower():
-                    continue
-                articles.append({'url': entry.link, 'title': title})
-                logger.info(f"Sputnik RSS: {title[:50]}...")
-            return articles
-        except Exception as e:
-            logger.error(f"Ошибка Sputnik RSS: {e}")
-            return []
-
-    def _parse_sputnik_article(self, url: str) -> dict | None:
-        try:
-            response = fetch_url(url)
-            if not response:
-                return None
-            soup = BeautifulSoup(response.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
-
-            # Заголовок
-            title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
-            if not title:
-                meta_title = soup.find('meta', property='og:title')
-                if meta_title and meta_title.get('content'):
-                    title = meta_title['content']
-            if not title:
-                return None
-            title = clean_title(title)
-
-            # Изображение
-            image_url = extract_image_url(soup, base_url)
-
-            # Контент
-            content_container = soup.find('article') or soup.find('main') or soup.find('div', class_='article__body')
-            paragraphs = []
-            if content_container:
-                for p in content_container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 40 and not text.startswith('Read more'):
-                        paragraphs.append(text)
-            if len(paragraphs) < 2:
-                return None
-            content = '\n\n'.join(paragraphs)
-            if len(content) < 150:
-                return None
-            return {
-                'title': title,
-                'content': content,
-                'image': image_url,
-                'source': 'Sputnik',
-                'url': url
-            }
-        except Exception as e:
-            logger.error(f"Ошибка парсинга Sputnik: {e}")
-            return None
-
-    # ========== ПАРСИНГ RT ==========
-    def _get_rt_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://www.rt.com/rss/')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '').strip()
-                if not title or len(title) < 5:
-                    continue
-                if 'video' in title.lower() or 'photo' in title.lower():
-                    continue
-                articles.append({'url': entry.link, 'title': title})
-                logger.info(f"RT RSS: {title[:50]}...")
-            return articles
-        except Exception as e:
-            logger.error(f"Ошибка RT RSS: {e}")
-            return []
-
-    def _parse_rt_article(self, url: str) -> dict | None:
-        try:
-            response = fetch_url(url)
-            if not response:
-                return None
-            soup = BeautifulSoup(response.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
-
-            title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
-            if not title:
-                meta_title = soup.find('meta', property='og:title')
-                if meta_title and meta_title.get('content'):
-                    title = meta_title['content']
-            if not title:
-                return None
-            title = clean_title(title)
-
-            image_url = extract_image_url(soup, base_url)
-
-            content_container = soup.find('article') or soup.find('main')
-            paragraphs = []
-            if content_container:
-                for p in content_container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 40 and not text.startswith('Read more'):
-                        paragraphs.append(text)
-            if len(paragraphs) < 2:
-                return None
-            content = '\n\n'.join(paragraphs)
-            if len(content) < 150:
-                return None
-            return {
-                'title': title,
-                'content': content,
-                'image': image_url,
-                'source': 'RT',
-                'url': url
-            }
-        except Exception as e:
-            logger.error(f"Ошибка парсинга RT: {e}")
-            return None
-
-    # ========== ПАРСИНГ ZEROHEDGE ==========
-    def _get_zerohedge_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://feeds.feedburner.com/zerohedge/feed')
-            articles = []
-            for entry in feed.entries[:10]:
-                title = entry.get('title', '').strip()
-                if not title or len(title) < 5:
-                    continue
-                articles.append({'url': entry.link, 'title': title})
-                logger.info(f"ZeroHedge RSS: {title[:50]}...")
-            return articles
-        except Exception as e:
-            logger.error(f"Ошибка ZeroHedge RSS: {e}")
-            return []
-
-    def _parse_zerohedge_article(self, url: str) -> dict | None:
-        try:
-            response = fetch_url(url)
-            if not response:
-                return None
-            soup = BeautifulSoup(response.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
-
-            title = None
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text(strip=True)
-            if not title:
-                meta_title = soup.find('meta', property='og:title')
-                if meta_title and meta_title.get('content'):
-                    title = meta_title['content']
-            if not title:
-                return None
-            title = clean_title(title)
-
-            image_url = extract_image_url(soup, base_url)
-
-            content_container = soup.find('article') or soup.find('main')
-            paragraphs = []
-            if content_container:
-                for p in content_container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 40 and not text.startswith('Read more'):
-                        paragraphs.append(text)
-            if len(paragraphs) < 2:
-                return None
-            content = '\n\n'.join(paragraphs)
-            if len(content) < 150:
-                return None
-            return {
-                'title': title,
-                'content': content,
-                'image': image_url,
-                'source': 'ZeroHedge',
-                'url': url
-            }
-        except Exception as e:
-            logger.error(f"Ошибка парсинга ZeroHedge: {e}")
-            return None
-
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
@@ -822,39 +629,6 @@ class NewsBot:
             if data and not self._is_duplicate(article['url'], article['title'], data['content']):
                 items.append(data)
                 logger.info(f"✅ Global Research: {data['title'][:50]}...")
-
-        # 3. Sputnik
-        logger.info("📰 Парсинг Sputnik...")
-        sp_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_sputnik_articles)
-        for article in sp_articles[:5]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_sputnik_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ Sputnik: {data['title'][:50]}...")
-
-        # 4. RT
-        logger.info("📰 Парсинг RT...")
-        rt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_rt_articles)
-        for article in rt_articles[:5]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_rt_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ RT: {data['title'][:50]}...")
-
-        # 5. ZeroHedge
-        logger.info("📰 Парсинг ZeroHedge...")
-        zh_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_zerohedge_articles)
-        for article in zh_articles[:5]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_zerohedge_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ ZeroHedge: {data['title'][:50]}...")
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
