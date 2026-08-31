@@ -1,6 +1,18 @@
 {
-  "sent_links": [],
-  "sent_hashes": [],
-  "sent_titles": [],
-  "posts_log": []
+  "sent_links": [
+    "https://infobrics.org/en/post/102916/"
+  ],
+  "sent_hashes": [
+    "3c5c2bada8598c9f3403a2309fb3633d"
+  ],
+  "sent_titles": [
+    "italian mambas wont change ukraine battlefield situation"
+  ],
+  "posts_log": [
+    {
+      "link": "https://infobrics.org/en/post/102916/",
+      "title": "Italian “Mambas” won’t change Ukraine battlefield ",
+      "time": "2026-08-31T22:40:56.729190+00:00"
+    }
+  ]
 }
