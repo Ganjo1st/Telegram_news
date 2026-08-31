@@ -36,6 +36,7 @@ CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 # Проверяем наличие токена
 if not TELEGRAM_TOKEN:
     logger.error("❌ TELEGRAM_TOKEN не задан! Проверьте секреты GitHub Actions.")
+    logger.error("Используйте секреты: TELEGRAM_BOT_TOKEN и TELEGRAM_CHANNEL_ID")
     exit(1)
 
 if not CHANNEL_ID:
