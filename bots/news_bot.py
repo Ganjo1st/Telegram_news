@@ -33,15 +33,19 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
-# Интервалы публикации (секунды) - читаем из переменных окружения
-MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '900'))  # 15 минут по умолчанию
-MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '1800'))  # 30 минут по умолчанию
-MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '40'))
+# Проверяем наличие токена
+if not TELEGRAM_TOKEN:
+    logger.error("❌ TELEGRAM_TOKEN не задан! Проверьте секреты GitHub Actions.")
+    exit(1)
 
-# Интервалы публикации (секунды) - уменьшаем для большего количества постов
-MIN_INTERVAL = 900   # 15 минут
-MAX_INTERVAL = 1800  # 30 минут
-MAX_POSTS_PER_DAY = 40  # Увеличиваем до 40
+if not CHANNEL_ID:
+    logger.error("❌ CHANNEL_ID не задан! Проверьте секреты GitHub Actions.")
+    exit(1)
+
+# Интервалы публикации (секунды)
+MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '300'))   # 5 минут
+MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '600'))   # 10 минут
+MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '50'))
 TIMEZONE_OFFSET = 7
 
 REQUEST_TIMEOUT = 15
@@ -51,43 +55,6 @@ META_FILE = 'posts_meta.json'
 
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
-
-# Стоп-слова для фильтрации не-новостей
-BLACKLIST_TITLES = [
-    'global research is at a critical moment',
-    'donation',
-    'please support',
-    'subscribe',
-    'newsletter',
-    'in memory of',
-    'obituary',
-    'passed away',
-    'rip',
-    'rest in peace',
-    'memorial',
-    'fundraiser',
-    'donate',
-    'portal',
-    'welcome',
-    'about us',
-    'contact us',
-    'support our work',
-    'become a patron'
-]
-
-BLACKLIST_CONTENT = [
-    'please support',
-    'donate',
-    'subscribe',
-    'click here',
-    'read more',
-    'support our work',
-    'make a donation',
-    'thank you for your support',
-    'become a patron',
-    'patreon',
-    'paypal'
-]
 
 # ========== ФУНКЦИЯ ПЕРЕВОДА ==========
 def translate_text(text: str) -> str:
@@ -195,34 +162,12 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             if src.startswith('//'):
                 return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+                if src.startswith('/'):
+                    return urljoin(base_url, src)
+                if src.startswith('http'):
+                    return src
     
     return None
-
-def is_blacklisted(title: str, content: str = "") -> bool:
-    """Проверяет, является ли статья не-новостью"""
-    title_lower = title.lower()
-    content_lower = content.lower()
-    
-    for word in BLACKLIST_TITLES:
-        if word in title_lower:
-            logger.info(f"❌ Статья отклонена (стоп-слово в заголовке: '{word}')")
-            return True
-    
-    if content and len(content) < 200:
-        logger.info(f"❌ Статья отклонена (слишком короткий контент: {len(content)} символов)")
-        return True
-    
-    if content:
-        for word in BLACKLIST_CONTENT:
-            if word in content_lower:
-                logger.info(f"❌ Статья отклонена (стоп-слово в контенте: '{word}')")
-                return True
-    
-    return False
 
 def clean_content(text: str) -> str:
     """Очищает контент от лишних элементов"""
@@ -245,66 +190,11 @@ def clean_content(text: str) -> str:
     # Удаляем ссылки
     text = re.sub(r'\[.*?\]\(.*?\)', '', text)
     
-    # Удаляем длинные вступления авторов и сокращаем их
-    text = re.sub(
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:member\s+of\s+the\s+)?([A-Za-z\s]+?)(?:,\s*[A-Za-z\s]+?)?(?:,\s*[A-Za-z\s]+?)?(?=[.!?]|$)',
-        r'\1 - \2',
-        text
-    )
-    
-    # Сокращаем длинные должности
-    text = re.sub(r'research\s+assistant\s+at\s+the\s+Center\s+for\s+Geostrategic\s+Studies', 'researcher at Center for Geostrategic Studies', text, flags=re.IGNORECASE)
-    text = re.sub(r'member\s+of\s+the\s+BRICS\s+Journalists\s+Association', 'BRICS journalist', text, flags=re.IGNORECASE)
-    
     # Нормализуем переносы
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
-
-def is_today_article(published_date) -> bool:
-    """Проверяет, опубликована ли статья сегодня"""
-    # В тестовом режиме пропускаем все статьи
-    if os.getenv('TEST_MODE', 'false').lower() == 'true':
-        return True
-    
-    if not published_date:
-        return True
-    
-    try:
-        if hasattr(published_date, 'timetuple'):
-            import time
-            pub_date = datetime.fromtimestamp(time.mktime(published_date.timetuple()))
-        else:
-            pub_date = datetime.strptime(published_date, '%a, %d %b %Y %H:%M:%S %z')
-        
-        now = get_local_time()
-        return pub_date.date() == now.date()
-    except Exception as e:
-        logger.warning(f"Ошибка проверки даты: {e}")
-        return True
-
-def is_complete_sentence(text: str) -> bool:
-    """Проверяет, заканчивается ли текст полным предложением"""
-    if not text:
-        return False
-    return re.search(r'[.!?…]\s*$', text)
-
-def ensure_complete_sentence(text: str) -> str:
-    """Обрезает текст до последнего полного предложения"""
-    if not text:
-        return ""
-    
-    for punct in ['.', '!', '?']:
-        last = text.rfind(punct)
-        if last != -1 and last > len(text) // 3:
-            return text[:last + 1].strip()
-    
-    last_dot = text.rfind('.')
-    if last_dot != -1:
-        return text[:last_dot + 1].strip()
-    
-    return text
 
 def clean_title(title: str) -> str:
     """Очищает заголовок от названий источников и лишних символов"""
@@ -325,54 +215,9 @@ def clean_title(title: str) -> str:
     
     return title.strip()
 
-def clean_old_data():
-    """Очищает старые данные (старше 7 дней)"""
-    try:
-        cutoff = get_local_time() - timedelta(days=7)
-        
-        # Очищаем state_news_bot.json
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if 'posts_log' in data:
-                data['posts_log'] = [
-                    post for post in data['posts_log']
-                    if datetime.fromisoformat(post['time']) > cutoff
-                ]
-            
-            with open(STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info("🧹 state_news_bot.json очищен от старых записей")
-        
-        # Очищаем posts_meta.json
-        if os.path.exists(META_FILE):
-            with open(META_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if 'posts' in data:
-                cleaned_posts = {}
-                for pid, post_data in data['posts'].items():
-                    try:
-                        if datetime.fromisoformat(post_data.get('time', '')) > cutoff:
-                            cleaned_posts[pid] = post_data
-                    except:
-                        cleaned_posts[pid] = post_data
-                data['posts'] = cleaned_posts
-            
-            with open(META_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info("🧹 posts_meta.json очищен от старых записей")
-            
-    except Exception as e:
-        logger.error(f"Ошибка очистки данных: {e}")
-
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
-        # Очищаем старые данные при запуске
-        clean_old_data()
-        
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
@@ -435,7 +280,6 @@ class NewsBot:
         }
         self._save_meta()
         logger.info(f"📝 Метаданные сохранены: {source} - {title[:50]}...")
-        logger.info(f"🔗 Источник: {url}")
 
     def _normalize_title(self, title: str) -> str:
         if not title:
@@ -454,13 +298,16 @@ class NewsBot:
 
     def _is_duplicate(self, url: str, title: str, content: str = "") -> bool:
         if url in self.state['sent_links']:
+            logger.info(f"Дубликат по URL: {url[:50]}...")
             return True
         norm_title = self._normalize_title(title)
         if norm_title and norm_title in self.state['sent_titles']:
+            logger.info(f"Дубликат по заголовку: {title[:50]}...")
             return True
         if content:
             h = self._hash_content(content)
             if h and h in self.state['sent_hashes']:
+                logger.info(f"Дубликат по содержимому: {title[:50]}...")
                 return True
         return False
 
@@ -490,11 +337,6 @@ class NewsBot:
             return True
             
         now = get_local_time()
-        hour = now.hour
-        # Отключаем ночное ограничение для теста
-        # if 23 <= hour or hour < 7:
-        #     return False
-
         today = now.date()
         today_posts = 0
         last_times = []
@@ -508,12 +350,15 @@ class NewsBot:
                 continue
 
         if today_posts >= MAX_POSTS_PER_DAY:
+            logger.info(f"Дневной лимит {MAX_POSTS_PER_DAY} достигнут")
             return False
 
         if last_times:
             last_times.sort(reverse=True)
             elapsed = (now - last_times[0]).total_seconds()
             if elapsed < MIN_INTERVAL:
+                wait = (MIN_INTERVAL - elapsed) // 60
+                logger.info(f"Минимальный интервал: следующий пост через {wait:.0f} минут")
                 return False
 
         return True
@@ -542,8 +387,7 @@ class NewsBot:
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        truncated = self._truncate_to_last_sentence(text, max_len)
-        return ensure_complete_sentence(truncated)
+        return self._truncate_to_last_sentence(text, max_len)
 
     # ========== ПАРСИНГ INFOBRICS ==========
     def _get_infobrics_articles(self) -> list:
@@ -551,7 +395,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://infobrics.org/rss/en')
             articles = []
-            for entry in feed.entries[:15]:  # Увеличиваем до 15
+            for entry in feed.entries[:15]:
                 title = entry.get('title', '').strip()
                 if not title or title == '{[title]}' or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -566,9 +410,16 @@ class NewsBot:
                 
                 # В ТЕСТОВОМ РЕЖИМЕ ПРОПУСКАЕМ ПРОВЕРКУ ДАТЫ
                 if not self.test_mode and hasattr(entry, 'published'):
-                    if not is_today_article(entry.published):
-                        logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
-                        continue
+                    # Проверяем дату
+                    try:
+                        pub_date = datetime.strptime(entry.published, '%a, %d %b %Y %H:%M:%S %z')
+                        now = get_local_time()
+                        # Публикуем только статьи за последние 3 дня
+                        if (now - pub_date).days > 3:
+                            logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
+                            continue
+                    except:
+                        pass
                 
                 title = clean_title(title)
                 
@@ -593,7 +444,7 @@ class NewsBot:
             # === ПОИСК ЗАГОЛОВКА ===
             title = None
             
-            # 1. Пробуем div.title.title--big (основной заголовок)
+            # 1. Пробуем div.title.title--big
             title_div = soup.find('div', class_='title title--big')
             if title_div:
                 title = title_div.get_text(strip=True)
@@ -649,7 +500,6 @@ class NewsBot:
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = None
-            # Пробуем img.article__image
             article_img = soup.find('img', class_='article__image')
             if article_img and article_img.get('src'):
                 img_src = article_img['src']
@@ -669,13 +519,11 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # 1. Пробуем div.article__text (основной контейнер)
             article_text = soup.find('div', class_='article__text')
             if article_text:
                 content_container = article_text
                 logger.info("✅ Найден контейнер article__text")
             else:
-                # 2. Пробуем другие классы
                 for class_name in ['article-content', 'post-content', 'entry-content', 'content', 'main-content']:
                     container = soup.find('div', class_=re.compile(class_name))
                     if container:
@@ -703,9 +551,6 @@ class NewsBot:
                 logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
                 return None
 
-            if is_blacklisted(title, content):
-                return None
-
             return {
                 'title': title,
                 'content': content,
@@ -723,7 +568,7 @@ class NewsBot:
         try:
             feed = feedparser.parse('https://www.globalresearch.ca/feed')
             articles = []
-            for entry in feed.entries[:15]:  # Увеличиваем до 15
+            for entry in feed.entries[:15]:
                 title = entry.get('title', '').strip()
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -738,16 +583,18 @@ class NewsBot:
                 
                 # В ТЕСТОВОМ РЕЖИМЕ ПРОПУСКАЕМ ПРОВЕРКУ ДАТЫ
                 if not self.test_mode and hasattr(entry, 'published'):
-                    if not is_today_article(entry.published):
-                        logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
-                        continue
+                    try:
+                        pub_date = datetime.strptime(entry.published, '%a, %d %b %Y %H:%M:%S %z')
+                        now = get_local_time()
+                        if (now - pub_date).days > 3:
+                            logger.info(f"⏰ Пропущена старая статья: {title[:30]}...")
+                            continue
+                    except:
+                        pass
                 
                 title = clean_title(title)
                 
-                if is_blacklisted(title):
-                    continue
-                
-                # Пропускаем статьи с поддоменов (часто 403 или не-новости)
+                # Пропускаем статьи с поддоменов
                 if 'substack.com' in entry.link or 'asia-pacificresearch.com' in entry.link:
                     logger.info(f"⏭️ Пропущен внешний домен: {title[:30]}...")
                     continue
@@ -771,7 +618,7 @@ class NewsBot:
             title = None
             subtitle = None
             
-            # 1. Пробуем h2.title itemprop="headline" (ОСНОВНОЙ ЗАГОЛОВОК)
+            # 1. Пробуем h2.title itemprop="headline"
             title_h2 = soup.find('h2', class_='title', attrs={'itemprop': 'headline'})
             if title_h2:
                 title = title_h2.get_text(strip=True)
@@ -780,7 +627,7 @@ class NewsBot:
                 else:
                     title = None
             
-            # 2. Пробуем h3.subtitle (подзаголовок)
+            # 2. Пробуем h3.subtitle
             if not title:
                 subtitle_h3 = soup.find('h3', class_='subtitle')
                 if subtitle_h3:
@@ -829,7 +676,7 @@ class NewsBot:
                     else:
                         title = None
             
-            # Если нашли только подзаголовок, используем его как заголовок
+            # Если нашли только подзаголовок, используем его
             if not title and subtitle:
                 title = subtitle
                 logger.info(f"✅ Используем подзаголовок как заголовок: {title[:50]}...")
@@ -838,15 +685,13 @@ class NewsBot:
                 logger.warning(f"❌ Не удалось найти заголовок для {url}")
                 return None
             
-            # Если есть подзаголовок и заголовок, объединяем
+            # Если есть подзаголовок, объединяем
             if subtitle and title != subtitle:
                 title = f"{title}: {subtitle}"
             
-            # Очищаем заголовок от названия сайта
             title = clean_title(title)
             title = re.sub(r'\s+', ' ', title).strip()
             
-            # Если заголовок слишком короткий или это не новость
             if len(title) < 10 or title.lower() in ['global research', 'ge global research']:
                 logger.warning(f"❌ Заголовок '{title}' не является новостью")
                 return None
@@ -861,25 +706,21 @@ class NewsBot:
             # === ПОИСК КОНТЕНТА ===
             content_container = None
             
-            # 1. Пробуем div.content itemprop="articleBody" (основной контейнер)
             content_div = soup.find('div', class_='content', attrs={'itemprop': 'articleBody'})
             if content_div:
                 content_container = content_div
                 logger.info("✅ Найден контейнер content[itemprop=articleBody]")
             else:
-                # 2. Пробуем div.entry-content
                 entry_content = soup.find('div', class_='entry-content')
                 if entry_content:
                     content_container = entry_content
                     logger.info("✅ Найден контейнер entry-content")
                 else:
-                    # 3. Пробуем div.article__text
                     article_text = soup.find('div', class_='article__text')
                     if article_text:
                         content_container = article_text
                         logger.info("✅ Найден контейнер article__text")
                     else:
-                        # 4. Пробуем другие классы
                         for class_name in ['post-content', 'article-content']:
                             container = soup.find('div', class_=re.compile(class_name))
                             if container:
@@ -894,14 +735,11 @@ class NewsBot:
             
             paragraphs = []
             if content_container:
-                # Удаляем ненужные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe', 'div.sharedaddy', 'div.wp-block-group']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Фильтруем короткие и служебные параграфы
                     if len(text) > 40 and not text.startswith('Read more') and not text.startswith('Share this'):
                         paragraphs.append(text)
             
@@ -914,9 +752,6 @@ class NewsBot:
             
             if len(content) < 150:
                 logger.warning(f"❌ Контент слишком короткий ({len(content)} символов)")
-                return None
-
-            if is_blacklisted(title, content):
                 return None
 
             return {
@@ -990,7 +825,10 @@ class NewsBot:
             content_ru = re.sub(r'\s+', ' ', content_ru)
             
             # Убеждаемся, что текст заканчивается полным предложением
-            content_ru = ensure_complete_sentence(content_ru)
+            if content_ru and not re.search(r'[.!?…]\s*$', content_ru):
+                last_dot = content_ru.rfind('.')
+                if last_dot != -1 and last_dot > len(content_ru) // 2:
+                    content_ru = content_ru[:last_dot + 1]
 
             # Сохраняем метаданные
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
@@ -1085,13 +923,6 @@ class NewsBot:
                 await asyncio.sleep(300)
 
 async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан!")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан!")
-        return
-
     bot = NewsBot()
     if 'GITHUB_ACTIONS' in os.environ:
         await bot.run_once()
