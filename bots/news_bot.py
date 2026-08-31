@@ -736,4 +736,237 @@ class NewsBot:
             logger.error(f"Ошибка парсинга RT: {e}")
             return None
 
-    # =========
+    # ========== ПАРСИНГ ZEROHEDGE ==========
+    def _get_zerohedge_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://feeds.feedburner.com/zerohedge/feed')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"ZeroHedge RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка ZeroHedge RSS: {e}")
+            return []
+
+    def _parse_zerohedge_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+
+            image_url = extract_image_url(soup, base_url)
+
+            content_container = soup.find('article') or soup.find('main')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'ZeroHedge',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга ZeroHedge: {e}")
+            return None
+
+    # ========== СБОР НОВОСТЕЙ ==========
+    async def fetch_news(self) -> list:
+        items = []
+
+        # 1. InfoBrics
+        logger.info("📰 Парсинг InfoBrics...")
+        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
+        for article in ib_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+
+        # 2. Global Research
+        logger.info("📰 Парсинг Global Research...")
+        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
+        for article in gr_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+
+        # 3. Sputnik
+        logger.info("📰 Парсинг Sputnik...")
+        sp_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_sputnik_articles)
+        for article in sp_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_sputnik_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ Sputnik: {data['title'][:50]}...")
+
+        # 4. RT
+        logger.info("📰 Парсинг RT...")
+        rt_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_rt_articles)
+        for article in rt_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_rt_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ RT: {data['title'][:50]}...")
+
+        # 5. ZeroHedge
+        logger.info("📰 Парсинг ZeroHedge...")
+        zh_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_zerohedge_articles)
+        for article in zh_articles[:5]:
+            if self._is_duplicate(article['url'], article['title']):
+                continue
+            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_zerohedge_article, article['url'])
+            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                items.append(data)
+                logger.info(f"✅ ZeroHedge: {data['title'][:50]}...")
+
+        logger.info(f"📊 Всего новых статей: {len(items)}")
+        return items
+
+    # ========== ПУБЛИКАЦИЯ ==========
+    async def publish(self, post: dict):
+        try:
+            title_en = post.get('title', '')
+            content_en = post.get('content', '')
+            url = post.get('url', '')
+            image_url = post.get('image')
+            if not title_en or not content_en:
+                logger.error("❌ Нет заголовка или содержимого")
+                return
+            caption_text = content_en[:MAX_CAPTION]
+            caption_text = self._truncate_text(caption_text, is_caption=True)
+            logger.info(f"📝 Перевод заголовка: {title_en[:50]}...")
+            logger.info(f"📝 Перевод {len(caption_text)} символов текста")
+            loop = asyncio.get_event_loop()
+            title_ru = await loop.run_in_executor(None, translate_text, title_en)
+            content_ru = await loop.run_in_executor(None, translate_text, caption_text)
+            content_ru = clean_content(content_ru)
+            content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
+            content_ru = re.sub(r'\s+', ' ', content_ru)
+            if content_ru and not re.search(r'[.!?…]\s*$', content_ru):
+                last_dot = content_ru.rfind('.')
+                if last_dot != -1 and last_dot > len(content_ru) // 2:
+                    content_ru = content_ru[:last_dot + 1]
+            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
+            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+            title_escaped = html.escape(title_ru)
+            message = f"{title_escaped}\n\n{content_ru}"
+            if image_url:
+                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
+                img_response = fetch_url(image_url, timeout=15)
+                if img_response and img_response.status_code == 200:
+                    content_type = img_response.headers.get('Content-Type', '')
+                    if 'image' in content_type:
+                        try:
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID,
+                                photo=img_response.content,
+                                caption=message,
+                                parse_mode='Markdown'
+                            )
+                            logger.info("✅ Опубликовано С ФОТО (переведено на русский)")
+                            self._mark_sent(url, title_en, content_en)
+                            self._log_post(url, title_en)
+                            return
+                        except TelegramError as e:
+                            logger.warning(f"Ошибка отправки фото: {e}")
+            logger.info("📝 Публикация текстом (без фото)")
+            await self.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=message,
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
+            logger.info("✅ Опубликовано ТЕКСТОМ (переведено на русский)")
+            self._mark_sent(url, title_en, content_en)
+            self._log_post(url, title_en)
+        except TelegramError as e:
+            error_msg = str(e)
+            if "Can't parse entities" in error_msg:
+                logger.warning("Ошибка Markdown, отправляем без форматирования")
+                try:
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=f"{title_ru}\n\n{content_ru}",
+                        parse_mode=None
+                    )
+                    self._mark_sent(url, title_en, content_en)
+                    self._log_post(url, title_en)
+                except Exception as e2:
+                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
+            else:
+                logger.error(f"❌ Ошибка Telegram: {e}")
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка публикации: {e}")
+
+    # ========== ОСНОВНОЙ ЦИКЛ ==========
+    async def run_once(self):
+        logger.info("=" * 50)
+        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
+        logger.info("=" * 50)
+        news = await self.fetch_news()
+        if not news:
+            logger.info("📭 Новых статей нет")
+            return
+        if not self._can_post():
+            logger.info("⏸️ Публикация отложена (ограничения)")
+            return
+        await self.publish(news[0])
+
+    async def run_forever(self):
+        logger.info("🤖 Бот запущен в бесконечном режиме")
+        while True:
+            try:
+                await self.run_once()
+                delay = self._next_delay()
+                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
+                await asyncio.sleep(delay)
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка: {e}")
+                await asyncio.sleep(300)
+
+async def main():
+    bot = NewsBot()
+    if 'GITHUB_ACTIONS' in os.environ:
+        await bot.run_once()
+    else:
+        await bot.run_forever()
+
+if __name__ == '__main__':
+    asyncio.run(main())
