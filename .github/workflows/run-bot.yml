@@ -28,8 +28,8 @@ jobs:
 
       - name: Run News Bot
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TEST_MODE: true
           MIN_POST_INTERVAL: 300
           MAX_POST_INTERVAL: 600
