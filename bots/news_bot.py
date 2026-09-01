@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research
+Источники: InfoBrics, Global Research, Sputnik, RT, The Cradle, Strategic Culture, South Front
 """
 
 import os
@@ -33,26 +33,22 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
-# Проверяем наличие токена
 if not TELEGRAM_TOKEN:
-    logger.error("❌ TELEGRAM_TOKEN не задан! Проверьте секреты GitHub Actions.")
+    logger.error("❌ TELEGRAM_TOKEN не задан!")
     exit(1)
 
 if not CHANNEL_ID:
-    logger.error("❌ CHANNEL_ID не задан! Проверьте секреты GitHub Actions.")
+    logger.error("❌ CHANNEL_ID не задан!")
     exit(1)
 
-# Интервалы публикации
 MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', '120'))
 MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', '300'))
 MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '100'))
 TIMEZONE_OFFSET = 7
-
 REQUEST_TIMEOUT = 15
 
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
-
 MAX_CAPTION = 1024
 
 # ========== ФУНКЦИЯ ПЕРЕВОДА ==========
@@ -74,7 +70,6 @@ def translate_text(text: str) -> str:
                 translated = ''.join([part[0] for part in data[0] if part[0]])
                 if translated:
                     return translated
-        # Fallback: MyMemory API
         try:
             url = f"https://api.mymemory.translated.net/get?q={quote(text[:450])}&langpair=en|ru"
             response = requests.get(url, timeout=10)
@@ -240,16 +235,13 @@ class NewsBot:
 
     def _is_duplicate(self, url: str, title: str, content: str = "") -> bool:
         if url in self.state['sent_links']:
-            logger.info(f"Дубликат по URL: {url[:50]}...")
             return True
         norm_title = self._normalize_title(title)
         if norm_title and norm_title in self.state['sent_titles']:
-            logger.info(f"Дубликат по заголовку: {title[:50]}...")
             return True
         if content:
             h = self._hash_content(content)
             if h and h in self.state['sent_hashes']:
-                logger.info(f"Дубликат по содержимому: {title[:50]}...")
                 return True
         return False
 
@@ -604,92 +596,376 @@ class NewsBot:
             logger.error(f"Ошибка парсинга Global Research: {e}")
             return None
 
+    # ========== ПАРСИНГ SPUTNIK ==========
+    def _get_sputnik_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://sputnikglobe.com/export/rss2/archive/index.xml')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                if 'video' in title.lower() or 'photo' in title.lower():
+                    continue
+                title = clean_title(title)
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"Sputnik RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Sputnik RSS: {e}")
+            return []
+
+    def _parse_sputnik_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+            image_url = extract_image_url(soup, base_url)
+            content_container = soup.find('article') or soup.find('main') or soup.find('div', class_='article__body')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'Sputnik',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Sputnik: {e}")
+            return None
+
+    # ========== ПАРСИНГ RT ==========
+    def _get_rt_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.rt.com/rss/')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                if 'video' in title.lower() or 'photo' in title.lower():
+                    continue
+                title = clean_title(title)
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"RT RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка RT RSS: {e}")
+            return []
+
+    def _parse_rt_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+            image_url = extract_image_url(soup, base_url)
+            content_container = soup.find('article') or soup.find('main')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'RT',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга RT: {e}")
+            return None
+
+    # ========== ПАРСИНГ THE CRADLE ==========
+    def _get_cradle_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://thecradle.co/rss')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                title = clean_title(title)
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"The Cradle RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка The Cradle RSS: {e}")
+            return []
+
+    def _parse_cradle_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+            image_url = extract_image_url(soup, base_url)
+            content_container = soup.find('article') or soup.find('main')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'The Cradle',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга The Cradle: {e}")
+            return None
+
+    # ========== ПАРСИНГ STRATEGIC CULTURE ==========
+    def _get_strategic_culture_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://www.strategic-culture.org/feed/')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                title = clean_title(title)
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"Strategic Culture RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка Strategic Culture RSS: {e}")
+            return []
+
+    def _parse_strategic_culture_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+            image_url = extract_image_url(soup, base_url)
+            content_container = soup.find('article') or soup.find('main')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'Strategic Culture',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга Strategic Culture: {e}")
+            return None
+
+    # ========== ПАРСИНГ SOUTH FRONT ==========
+    def _get_south_front_articles(self) -> list:
+        try:
+            feed = feedparser.parse('https://southfront.press/feed/')
+            articles = []
+            for entry in feed.entries[:10]:
+                title = entry.get('title', '').strip()
+                if not title or len(title) < 5:
+                    continue
+                title = clean_title(title)
+                articles.append({'url': entry.link, 'title': title})
+                logger.info(f"South Front RSS: {title[:50]}...")
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка South Front RSS: {e}")
+            return []
+
+    def _parse_south_front_article(self, url: str) -> dict | None:
+        try:
+            response = fetch_url(url)
+            if not response:
+                return None
+            soup = BeautifulSoup(response.text, 'html.parser')
+            base_url = f'https://{url.split("/")[2]}'
+            title = None
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text(strip=True)
+            if not title:
+                meta_title = soup.find('meta', property='og:title')
+                if meta_title and meta_title.get('content'):
+                    title = meta_title['content']
+            if not title:
+                return None
+            title = clean_title(title)
+            image_url = extract_image_url(soup, base_url)
+            content_container = soup.find('article') or soup.find('main')
+            paragraphs = []
+            if content_container:
+                for p in content_container.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        paragraphs.append(text)
+            if len(paragraphs) < 2:
+                return None
+            content = '\n\n'.join(paragraphs)
+            if len(content) < 150:
+                return None
+            return {
+                'title': title,
+                'content': content,
+                'image': image_url,
+                'source': 'South Front',
+                'url': url
+            }
+        except Exception as e:
+            logger.error(f"Ошибка парсинга South Front: {e}")
+            return None
+
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
 
-        # 1. InfoBrics
-        logger.info("📰 Парсинг InfoBrics...")
-        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:5]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+        sources = [
+            ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
+            ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
+            ('Sputnik', self._get_sputnik_articles, self._parse_sputnik_article),
+            ('RT', self._get_rt_articles, self._parse_rt_article),
+            ('The Cradle', self._get_cradle_articles, self._parse_cradle_article),
+            ('Strategic Culture', self._get_strategic_culture_articles, self._parse_strategic_culture_article),
+            ('South Front', self._get_south_front_articles, self._parse_south_front_article),
+        ]
 
-        # 2. Global Research
-        logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:5]:
-            if self._is_duplicate(article['url'], article['title']):
-                continue
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+        for source_name, get_func, parse_func in sources:
+            logger.info(f"📰 Парсинг {source_name}...")
+            articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
+            for article in articles[:5]:
+                if self._is_duplicate(article['url'], article['title']):
+                    continue
+                data = await asyncio.get_event_loop().run_in_executor(None, parse_func, article['url'])
+                if data and not self._is_duplicate(article['url'], article['title'], data['content']):
+                    items.append(data)
+                    logger.info(f"✅ {source_name}: {data['title'][:50]}...")
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
 
     # ========== ПУБЛИКАЦИЯ ==========
     async def publish_all(self, posts: list):
-        """Публикует все переданные статьи"""
         published = 0
         for i, post in enumerate(posts):
-            # Проверяем лимиты перед каждой публикацией
             if not self._can_post():
                 logger.info(f"⏸️ Достигнут лимит, опубликовано {published} статей из {len(posts)}")
                 break
-            
             logger.info(f"📤 Публикация {i+1}/{len(posts)}: {post.get('title', '')[:50]}...")
-            
             try:
                 await self._publish_single(post)
                 published += 1
-                # Небольшая пауза между публикациями
                 await asyncio.sleep(10)
             except Exception as e:
                 logger.error(f"❌ Ошибка публикации: {e}")
-        
         logger.info(f"✅ Всего опубликовано {published} статей из {len(posts)}")
 
     async def _publish_single(self, post: dict):
-        """Публикует одну статью"""
         try:
             title_en = post.get('title', '')
             content_en = post.get('content', '')
             url = post.get('url', '')
             image_url = post.get('image')
-            
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
-            
             caption_text = content_en[:MAX_CAPTION]
             caption_text = self._truncate_text(caption_text, is_caption=True)
             logger.info(f"📝 Перевод заголовка: {title_en[:50]}...")
             logger.info(f"📝 Перевод {len(caption_text)} символов текста")
-            
             loop = asyncio.get_event_loop()
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             content_ru = await loop.run_in_executor(None, translate_text, caption_text)
             content_ru = clean_content(content_ru)
             content_ru = re.sub(r'\n\s*\n', '\n', content_ru)
             content_ru = re.sub(r'\s+', ' ', content_ru)
-            
             if content_ru and not re.search(r'[.!?…]\s*$', content_ru):
                 last_dot = content_ru.rfind('.')
                 if last_dot != -1 and last_dot > len(content_ru) // 2:
                     content_ru = content_ru[:last_dot + 1]
-            
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
-            
             title_escaped = html.escape(title_ru)
             message = f"{title_escaped}\n\n{content_ru}"
-            
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -709,7 +985,6 @@ class NewsBot:
                             return
                         except TelegramError as e:
                             logger.warning(f"Ошибка отправки фото: {e}")
-            
             logger.info("📝 Публикация текстом (без фото)")
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
@@ -720,7 +995,6 @@ class NewsBot:
             logger.info("✅ Опубликовано ТЕКСТОМ (переведено на русский)")
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
-            
         except TelegramError as e:
             error_msg = str(e)
             if "Can't parse entities" in error_msg:
@@ -745,16 +1019,11 @@ class NewsBot:
         logger.info("=" * 50)
         logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
         logger.info("=" * 50)
-        
         news = await self.fetch_news()
-        
         if not news:
             logger.info("📭 Новых статей нет")
             return
-        
         logger.info(f"📊 Найдено {len(news)} новых статей")
-        
-        # Публикуем все статьи (с учетом лимитов)
         await self.publish_all(news)
 
     async def run_forever(self):
