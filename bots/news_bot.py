@@ -48,6 +48,10 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
+# ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
+# Если запуск из GitHub Actions с TEST_MODE=true - это ручной запуск (workflow_dispatch)
+IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
@@ -238,6 +242,11 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
+        # ========== ИСПРАВЛЕНИЕ: ПРИ РУЧНОМ ЗАПУСКЕ ОГРАНИЧЕНИЯ СНИМАЮТСЯ ==========
+        if IS_MANUAL_RUN:
+            logger.info("🔓 Ручной запуск - ограничения сняты")
+            return True
+
         now = get_local_time()
         hour = now.hour
         if 23 <= hour or hour < 7:
@@ -325,10 +334,8 @@ class NewsBot:
             articles = []
 
             for entry in feed.entries[:5]:
-                # Берем заголовок из RSS (самый надежный источник)
                 rss_title = entry.get('title', '').strip()
                 
-                # Если заголовок пустой или шаблонный, пробуем из summary
                 if not rss_title or rss_title == '{[title]}' or len(rss_title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
@@ -337,14 +344,13 @@ class NewsBot:
                         if len(rss_title) < 5 and len(summary) > 10:
                             rss_title = summary[:100].strip()
 
-                # Если все еще нет заголовка - создаем из URL
                 if not rss_title or len(rss_title) < 5:
                     link = entry.get('link', '')
                     rss_title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
 
                 articles.append({
                     'url': entry.link,
-                    'title': rss_title,  # Используем RSS заголовок как основной
+                    'title': rss_title,
                     'rss_title': rss_title
                 })
                 logger.info(f"InfoBrics RSS: {rss_title[:80]}...")
@@ -363,17 +369,10 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ========== ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ RSS ЗАГОЛОВОК ==========
-            # Заголовок будет передан из RSS, поэтому здесь мы его не ищем
-            # Просто сохраняем его для использования в publish
-            title = None
-
-            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
-            # === ПОИСК КОНТЕНТА ===
             content_container = None
             for class_name in ['article__text', 'article-content', 'post-content', 'entry-content', 'content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
@@ -394,7 +393,6 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # ========== ИСКЛЮЧАЕМ АБЗАЦЫ С "Уриэль Араухо" ==========
                     if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                         logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
                         continue
@@ -424,7 +422,7 @@ class NewsBot:
                 return None
 
             return {
-                'title': title,  # Будет заменен на RSS заголовок в fetch_news
+                'title': None,
                 'content': content,
                 'image': image_url,
                 'source': 'InfoBrics',
@@ -442,7 +440,6 @@ class NewsBot:
             articles = []
 
             for entry in feed.entries[:5]:
-                # Берем заголовок из RSS
                 rss_title = entry.get('title', '').strip()
 
                 if not rss_title or len(rss_title) < 5:
@@ -459,7 +456,7 @@ class NewsBot:
 
                 articles.append({
                     'url': entry.link,
-                    'title': rss_title,  # Используем RSS заголовок
+                    'title': rss_title,
                     'rss_title': rss_title
                 })
                 logger.info(f"Global Research RSS: {rss_title[:80]}...")
@@ -478,12 +475,10 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
-            # === ПОИСК КОНТЕНТА ===
             content_container = None
             for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
                 container = soup.find('div', class_=re.compile(class_name))
@@ -504,7 +499,6 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # ========== ИСКЛЮЧАЕМ АБЗАЦЫ С "Уриэль Араухо" ==========
                     if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                         logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
                         continue
@@ -534,7 +528,7 @@ class NewsBot:
                 return None
 
             return {
-                'title': None,  # Будет заменен на RSS заголовок в fetch_news
+                'title': None,
                 'content': content,
                 'image': image_url,
                 'source': 'Global Research',
@@ -549,25 +543,21 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
 
-        # 1. InfoBrics
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:3]:
-            # Используем RSS заголовок для проверки дубликата
             rss_title = article.get('title', '')
             if self._is_duplicate(article['url'], rss_title):
                 continue
             
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
             if data:
-                # ========== ИСПРАВЛЕНИЕ: ВСТАВЛЯЕМ RSS ЗАГОЛОВОК ==========
                 data['title'] = rss_title
                 logger.info(f"✅ InfoBrics: {data['title'][:80]}...")
                 
                 if not self._is_duplicate(article['url'], rss_title, data['content']):
                     items.append(data)
 
-        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:3]:
@@ -577,7 +567,6 @@ class NewsBot:
             
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
             if data:
-                # ========== ИСПРАВЛЕНИЕ: ВСТАВЛЯЕМ RSS ЗАГОЛОВОК ==========
                 data['title'] = rss_title
                 logger.info(f"✅ Global Research: {data['title'][:80]}...")
                 
@@ -599,7 +588,6 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Принудительная проверка дубликата
             if url in self.state['sent_links']:
                 logger.warning(f"⛔ Пост уже опубликован по URL: {url[:80]}...")
                 return
@@ -720,6 +708,8 @@ class NewsBot:
     async def run_once(self):
         logger.info("=" * 50)
         logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
+        if IS_MANUAL_RUN:
+            logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА - ограничения сняты")
         logger.info("=" * 50)
 
         news = await self.fetch_news()
@@ -739,9 +729,14 @@ class NewsBot:
             await self.publish(article)
             published_count += 1
             
+            # При ручном запуске задержка 10 секунд (вместо 60)
             if published_count < len(news):
-                logger.info("⏳ Ожидание 60 секунд перед следующей публикацией...")
-                await asyncio.sleep(60)
+                if IS_MANUAL_RUN:
+                    logger.info("⏳ Ожидание 10 секунд перед следующей публикацией...")
+                    await asyncio.sleep(10)
+                else:
+                    logger.info("⏳ Ожидание 60 секунд перед следующей публикацией...")
+                    await asyncio.sleep(60)
         
         logger.info(f"✅ Опубликовано статей за запуск: {published_count}")
 
