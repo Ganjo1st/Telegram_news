@@ -45,9 +45,9 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# Увеличенные лимиты для публикаций
-MAX_CAPTION = 2048
-MAX_MESSAGE = 8192
+# Лимиты Telegram
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096  # Максимальная длина сообщения Telegram
 
 # ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
@@ -298,11 +298,15 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
+        # Ищем конец предложения в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
-                return text[:last + 1].strip()
+                result = text[:last + 1].strip()
+                if len(result) <= max_len:
+                    return result
 
+        # Если не нашли конец предложения, обрезаем по слову
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             return text[:last_space].strip()
@@ -311,6 +315,8 @@ class NewsBot:
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
+        # Оставляем запас 100 символов для заголовка и форматирования
+        max_len = max_len - 100
         return self._truncate_to_last_sentence(text, max_len)
 
     def _translate_text(self, text: str) -> str:
@@ -321,6 +327,7 @@ class NewsBot:
             return text
 
         try:
+            # Ограничиваем текст для перевода
             if len(text) > 4000:
                 text = text[:4000]
 
@@ -462,12 +469,6 @@ class NewsBot:
     def _parse_globalresearch_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'Global Research')
 
-    # Sputnik исключен - вызывает зависания
-    # def _get_sputnik_articles(self) -> list:
-    #     return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
-    # def _parse_sputnik_article(self, url: str) -> dict | None:
-    #     return self._parse_article(url, 'Sputnik')
-
     def _get_rt_articles(self) -> list:
         return self._parse_rss_feed('https://www.rt.com/rss/news/', 'RT')
 
@@ -496,7 +497,6 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # Sputnik исключен
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
@@ -620,6 +620,8 @@ class NewsBot:
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
             title_escaped = html.escape(title_ru)
+            
+            # ========== ИСПРАВЛЕНИЕ: ОБРЕЗАЕМ ТЕКСТ ДЛЯ CAPTION ==========
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"📰 *{title_escaped}*\n\n{content_truncated}"
 
@@ -631,6 +633,11 @@ class NewsBot:
                     content_type = img_response.headers.get('Content-Type', '')
                     if 'image' in content_type:
                         try:
+                            # Убеждаемся что caption не превышает лимит
+                            if len(message) > MAX_CAPTION:
+                                logger.warning(f"⚠️ Caption слишком длинный ({len(message)}), обрезаем...")
+                                message = message[:MAX_CAPTION - 50] + "..."
+                            
                             await self.bot.send_photo(
                                 chat_id=CHANNEL_ID,
                                 photo=img_response.content,
@@ -648,8 +655,16 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
+            # ========== ИСПРАВЛЕНИЕ: ОБРЕЗАЕМ ТЕКСТ ДЛЯ СООБЩЕНИЯ ==========
             logger.info("📝 Публикация текстом (без фото)")
-            text_message = f"📰 *{title_escaped}*\n\n{self._truncate_text(content_ru, is_caption=False)}"
+            text_content = self._truncate_text(content_ru, is_caption=False)
+            text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            
+            # Убеждаемся что сообщение не превышает лимит
+            if len(text_message) > MAX_MESSAGE:
+                logger.warning(f"⚠️ Сообщение слишком длинное ({len(text_message)}), обрезаем...")
+                text_message = text_message[:MAX_MESSAGE - 50] + "..."
+            
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=text_message,
@@ -666,15 +681,35 @@ class NewsBot:
             if "Can't parse entities" in error_msg:
                 logger.warning("Ошибка Markdown, отправляем без форматирования")
                 try:
+                    # Отправляем без Markdown
+                    text_message = f"📰 {title_ru}\n\n{content_ru}"
+                    if len(text_message) > MAX_MESSAGE:
+                        text_message = text_message[:MAX_MESSAGE - 50] + "..."
+                    
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
-                        text=f"📰 {title_ru}\n\n{content_ru}",
+                        text=text_message,
                         parse_mode=None
                     )
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
                 except Exception as e2:
                     logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
+            elif "Message is too long" in error_msg:
+                logger.warning("⚠️ Сообщение слишком длинное, сокращаем...")
+                try:
+                    # Пробуем отправить только заголовок и первые 2000 символов
+                    short_content = content_ru[:2000] + "..."
+                    text_message = f"📰 {title_ru}\n\n{short_content}"
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=text_message,
+                        parse_mode=None
+                    )
+                    self._mark_sent(url, title_en, content_en)
+                    self._log_post(url, title_en)
+                except Exception as e2:
+                    logger.error(f"❌ Ошибка при отправке сокращенного сообщения: {e2}")
             else:
                 logger.error(f"❌ Ошибка Telegram: {e}")
         except Exception as e:
