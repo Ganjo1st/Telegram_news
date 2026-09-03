@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, RT, The Cradle, Strategic Culture, South Front
+Источники: InfoBrics, Global Research, Sputnik, RT, The Cradle, Strategic Culture, South Front
 """
 
 import os
@@ -45,9 +45,8 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# Увеличенные лимиты для публикаций
-MAX_CAPTION = 2048
-MAX_MESSAGE = 8192
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096
 
 # ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
@@ -123,7 +122,9 @@ def clean_title(title: str) -> str:
     if not title:
         return title
     
+    # Удаляем символы # в начале строки
     title = re.sub(r'^#+\s*', '', title)
+    # Удаляем эмодзи и спецсимволы в начале
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
     title = title.strip()
     return title
@@ -339,17 +340,15 @@ class NewsBot:
 
     # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
+        """Универсальная функция для парсинга RSS лент"""
         try:
             feed = feedparser.parse(url)
-            
-            if feed.bozo:
-                logger.warning(f"⚠️ {source_name}: возможные проблемы с RSS")
-            
             articles = []
             
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
+                # Если заголовок пустой или слишком короткий
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
@@ -362,6 +361,7 @@ class NewsBot:
                         link = entry.get('link', '')
                         title = f"{source_name} Article {link.split('/')[-1] if link else ''}"
                 
+                # Очищаем заголовок
                 title = clean_title(title)
                 
                 articles.append({
@@ -373,11 +373,12 @@ class NewsBot:
             
             return articles
         except Exception as e:
-            logger.error(f"❌ Ошибка парсинга RSS {source_name}: {e}")
+            logger.error(f"Ошибка парсинга RSS {source_name}: {e}")
             return []
 
     # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ СТАТЬИ ==========
     def _parse_article(self, url: str, source_name: str) -> dict | None:
+        """Универсальная функция для парсинга статьи"""
         try:
             response = fetch_url(url)
             if not response:
@@ -386,10 +387,12 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Поиск изображения
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
+            # Поиск контента
             content_container = None
             for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content', 'article__text']:
                 container = soup.find('div', class_=re.compile(class_name))
@@ -410,6 +413,7 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Исключаем абзацы с именами авторов
                     if any(name in text for name in ['Уриэль Араухо', 'Uriel Araujo', 'Ахмед Адель', 'Ahmed Adel']):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
@@ -462,11 +466,11 @@ class NewsBot:
     def _parse_globalresearch_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'Global Research')
 
-    # Sputnik исключен - вызывает зависания
-    # def _get_sputnik_articles(self) -> list:
-    #     return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
-    # def _parse_sputnik_article(self, url: str) -> dict | None:
-    #     return self._parse_article(url, 'Sputnik')
+    def _get_sputnik_articles(self) -> list:
+        return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
+
+    def _parse_sputnik_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'Sputnik')
 
     def _get_rt_articles(self) -> list:
         return self._parse_rss_feed('https://www.rt.com/rss/news/', 'RT')
@@ -492,14 +496,15 @@ class NewsBot:
     def _parse_southfront_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'South Front')
 
-    # ========== СБОР НОВОСТЕЙ С ТАЙМАУТОМ ==========
+    # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
         
-        # Sputnik исключен
+        # Список источников для парсинга
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
+            ('Sputnik', self._get_sputnik_articles, self._parse_sputnik_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
             ('The Cradle', self._get_cradle_articles, self._parse_cradle_article),
             ('Strategic Culture', self._get_strategic_culture_articles, self._parse_strategic_culture_article),
@@ -507,43 +512,23 @@ class NewsBot:
         ]
 
         for source_name, get_func, parse_func in sources:
-            try:
-                logger.info(f"📰 Парсинг {source_name}...")
+            logger.info(f"📰 Парсинг {source_name}...")
+            articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
+            
+            for article in articles[:3]:
+                title = article.get('title', '')
+                url = article.get('url', '')
                 
-                try:
-                    articles = await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(None, get_func),
-                        timeout=30.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(f"❌ Таймаут при парсинге {source_name} (30 сек)")
+                if self._is_duplicate(url, title):
                     continue
                 
-                for article in articles[:3]:
-                    title = article.get('title', '')
-                    url = article.get('url', '')
+                data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
+                if data:
+                    data['title'] = title
+                    logger.info(f"✅ {source_name}: {title[:80]}...")
                     
-                    if self._is_duplicate(url, title):
-                        continue
-                    
-                    try:
-                        data = await asyncio.wait_for(
-                            asyncio.get_event_loop().run_in_executor(None, parse_func, url),
-                            timeout=20.0
-                        )
-                    except asyncio.TimeoutError:
-                        logger.error(f"❌ Таймаут при загрузке статьи {source_name}: {url[:80]}...")
-                        continue
-                    
-                    if data:
-                        data['title'] = title
-                        logger.info(f"✅ {source_name}: {title[:80]}...")
-                        
-                        if not self._is_duplicate(url, title, data['content']):
-                            items.append(data)
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка при парсинге {source_name}: {e}")
-                continue
+                    if not self._is_duplicate(url, title, data['content']):
+                        items.append(data)
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
@@ -560,6 +545,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
+            # Очищаем заголовок
             title_en = clean_title(title_en)
 
             if url in self.state['sent_links']:
