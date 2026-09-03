@@ -49,7 +49,6 @@ MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
 # ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
-# Если запуск из GitHub Actions с TEST_MODE=true - это ручной запуск (workflow_dispatch)
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -117,6 +116,25 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 return src
 
     return None
+
+def clean_title(title: str) -> str:
+    """Очищает заголовок от лишних символов"""
+    if not title:
+        return title
+    
+    # Удаляем символы # в начале строки
+    title = re.sub(r'^#+\s*', '', title)
+    
+    # Удаляем множественные # в начале (например "### Заголовок")
+    title = re.sub(r'^#+\s*', '', title)
+    
+    # Удаляем эмодзи и спецсимволы в начале
+    title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
+    
+    # Удаляем лишние пробелы
+    title = title.strip()
+    
+    return title
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -193,6 +211,8 @@ class NewsBot:
     def _normalize_title(self, title: str) -> str:
         if not title:
             return ""
+        # Очищаем заголовок перед нормализацией
+        title = clean_title(title)
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
         title = re.sub(r'\s+', ' ', title).strip()
@@ -242,7 +262,6 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
-        # ========== ИСПРАВЛЕНИЕ: ПРИ РУЧНОМ ЗАПУСКЕ ОГРАНИЧЕНИЯ СНИМАЮТСЯ ==========
         if IS_MANUAL_RUN:
             logger.info("🔓 Ручной запуск - ограничения сняты")
             return True
@@ -348,6 +367,9 @@ class NewsBot:
                     link = entry.get('link', '')
                     rss_title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
 
+                # Очищаем заголовок от лишних символов
+                rss_title = clean_title(rss_title)
+
                 articles.append({
                     'url': entry.link,
                     'title': rss_title,
@@ -393,8 +415,12 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # Исключаем абзацы с именами авторов
                     if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                         logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                        continue
+                    if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
+                        logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
                         continue
                     if len(text) > 30:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
@@ -407,6 +433,9 @@ class NewsBot:
                         text = p.get_text(strip=True)
                         if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                             logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                            continue
+                        if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
+                            logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
                             continue
                         if len(text) > 30:
                             paragraphs.append(text)
@@ -453,6 +482,9 @@ class NewsBot:
                     if not rss_title or len(rss_title) < 5:
                         link = entry.get('link', '')
                         rss_title = f"Global Research Article {link.split('/')[-1] if link else ''}"
+
+                # Очищаем заголовок от лишних символов
+                rss_title = clean_title(rss_title)
 
                 articles.append({
                     'url': entry.link,
@@ -502,6 +534,9 @@ class NewsBot:
                     if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                         logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
                         continue
+                    if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
+                        logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
+                        continue
                     if len(text) > 30:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
@@ -513,6 +548,9 @@ class NewsBot:
                         text = p.get_text(strip=True)
                         if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
                             logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                            continue
+                        if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
+                            logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
                             continue
                         if len(text) > 30:
                             paragraphs.append(text)
@@ -588,6 +626,9 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
+            # Очищаем заголовок от лишних символов перед проверкой
+            title_en = clean_title(title_en)
+
             if url in self.state['sent_links']:
                 logger.warning(f"⛔ Пост уже опубликован по URL: {url[:80]}...")
                 return
@@ -608,10 +649,13 @@ class NewsBot:
             loop = asyncio.get_event_loop()
 
             title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+            # Очищаем переведенный заголовок
+            title_ru = clean_title(title_ru)
 
             if not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
                 title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+                title_ru = clean_title(title_ru)
 
             content_ru = ""
             if len(content_en) > 4000:
@@ -718,7 +762,6 @@ class NewsBot:
             logger.info("📭 Новых статей нет")
             return
 
-        # Публикуем все статьи
         published_count = 0
         for article in news:
             if not self._can_post():
@@ -729,7 +772,6 @@ class NewsBot:
             await self.publish(article)
             published_count += 1
             
-            # При ручном запуске задержка 10 секунд (вместо 60)
             if published_count < len(news):
                 if IS_MANUAL_RUN:
                     logger.info("⏳ Ожидание 10 секунд перед следующей публикацией...")
