@@ -45,9 +45,9 @@ REQUEST_TIMEOUT = 15
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# ========== УВЕЛИЧЕННЫЕ ЛИМИТЫ ДЛЯ ПУБЛИКАЦИЙ ==========
-MAX_CAPTION = 2048  # Увеличено с 1024
-MAX_MESSAGE = 8192  # Увеличено с 4096
+# Увеличенные лимиты для публикаций
+MAX_CAPTION = 2048
+MAX_MESSAGE = 8192
 
 # ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
@@ -337,15 +337,15 @@ class NewsBot:
             logger.error(f"❌ Ошибка перевода: {e}")
             return text
 
-    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS С ТАЙМАУТОМ ==========
+    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
-        """Универсальная функция для парсинга RSS лент с таймаутом"""
+        """Универсальная функция для парсинга RSS лент (без timeout)"""
         try:
-            # Устанавливаем таймаут для парсинга RSS
-            feed = feedparser.parse(url, timeout=30)
+            # feedparser.parse не поддерживает timeout
+            feed = feedparser.parse(url)
             
             if feed.bozo:
-                logger.warning(f"⚠️ {source_name}: возможные проблемы с RSS ({feed.bozo_exception})")
+                logger.warning(f"⚠️ {source_name}: возможные проблемы с RSS")
             
             articles = []
             
@@ -494,7 +494,7 @@ class NewsBot:
     def _parse_southfront_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'South Front')
 
-    # ========== СБОР НОВОСТЕЙ С ОБРАБОТКОЙ ОШИБОК ==========
+    # ========== СБОР НОВОСТЕЙ С ТАЙМАУТОМ ==========
     async def fetch_news(self) -> list:
         items = []
         
@@ -511,7 +511,16 @@ class NewsBot:
         for source_name, get_func, parse_func in sources:
             try:
                 logger.info(f"📰 Парсинг {source_name}...")
-                articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
+                
+                # Используем asyncio.wait_for для таймаута
+                try:
+                    articles = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(None, get_func),
+                        timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ Таймаут при парсинге {source_name} (30 сек)")
+                    continue
                 
                 for article in articles[:3]:
                     title = article.get('title', '')
@@ -520,7 +529,15 @@ class NewsBot:
                     if self._is_duplicate(url, title):
                         continue
                     
-                    data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
+                    try:
+                        data = await asyncio.wait_for(
+                            asyncio.get_event_loop().run_in_executor(None, parse_func, url),
+                            timeout=20.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"❌ Таймаут при загрузке статьи {source_name}: {url[:80]}...")
+                        continue
+                    
                     if data:
                         data['title'] = title
                         logger.info(f"✅ {source_name}: {title[:80]}...")
