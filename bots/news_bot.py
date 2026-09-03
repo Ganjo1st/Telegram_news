@@ -47,7 +47,7 @@ META_FILE = 'posts_meta.json'
 
 # Лимиты Telegram
 MAX_CAPTION = 1024
-MAX_MESSAGE = 4096  # Максимальная длина сообщения Telegram
+MAX_MESSAGE = 4096
 
 # ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
@@ -298,7 +298,6 @@ class NewsBot:
         if len(text) <= max_len:
             return text
 
-        # Ищем конец предложения в пределах max_len
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
@@ -306,7 +305,6 @@ class NewsBot:
                 if len(result) <= max_len:
                     return result
 
-        # Если не нашли конец предложения, обрезаем по слову
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             return text[:last_space].strip()
@@ -315,7 +313,6 @@ class NewsBot:
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        # Оставляем запас 100 символов для заголовка и форматирования
         max_len = max_len - 100
         return self._truncate_to_last_sentence(text, max_len)
 
@@ -327,7 +324,6 @@ class NewsBot:
             return text
 
         try:
-            # Ограничиваем текст для перевода
             if len(text) > 4000:
                 text = text[:4000]
 
@@ -619,11 +615,13 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            title_escaped = html.escape(title_ru)
+            # ========== ИСПРАВЛЕНИЕ: УБИРАЕМ ЭМОДЗИ ИЗ ЗАГОЛОВКА ==========
+            # Убираем эмодзи и лишние символы из заголовка
+            title_clean = clean_title(title_ru)
+            title_escaped = html.escape(title_clean)
             
-            # ========== ИСПРАВЛЕНИЕ: ОБРЕЗАЕМ ТЕКСТ ДЛЯ CAPTION ==========
             content_truncated = self._truncate_text(content_ru, is_caption=True)
-            message = f"📰 *{title_escaped}*\n\n{content_truncated}"
+            message = f"*{title_escaped}*\n\n{content_truncated}"
 
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
@@ -633,7 +631,6 @@ class NewsBot:
                     content_type = img_response.headers.get('Content-Type', '')
                     if 'image' in content_type:
                         try:
-                            # Убеждаемся что caption не превышает лимит
                             if len(message) > MAX_CAPTION:
                                 logger.warning(f"⚠️ Caption слишком длинный ({len(message)}), обрезаем...")
                                 message = message[:MAX_CAPTION - 50] + "..."
@@ -655,12 +652,10 @@ class NewsBot:
                 else:
                     logger.warning("Не удалось загрузить изображение")
 
-            # ========== ИСПРАВЛЕНИЕ: ОБРЕЗАЕМ ТЕКСТ ДЛЯ СООБЩЕНИЯ ==========
             logger.info("📝 Публикация текстом (без фото)")
             text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"📰 *{title_escaped}*\n\n{text_content}"
+            text_message = f"*{title_escaped}*\n\n{text_content}"
             
-            # Убеждаемся что сообщение не превышает лимит
             if len(text_message) > MAX_MESSAGE:
                 logger.warning(f"⚠️ Сообщение слишком длинное ({len(text_message)}), обрезаем...")
                 text_message = text_message[:MAX_MESSAGE - 50] + "..."
@@ -681,8 +676,8 @@ class NewsBot:
             if "Can't parse entities" in error_msg:
                 logger.warning("Ошибка Markdown, отправляем без форматирования")
                 try:
-                    # Отправляем без Markdown
-                    text_message = f"📰 {title_ru}\n\n{content_ru}"
+                    title_clean = clean_title(title_ru)
+                    text_message = f"{title_clean}\n\n{content_ru}"
                     if len(text_message) > MAX_MESSAGE:
                         text_message = text_message[:MAX_MESSAGE - 50] + "..."
                     
@@ -698,9 +693,9 @@ class NewsBot:
             elif "Message is too long" in error_msg:
                 logger.warning("⚠️ Сообщение слишком длинное, сокращаем...")
                 try:
-                    # Пробуем отправить только заголовок и первые 2000 символов
+                    title_clean = clean_title(title_ru)
                     short_content = content_ru[:2000] + "..."
-                    text_message = f"📰 {title_ru}\n\n{short_content}"
+                    text_message = f"{title_clean}\n\n{short_content}"
                     await self.bot.send_message(
                         chat_id=CHANNEL_ID,
                         text=text_message,
