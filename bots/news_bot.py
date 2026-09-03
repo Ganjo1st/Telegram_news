@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research
+Источники: InfoBrics, Global Research, Sputnik, RT, The Cradle, Strategic Culture, South Front
 """
 
 import os
@@ -124,16 +124,9 @@ def clean_title(title: str) -> str:
     
     # Удаляем символы # в начале строки
     title = re.sub(r'^#+\s*', '', title)
-    
-    # Удаляем множественные # в начале (например "### Заголовок")
-    title = re.sub(r'^#+\s*', '', title)
-    
     # Удаляем эмодзи и спецсимволы в начале
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
-    
-    # Удаляем лишние пробелы
     title = title.strip()
-    
     return title
 
 # ========== ОСНОВНОЙ КЛАСС ==========
@@ -211,7 +204,6 @@ class NewsBot:
     def _normalize_title(self, title: str) -> str:
         if not title:
             return ""
-        # Очищаем заголовок перед нормализацией
         title = clean_title(title)
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
@@ -346,43 +338,47 @@ class NewsBot:
             logger.error(f"❌ Ошибка перевода: {e}")
             return text
 
-    # ========== ПАРСИНГ INFOBRICS ==========
-    def _get_infobrics_articles(self) -> list:
+    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS ==========
+    def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
+        """Универсальная функция для парсинга RSS лент"""
         try:
-            feed = feedparser.parse('https://infobrics.org/rss/en')
+            feed = feedparser.parse(url)
             articles = []
-
-            for entry in feed.entries[:5]:
-                rss_title = entry.get('title', '').strip()
+            
+            for entry in feed.entries[:limit]:
+                title = entry.get('title', '').strip()
                 
-                if not rss_title or rss_title == '{[title]}' or len(rss_title) < 5:
+                # Если заголовок пустой или слишком короткий
+                if not title or len(title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
                         summary = re.sub(r'<[^>]+>', '', summary)
-                        rss_title = summary.split('.')[0].strip()
-                        if len(rss_title) < 5 and len(summary) > 10:
-                            rss_title = summary[:100].strip()
-
-                if not rss_title or len(rss_title) < 5:
-                    link = entry.get('link', '')
-                    rss_title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
-
-                # Очищаем заголовок от лишних символов
-                rss_title = clean_title(rss_title)
-
+                        title = summary.split('.')[0].strip()
+                        if len(title) < 5 and len(summary) > 10:
+                            title = summary[:100].strip()
+                    
+                    if not title or len(title) < 5:
+                        link = entry.get('link', '')
+                        title = f"{source_name} Article {link.split('/')[-1] if link else ''}"
+                
+                # Очищаем заголовок
+                title = clean_title(title)
+                
                 articles.append({
                     'url': entry.link,
-                    'title': rss_title,
-                    'rss_title': rss_title
+                    'title': title,
+                    'source': source_name
                 })
-                logger.info(f"InfoBrics RSS: {rss_title[:80]}...")
-
+                logger.info(f"{source_name} RSS: {title[:80]}...")
+            
             return articles
         except Exception as e:
-            logger.error(f"Ошибка InfoBrics RSS: {e}")
+            logger.error(f"Ошибка парсинга RSS {source_name}: {e}")
             return []
 
-    def _parse_infobrics_article(self, url: str) -> dict | None:
+    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ СТАТЬИ ==========
+    def _parse_article(self, url: str, source_name: str) -> dict | None:
+        """Универсальная функция для парсинга статьи"""
         try:
             response = fetch_url(url)
             if not response:
@@ -391,12 +387,14 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Поиск изображения
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
+            # Поиск контента
             content_container = None
-            for class_name in ['article__text', 'article-content', 'post-content', 'entry-content', 'content', 'main-content']:
+            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content', 'article__text']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     content_container = container
@@ -416,11 +414,8 @@ class NewsBot:
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     # Исключаем абзацы с именами авторов
-                    if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
-                        logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
-                        continue
-                    if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
-                        logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
+                    if any(name in text for name in ['Уриэль Араухо', 'Uriel Araujo', 'Ахмед Адель', 'Ahmed Adel']):
+                        logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
                     if len(text) > 30:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
@@ -431,11 +426,8 @@ class NewsBot:
                 if main:
                     for p in main.find_all('p'):
                         text = p.get_text(strip=True)
-                        if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
-                            logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
-                            continue
-                        if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
-                            logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
+                        if any(name in text for name in ['Уриэль Араухо', 'Uriel Araujo', 'Ахмед Адель', 'Ahmed Adel']):
+                            logger.info(f"⏭️ Пропущен абзац с именем автора")
                             continue
                         if len(text) > 30:
                             paragraphs.append(text)
@@ -451,165 +443,92 @@ class NewsBot:
                 return None
 
             return {
-                'title': None,
                 'content': content,
                 'image': image_url,
-                'source': 'InfoBrics',
+                'source': source_name,
                 'url': url
             }
 
         except Exception as e:
-            logger.error(f"Ошибка парсинга InfoBrics: {e}")
+            logger.error(f"Ошибка парсинга {source_name}: {e}")
             return None
 
-    # ========== ПАРСИНГ GLOBAL RESEARCH ==========
+    # ========== СПЕЦИФИЧНЫЕ МЕТОДЫ ДЛЯ КАЖДОГО ИСТОЧНИКА ==========
+    def _get_infobrics_articles(self) -> list:
+        return self._parse_rss_feed('https://infobrics.org/rss/en', 'InfoBrics')
+
+    def _parse_infobrics_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'InfoBrics')
+
     def _get_globalresearch_articles(self) -> list:
-        try:
-            feed = feedparser.parse('https://www.globalresearch.ca/feed')
-            articles = []
-
-            for entry in feed.entries[:5]:
-                rss_title = entry.get('title', '').strip()
-
-                if not rss_title or len(rss_title) < 5:
-                    summary = entry.get('summary', '')
-                    if summary:
-                        summary = re.sub(r'<[^>]+>', '', summary)
-                        rss_title = summary.split('.')[0].strip()
-                        if len(rss_title) < 5 and len(summary) > 10:
-                            rss_title = summary[:100].strip()
-
-                    if not rss_title or len(rss_title) < 5:
-                        link = entry.get('link', '')
-                        rss_title = f"Global Research Article {link.split('/')[-1] if link else ''}"
-
-                # Очищаем заголовок от лишних символов
-                rss_title = clean_title(rss_title)
-
-                articles.append({
-                    'url': entry.link,
-                    'title': rss_title,
-                    'rss_title': rss_title
-                })
-                logger.info(f"Global Research RSS: {rss_title[:80]}...")
-
-            return articles
-        except Exception as e:
-            logger.error(f"Ошибка Global Research RSS: {e}")
-            return []
+        return self._parse_rss_feed('https://www.globalresearch.ca/feed', 'Global Research')
 
     def _parse_globalresearch_article(self, url: str) -> dict | None:
-        try:
-            response = fetch_url(url)
-            if not response:
-                return None
+        return self._parse_article(url, 'Global Research')
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            base_url = f'https://{url.split("/")[2]}'
+    def _get_sputnik_articles(self) -> list:
+        return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
 
-            image_url = extract_image_url(soup, base_url)
-            if image_url:
-                logger.info(f"Найдено изображение: {image_url[:80]}...")
+    def _parse_sputnik_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'Sputnik')
 
-            content_container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content']:
-                container = soup.find('div', class_=re.compile(class_name))
-                if container:
-                    content_container = container
-                    break
+    def _get_rt_articles(self) -> list:
+        return self._parse_rss_feed('https://www.rt.com/rss/news/', 'RT')
 
-            if not content_container:
-                content_container = soup.find('article')
+    def _parse_rt_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'RT')
 
-            if not content_container:
-                content_container = soup.find('main')
+    def _get_cradle_articles(self) -> list:
+        return self._parse_rss_feed('https://thecradle.co/rss/news', 'The Cradle')
 
-            paragraphs = []
-            if content_container:
-                for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
-                    tag.decompose()
+    def _parse_cradle_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'The Cradle')
 
-                for p in content_container.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
-                        logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
-                        continue
-                    if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
-                        logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
-                        continue
-                    if len(text) > 30:
-                        if not text.startswith('Read more') and not text.startswith('Share this'):
-                            paragraphs.append(text)
+    def _get_strategic_culture_articles(self) -> list:
+        return self._parse_rss_feed('https://strategic-culture.org/feed/', 'Strategic Culture')
 
-            if len(paragraphs) < 2:
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
-                            logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
-                            continue
-                        if 'Ахмед Адель' in text or 'Ahmed Adel' in text:
-                            logger.info(f"⏭️ Пропущен абзац с Ахмед Адель")
-                            continue
-                        if len(text) > 30:
-                            paragraphs.append(text)
+    def _parse_strategic_culture_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'Strategic Culture')
 
-            if len(paragraphs) < 2:
-                logger.warning(f"Недостаточно контента для {url}")
-                return None
+    def _get_southfront_articles(self) -> list:
+        return self._parse_rss_feed('https://southfront.org/feed/', 'South Front')
 
-            content = '\n\n'.join(paragraphs)
-
-            if len(content) < 150:
-                logger.warning(f"Контент слишком короткий ({len(content)} символов)")
-                return None
-
-            return {
-                'title': None,
-                'content': content,
-                'image': image_url,
-                'source': 'Global Research',
-                'url': url
-            }
-
-        except Exception as e:
-            logger.error(f"Ошибка парсинга Global Research: {e}")
-            return None
+    def _parse_southfront_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'South Front')
 
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
+        
+        # Список источников для парсинга
+        sources = [
+            ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
+            ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
+            ('Sputnik', self._get_sputnik_articles, self._parse_sputnik_article),
+            ('RT', self._get_rt_articles, self._parse_rt_article),
+            ('The Cradle', self._get_cradle_articles, self._parse_cradle_article),
+            ('Strategic Culture', self._get_strategic_culture_articles, self._parse_strategic_culture_article),
+            ('South Front', self._get_southfront_articles, self._parse_southfront_article),
+        ]
 
-        logger.info("📰 Парсинг InfoBrics...")
-        ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
-        for article in ib_articles[:3]:
-            rss_title = article.get('title', '')
-            if self._is_duplicate(article['url'], rss_title):
-                continue
+        for source_name, get_func, parse_func in sources:
+            logger.info(f"📰 Парсинг {source_name}...")
+            articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
             
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
-            if data:
-                data['title'] = rss_title
-                logger.info(f"✅ InfoBrics: {data['title'][:80]}...")
+            for article in articles[:3]:
+                title = article.get('title', '')
+                url = article.get('url', '')
                 
-                if not self._is_duplicate(article['url'], rss_title, data['content']):
-                    items.append(data)
-
-        logger.info("📰 Парсинг Global Research...")
-        gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
-        for article in gr_articles[:3]:
-            rss_title = article.get('title', '')
-            if self._is_duplicate(article['url'], rss_title):
-                continue
-            
-            data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
-            if data:
-                data['title'] = rss_title
-                logger.info(f"✅ Global Research: {data['title'][:80]}...")
+                if self._is_duplicate(url, title):
+                    continue
                 
-                if not self._is_duplicate(article['url'], rss_title, data['content']):
-                    items.append(data)
+                data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
+                if data:
+                    data['title'] = title
+                    logger.info(f"✅ {source_name}: {title[:80]}...")
+                    
+                    if not self._is_duplicate(url, title, data['content']):
+                        items.append(data)
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
@@ -626,7 +545,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
-            # Очищаем заголовок от лишних символов перед проверкой
+            # Очищаем заголовок
             title_en = clean_title(title_en)
 
             if url in self.state['sent_links']:
@@ -649,7 +568,6 @@ class NewsBot:
             loop = asyncio.get_event_loop()
 
             title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
-            # Очищаем переведенный заголовок
             title_ru = clean_title(title_ru)
 
             if not re.search('[а-яА-Я]', title_ru):
