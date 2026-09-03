@@ -325,28 +325,29 @@ class NewsBot:
             articles = []
 
             for entry in feed.entries[:5]:
-                # Пробуем взять заголовок из RSS
-                title = entry.get('title', '').strip()
+                # Берем заголовок из RSS (самый надежный источник)
+                rss_title = entry.get('title', '').strip()
                 
                 # Если заголовок пустой или шаблонный, пробуем из summary
-                if not title or title == '{[title]}' or len(title) < 5:
+                if not rss_title or rss_title == '{[title]}' or len(rss_title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
                         summary = re.sub(r'<[^>]+>', '', summary)
-                        # Берем первое предложение как заголовок
-                        title = summary.split('.')[0].strip()
-                        if len(title) < 5 and len(summary) > 10:
-                            title = summary[:100].strip()
+                        rss_title = summary.split('.')[0].strip()
+                        if len(rss_title) < 5 and len(summary) > 10:
+                            rss_title = summary[:100].strip()
 
-                # Сохраняем RSS заголовок как запасной вариант
-                rss_title = title if title else ""
+                # Если все еще нет заголовка - создаем из URL
+                if not rss_title or len(rss_title) < 5:
+                    link = entry.get('link', '')
+                    rss_title = f"InfoBrics Article {link.split('/')[-1] if link else ''}"
 
                 articles.append({
                     'url': entry.link,
-                    'title': title,
-                    'rss_title': rss_title  # Сохраняем для логов
+                    'title': rss_title,  # Используем RSS заголовок как основной
+                    'rss_title': rss_title
                 })
-                logger.info(f"InfoBrics RSS: {title[:50] if title else 'No title'}...")
+                logger.info(f"InfoBrics RSS: {rss_title[:80]}...")
 
             return articles
         except Exception as e:
@@ -362,54 +363,10 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ========== ИСПРАВЛЕННЫЙ ПОИСК ЗАГОЛОВКА ==========
+            # ========== ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ RSS ЗАГОЛОВОК ==========
+            # Заголовок будет передан из RSS, поэтому здесь мы его не ищем
+            # Просто сохраняем его для использования в publish
             title = None
-            
-            # 1. Пробуем meta property="og:title" - самый надежный
-            meta_title = soup.find('meta', property='og:title')
-            if meta_title and meta_title.get('content'):
-                title = meta_title['content'].strip()
-                logger.info(f"✅ Заголовок из og:title: {title[:50]}...")
-            
-            # 2. Пробуем meta name="twitter:title"
-            if not title:
-                twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
-                if twitter_title and twitter_title.get('content'):
-                    title = twitter_title['content'].strip()
-                    logger.info(f"✅ Заголовок из twitter:title: {title[:50]}...")
-            
-            # 3. Пробуем h1.entry-title
-            if not title:
-                entry_title = soup.find('h1', class_='entry-title')
-                if entry_title:
-                    title = entry_title.get_text(strip=True)
-                    logger.info(f"✅ Заголовок из h1.entry-title: {title[:50]}...")
-            
-            # 4. Пробуем любой h1
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-                    logger.info(f"✅ Заголовок из h1: {title[:50]}...")
-            
-            # 5. Пробуем title тег
-            if not title:
-                title_tag = soup.find('title')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    # Удаляем название сайта из title
-                    title = re.sub(r'\s*[–|-]\s*.*$', '', title)
-                    title = re.sub(r'\s*\|.*$', '', title)
-                    title = title.strip()
-                    logger.info(f"✅ Заголовок из title: {title[:50]}...")
-
-            # Если ничего не нашли - используем заглушку
-            if not title or title == '{[title]}':
-                title = "InfoBrics Article"
-                logger.warning("⚠️ Заголовок не найден, использована заглушка")
-
-            title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"📌 Финальный заголовок InfoBrics: {title[:80]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
@@ -437,6 +394,10 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # ========== ИСКЛЮЧАЕМ АБЗАЦЫ С "Уриэль Араухо" ==========
+                    if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
+                        logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                        continue
                     if len(text) > 30:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
@@ -446,6 +407,9 @@ class NewsBot:
                 if main:
                     for p in main.find_all('p'):
                         text = p.get_text(strip=True)
+                        if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
+                            logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                            continue
                         if len(text) > 30:
                             paragraphs.append(text)
 
@@ -460,7 +424,7 @@ class NewsBot:
                 return None
 
             return {
-                'title': title,
+                'title': title,  # Будет заменен на RSS заголовок в fetch_news
                 'content': content,
                 'image': image_url,
                 'source': 'InfoBrics',
@@ -478,25 +442,27 @@ class NewsBot:
             articles = []
 
             for entry in feed.entries[:5]:
-                title = entry.get('title', '').strip()
+                # Берем заголовок из RSS
+                rss_title = entry.get('title', '').strip()
 
-                if not title or len(title) < 5:
+                if not rss_title or len(rss_title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
                         summary = re.sub(r'<[^>]+>', '', summary)
-                        title = summary.split('.')[0].strip()
-                        if len(title) < 5 and len(summary) > 10:
-                            title = summary[:100].strip()
+                        rss_title = summary.split('.')[0].strip()
+                        if len(rss_title) < 5 and len(summary) > 10:
+                            rss_title = summary[:100].strip()
 
-                    if not title or len(title) < 5:
+                    if not rss_title or len(rss_title) < 5:
                         link = entry.get('link', '')
-                        title = f"Global Research Article {link.split('/')[-1] if link else ''}"
+                        rss_title = f"Global Research Article {link.split('/')[-1] if link else ''}"
 
                 articles.append({
                     'url': entry.link,
-                    'title': title
+                    'title': rss_title,  # Используем RSS заголовок
+                    'rss_title': rss_title
                 })
-                logger.info(f"Global Research RSS: {title[:50]}...")
+                logger.info(f"Global Research RSS: {rss_title[:80]}...")
 
             return articles
         except Exception as e:
@@ -511,53 +477,6 @@ class NewsBot:
 
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
-
-            # ========== ИСПРАВЛЕННЫЙ ПОИСК ЗАГОЛОВКА ==========
-            title = None
-            
-            # 1. Пробуем meta property="og:title"
-            meta_title = soup.find('meta', property='og:title')
-            if meta_title and meta_title.get('content'):
-                title = meta_title['content'].strip()
-                logger.info(f"✅ Заголовок из og:title: {title[:50]}...")
-            
-            # 2. Пробуем meta name="twitter:title"
-            if not title:
-                twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
-                if twitter_title and twitter_title.get('content'):
-                    title = twitter_title['content'].strip()
-                    logger.info(f"✅ Заголовок из twitter:title: {title[:50]}...")
-            
-            # 3. Пробуем h1.entry-title
-            if not title:
-                entry_title = soup.find('h1', class_='entry-title')
-                if entry_title:
-                    title = entry_title.get_text(strip=True)
-                    logger.info(f"✅ Заголовок из h1.entry-title: {title[:50]}...")
-            
-            # 4. Пробуем любой h1
-            if not title:
-                h1 = soup.find('h1')
-                if h1:
-                    title = h1.get_text(strip=True)
-                    logger.info(f"✅ Заголовок из h1: {title[:50]}...")
-            
-            # 5. Пробуем title тег
-            if not title:
-                title_tag = soup.find('title')
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    title = re.sub(r'\s*[–|-]\s*.*$', '', title)
-                    title = re.sub(r'\s*\|.*$', '', title)
-                    title = title.strip()
-                    logger.info(f"✅ Заголовок из title: {title[:50]}...")
-
-            if not title:
-                title = "Global Research Article"
-                logger.warning("⚠️ Заголовок не найден, использована заглушка")
-
-            title = re.sub(r'\s+', ' ', title).strip()
-            logger.info(f"📌 Финальный заголовок Global Research: {title[:80]}...")
 
             # === ПОИСК ИЗОБРАЖЕНИЯ ===
             image_url = extract_image_url(soup, base_url)
@@ -585,6 +504,10 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # ========== ИСКЛЮЧАЕМ АБЗАЦЫ С "Уриэль Араухо" ==========
+                    if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
+                        logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                        continue
                     if len(text) > 30:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             paragraphs.append(text)
@@ -594,6 +517,9 @@ class NewsBot:
                 if main:
                     for p in main.find_all('p'):
                         text = p.get_text(strip=True)
+                        if 'Уриэль Араухо' in text or 'Uriel Araujo' in text:
+                            logger.info(f"⏭️ Пропущен абзац с Уриэль Араухо")
+                            continue
                         if len(text) > 30:
                             paragraphs.append(text)
 
@@ -608,7 +534,7 @@ class NewsBot:
                 return None
 
             return {
-                'title': title,
+                'title': None,  # Будет заменен на RSS заголовок в fetch_news
                 'content': content,
                 'image': image_url,
                 'source': 'Global Research',
@@ -623,25 +549,40 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
 
+        # 1. InfoBrics
         logger.info("📰 Парсинг InfoBrics...")
         ib_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_infobrics_articles)
         for article in ib_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
+            # Используем RSS заголовок для проверки дубликата
+            rss_title = article.get('title', '')
+            if self._is_duplicate(article['url'], rss_title):
                 continue
+            
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_infobrics_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ InfoBrics: {data['title'][:50]}...")
+            if data:
+                # ========== ИСПРАВЛЕНИЕ: ВСТАВЛЯЕМ RSS ЗАГОЛОВОК ==========
+                data['title'] = rss_title
+                logger.info(f"✅ InfoBrics: {data['title'][:80]}...")
+                
+                if not self._is_duplicate(article['url'], rss_title, data['content']):
+                    items.append(data)
 
+        # 2. Global Research
         logger.info("📰 Парсинг Global Research...")
         gr_articles = await asyncio.get_event_loop().run_in_executor(None, self._get_globalresearch_articles)
         for article in gr_articles[:3]:
-            if self._is_duplicate(article['url'], article['title']):
+            rss_title = article.get('title', '')
+            if self._is_duplicate(article['url'], rss_title):
                 continue
+            
             data = await asyncio.get_event_loop().run_in_executor(None, self._parse_globalresearch_article, article['url'])
-            if data and not self._is_duplicate(article['url'], article['title'], data['content']):
-                items.append(data)
-                logger.info(f"✅ Global Research: {data['title'][:50]}...")
+            if data:
+                # ========== ИСПРАВЛЕНИЕ: ВСТАВЛЯЕМ RSS ЗАГОЛОВОК ==========
+                data['title'] = rss_title
+                logger.info(f"✅ Global Research: {data['title'][:80]}...")
+                
+                if not self._is_duplicate(article['url'], rss_title, data['content']):
+                    items.append(data)
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
@@ -674,7 +615,7 @@ class NewsBot:
                     logger.warning(f"⛔ Пост уже опубликован по содержимому: {title_en[:50]}...")
                     return
 
-            logger.info(f"📝 Начинается перевод: {title_en[:50]}...")
+            logger.info(f"📝 Начинается перевод: {title_en[:80]}...")
 
             loop = asyncio.get_event_loop()
 
@@ -787,8 +728,7 @@ class NewsBot:
             logger.info("📭 Новых статей нет")
             return
 
-        # ========== ИСПРАВЛЕНИЕ: ПУБЛИКУЕМ ВСЕ СТАТЬИ, А НЕ ТОЛЬКО ПЕРВУЮ ==========
-        # Снимаем ограничение на одну статью за запуск
+        # Публикуем все статьи
         published_count = 0
         for article in news:
             if not self._can_post():
@@ -799,7 +739,6 @@ class NewsBot:
             await self.publish(article)
             published_count += 1
             
-            # Небольшая задержка между публикациями (1 минута)
             if published_count < len(news):
                 logger.info("⏳ Ожидание 60 секунд перед следующей публикацией...")
                 await asyncio.sleep(60)
