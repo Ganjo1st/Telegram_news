@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, RT, The Cradle, Strategic Culture, South Front
+Источники: InfoBrics, Global Research, RT, Sputnik (исправлен), ZeroHedge, Al Mayadeen, The Cradle, Strategic Culture, South Front
 """
 
 import os
@@ -125,6 +125,9 @@ def clean_title(title: str) -> str:
     
     title = re.sub(r'^#+\s*', '', title)
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
+    # Удаляем "популярные статьи" и подобные фразы
+    if re.search(r'(популярн|popular|most popular|top|trending)', title, re.IGNORECASE):
+        return ""
     title = title.strip()
     return title
 
@@ -204,6 +207,8 @@ class NewsBot:
         if not title:
             return ""
         title = clean_title(title)
+        if not title:
+            return ""
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
         title = re.sub(r'\s+', ' ', title).strip()
@@ -353,6 +358,11 @@ class NewsBot:
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
+                # Пропускаем "популярные статьи"
+                if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
+                    logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...' (популярные статьи)")
+                    continue
+                
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
@@ -366,6 +376,8 @@ class NewsBot:
                         title = f"{source_name} Article {link.split('/')[-1] if link else ''}"
                 
                 title = clean_title(title)
+                if not title:
+                    continue
                 
                 articles.append({
                     'url': entry.link,
@@ -386,6 +398,11 @@ class NewsBot:
             if not response:
                 return None
 
+            # Проверяем, не Substack ли это (403 ошибка)
+            if 'substack.com' in url:
+                logger.warning(f"⏭️ {source_name}: пропуск Substack статьи (403)")
+                return None
+
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
@@ -394,7 +411,7 @@ class NewsBot:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
             content_container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content', 'article__text']:
+            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content', 'article__text', 'body']:
                 container = soup.find('div', class_=re.compile(class_name))
                 if container:
                     content_container = container
@@ -471,6 +488,24 @@ class NewsBot:
     def _parse_rt_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'RT')
 
+    def _get_zerohedge_articles(self) -> list:
+        return self._parse_rss_feed('https://feeds.feedburner.com/zerohedge/feed', 'ZeroHedge')
+
+    def _parse_zerohedge_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'ZeroHedge')
+
+    def _get_almayadeen_articles(self) -> list:
+        return self._parse_rss_feed('https://english.almayadeen.net/rss', 'Al Mayadeen')
+
+    def _parse_almayadeen_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'Al Mayadeen')
+
+    def _get_sputnik_articles(self) -> list:
+        return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
+
+    def _parse_sputnik_article(self, url: str) -> dict | None:
+        return self._parse_article(url, 'Sputnik')
+
     def _get_cradle_articles(self) -> list:
         return self._parse_rss_feed('https://thecradle.co/rss/news', 'The Cradle')
 
@@ -497,6 +532,9 @@ class NewsBot:
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
+            ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
+            ('Al Mayadeen', self._get_almayadeen_articles, self._parse_almayadeen_article),
+            ('Sputnik', self._get_sputnik_articles, self._parse_sputnik_article),
             ('The Cradle', self._get_cradle_articles, self._parse_cradle_article),
             ('Strategic Culture', self._get_strategic_culture_articles, self._parse_strategic_culture_article),
             ('South Front', self._get_southfront_articles, self._parse_southfront_article),
@@ -557,6 +595,9 @@ class NewsBot:
                 return
 
             title_en = clean_title(title_en)
+            if not title_en:
+                logger.warning("⏭️ Пропуск: пустой заголовок после очистки")
+                return
 
             if url in self.state['sent_links']:
                 logger.warning(f"⛔ Пост уже опубликован по URL: {url[:80]}...")
@@ -579,11 +620,15 @@ class NewsBot:
 
             title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
             title_ru = clean_title(title_ru)
+            if not title_ru:
+                title_ru = title_en
 
             if not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
                 title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
                 title_ru = clean_title(title_ru)
+                if not title_ru:
+                    title_ru = title_en
 
             content_ru = ""
             if len(content_en) > 4000:
@@ -615,9 +660,9 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            # ========== ИСПРАВЛЕНИЕ: УБИРАЕМ ЭМОДЗИ ИЗ ЗАГОЛОВКА ==========
-            # Убираем эмодзи и лишние символы из заголовка
             title_clean = clean_title(title_ru)
+            if not title_clean:
+                title_clean = title_ru
             title_escaped = html.escape(title_clean)
             
             content_truncated = self._truncate_text(content_ru, is_caption=True)
@@ -677,6 +722,8 @@ class NewsBot:
                 logger.warning("Ошибка Markdown, отправляем без форматирования")
                 try:
                     title_clean = clean_title(title_ru)
+                    if not title_clean:
+                        title_clean = title_ru
                     text_message = f"{title_clean}\n\n{content_ru}"
                     if len(text_message) > MAX_MESSAGE:
                         text_message = text_message[:MAX_MESSAGE - 50] + "..."
@@ -694,6 +741,8 @@ class NewsBot:
                 logger.warning("⚠️ Сообщение слишком длинное, сокращаем...")
                 try:
                     title_clean = clean_title(title_ru)
+                    if not title_clean:
+                        title_clean = title_ru
                     short_content = content_ru[:2000] + "..."
                     text_message = f"{title_clean}\n\n{short_content}"
                     await self.bot.send_message(
