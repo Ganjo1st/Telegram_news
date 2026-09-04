@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, RT, Sputnik, ZeroHedge, Al Mayadeen
+Источники: InfoBrics, Global Research, RT, ZeroHedge, Al Mayadeen
 """
 
 import os
@@ -342,48 +342,33 @@ class NewsBot:
         if not text:
             return ""
 
-        # Если текст уже содержит кириллицу - возвращаем как есть
         if re.search('[а-яА-Я]', text):
             return text
 
         try:
-            # Ограничиваем текст для перевода
             if len(text) > 4000:
                 text = text[:4000]
 
-            # Принудительный перевод с повторной попыткой
             result = self.translator.translate(text)
             
-            # Если результат пустой или не содержит кириллицы - пробуем еще раз
-            if not result or not re.search('[а-яА-Я]', result):
-                logger.warning("⚠️ Первая попытка перевода не дала результат, повторная...")
-                result = self.translator.translate(text[:3000])
-            
-            if result and len(result) > 0:
-                # Проверяем, что перевод действительно выполнен (есть кириллица)
-                if re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
-                    return result
-                else:
-                    logger.warning("⚠️ Перевод не содержит кириллицы, возможно ошибка API")
-                    # Пробуем альтернативный метод
-                    try:
-                        from deep_translator import GoogleTranslator as GT
-                        alt_translator = GT(source='auto', target='ru')
-                        result = alt_translator.translate(text[:3000])
-                        if result and re.search('[а-яА-Я]', result):
-                            logger.info("✅ Альтернативный перевод выполнен")
-                            return result
-                    except:
-                        pass
-                    return text
+            if result and len(result) > 0 and re.search('[а-яА-Я]', result):
+                logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
+                return result
             else:
-                logger.warning("⚠️ Перевод вернул пустой результат")
+                logger.warning("⚠️ Перевод не содержит кириллицы, пробуем альтернативный метод...")
+                try:
+                    from deep_translator import GoogleTranslator as GT
+                    alt_translator = GT(source='auto', target='ru')
+                    result = alt_translator.translate(text[:3000])
+                    if result and re.search('[а-яА-Я]', result):
+                        logger.info("✅ Альтернативный перевод выполнен")
+                        return result
+                except:
+                    pass
                 return text
 
         except Exception as e:
             logger.error(f"❌ Ошибка перевода: {e}")
-            # Пробуем альтернативный переводчик
             try:
                 from deep_translator import GoogleTranslator as GT
                 alt_translator = GT(source='auto', target='ru')
@@ -480,7 +465,6 @@ class NewsBot:
 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # Исключаем абзацы с именами авторов
                     if is_excluded_author(text):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
@@ -545,12 +529,6 @@ class NewsBot:
     def _parse_zerohedge_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'ZeroHedge')
 
-    def _get_sputnik_articles(self) -> list:
-        return self._parse_rss_feed('https://sputnikglobe.com/export/rss2/archive/index.xml', 'Sputnik')
-
-    def _parse_sputnik_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'Sputnik')
-
     def _get_almayadeen_articles(self) -> list:
         return self._parse_rss_feed('https://english.almayadeen.net/rss', 'Al Mayadeen')
 
@@ -561,12 +539,12 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
+        # ========== SPUTNIK ИСКЛЮЧЕН ==========
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
             ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
-            ('Sputnik', self._get_sputnik_articles, self._parse_sputnik_article),
             ('Al Mayadeen', self._get_almayadeen_articles, self._parse_almayadeen_article),
         ]
 
@@ -648,45 +626,23 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # ========== ПРИНУДИТЕЛЬНЫЙ ПЕРЕВОД С ПОВТОРНЫМИ ПОПЫТКАМИ ==========
             title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
-            
-            # Если перевод не удался, пробуем с другим методом
-            if not title_ru or not re.search('[а-яА-Я]', title_ru):
-                logger.warning("⚠️ Заголовок не переведен, повторная попытка...")
-                try:
-                    from deep_translator import GoogleTranslator as GT
-                    alt_translator = GT(source='auto', target='ru')
-                    title_ru = alt_translator.translate(title_en[:500])
-                except:
-                    pass
-                
-                if not title_ru or not re.search('[а-яА-Я]', title_ru):
-                    logger.error("❌ Не удалось перевести заголовок, используем оригинал")
-                    title_ru = title_en
-            
             title_ru = clean_title(title_ru)
             if not title_ru:
                 title_ru = title_en
 
-            # Перевод контента
             content_ru = ""
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
-            
             content_ru = await loop.run_in_executor(None, self._translate_text, content_en_truncated)
-            
-            # Если перевод не удался, пробуем с другим методом
             if not content_ru or not re.search('[а-яА-Я]', content_ru):
-                logger.warning("⚠️ Контент не переведен, повторная попытка...")
+                logger.warning("⚠️ Контент не переведен, пробуем альтернативный метод...")
                 try:
                     from deep_translator import GoogleTranslator as GT
                     alt_translator = GT(source='auto', target='ru')
                     content_ru = alt_translator.translate(content_en_truncated[:3000])
                 except:
                     pass
-                
                 if not content_ru or not re.search('[а-яА-Я]', content_ru):
-                    logger.error("❌ Не удалось перевести контент, используем оригинал")
                     content_ru = content_en_truncated
 
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
