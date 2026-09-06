@@ -350,13 +350,16 @@ class NewsBot:
         if len(text) < 3:
             return text
 
+        # Для заголовков - обрезаем до разумной длины
+        if len(text) > 200:
+            text_to_translate = text[:200]
+        else:
+            text_to_translate = text
+
         # Пробуем перевести с несколькими попытками
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                # Ограничиваем длину
-                text_to_translate = text[:4000] if len(text) > 4000 else text
-                
                 # Пробуем перевод
                 result = self.translator.translate(text_to_translate)
                 
@@ -368,7 +371,6 @@ class NewsBot:
                         return result
                     else:
                         logger.warning(f"⚠️ Попытка {attempt+1}: перевод без кириллицы")
-                        # Ждем перед повторной попыткой
                         time.sleep(1)
                         continue
                 else:
@@ -386,7 +388,7 @@ class NewsBot:
         try:
             from deep_translator import GoogleTranslator as GT
             alt_translator = GT(source='auto', target='ru')
-            result = alt_translator.translate(text[:3000])
+            result = alt_translator.translate(text_to_translate[:150])
             if result and re.search('[а-яА-Я]', result):
                 logger.info("✅ Альтернативный перевод выполнен")
                 return result
@@ -626,16 +628,18 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # ========== ПЕРЕВОД ЗАГОЛОВКА С ПОВТОРНЫМИ ПОПЫТКАМИ ==========
-            title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
+            # Обрезаем заголовок до 150 символов для перевода
+            title_for_translate = title_en[:150] if len(title_en) > 150 else title_en
+            title_ru = await loop.run_in_executor(None, self._translate_text, title_for_translate)
             
-            # Если перевод не удался - пробуем еще раз с альтернативным методом
+            # Если перевод не удался - пробуем альтернативный метод
             if not title_ru or not re.search('[а-яА-Я]', title_ru):
                 logger.warning("⚠️ Заголовок не переведен, пробуем альтернативный метод...")
                 try:
                     from deep_translator import GoogleTranslator as GT
                     alt_translator = GT(source='auto', target='ru')
-                    title_ru = alt_translator.translate(title_en[:500])
+                    title_ru = alt_translator.translate(title_for_translate[:100])
                     if title_ru and re.search('[а-яА-Я]', title_ru):
                         logger.info("✅ Альтернативный перевод заголовка выполнен")
                 except Exception as e:
