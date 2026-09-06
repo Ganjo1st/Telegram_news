@@ -14,6 +14,7 @@ import hashlib
 import re
 import html
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -337,46 +338,64 @@ class NewsBot:
         return self._truncate_to_last_sentence(text, max_len)
 
     def _translate_text(self, text: str) -> str:
+        """Надежный перевод с повторными попытками"""
         if not text:
             return ""
 
+        # Если текст уже на русском - возвращаем как есть
         if re.search('[а-яА-Я]', text):
             return text
 
-        try:
-            if len(text) > 4000:
-                text = text[:4000]
-
-            result = self.translator.translate(text)
-            
-            if result and len(result) > 0 and re.search('[а-яА-Я]', result):
-                logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
-                return result
-            else:
-                logger.warning("⚠️ Перевод не содержит кириллицы, пробуем альтернативный метод...")
-                try:
-                    from deep_translator import GoogleTranslator as GT
-                    alt_translator = GT(source='auto', target='ru')
-                    result = alt_translator.translate(text[:3000])
-                    if result and re.search('[а-яА-Я]', result):
-                        logger.info("✅ Альтернативный перевод выполнен")
-                        return result
-                except:
-                    pass
-                return text
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка перевода: {e}")
-            try:
-                from deep_translator import GoogleTranslator as GT
-                alt_translator = GT(source='auto', target='ru')
-                result = alt_translator.translate(text[:3000])
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info("✅ Альтернативный перевод выполнен после ошибки")
-                    return result
-            except:
-                pass
+        # Если текст слишком короткий - возможно это уже не английский
+        if len(text) < 3:
             return text
+
+        # Пробуем перевести с несколькими попытками
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Ограничиваем длину
+                text_to_translate = text[:4000] if len(text) > 4000 else text
+                
+                # Пробуем перевод
+                result = self.translator.translate(text_to_translate)
+                
+                # Проверяем результат
+                if result and len(result) > 0:
+                    # Если есть кириллица - успех
+                    if re.search('[а-яА-Я]', result):
+                        logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
+                        return result
+                    else:
+                        logger.warning(f"⚠️ Попытка {attempt+1}: перевод без кириллицы")
+                        # Ждем перед повторной попыткой
+                        time.sleep(1)
+                        continue
+                else:
+                    logger.warning(f"⚠️ Попытка {attempt+1}: пустой результат")
+                    time.sleep(1)
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка перевода (попытка {attempt+1}): {e}")
+                time.sleep(2)
+                continue
+
+        # Если все попытки не удались - пробуем альтернативный метод
+        logger.warning("⚠️ Все попытки перевода не удались, пробуем альтернативный метод...")
+        try:
+            from deep_translator import GoogleTranslator as GT
+            alt_translator = GT(source='auto', target='ru')
+            result = alt_translator.translate(text[:3000])
+            if result and re.search('[а-яА-Я]', result):
+                logger.info("✅ Альтернативный перевод выполнен")
+                return result
+        except Exception as e:
+            logger.error(f"❌ Альтернативный перевод не удался: {e}")
+
+        # Возвращаем оригинал, если ничего не помогло
+        logger.warning("⚠️ Возвращаем оригинальный текст")
+        return text
 
     # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
@@ -535,7 +554,6 @@ class NewsBot:
     async def fetch_news(self) -> list:
         items = []
         
-        # ========== SPUTNIK ИСКЛЮЧЕН НАВСЕГДА ==========
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
@@ -608,25 +626,46 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
+            # ========== ПЕРЕВОД ЗАГОЛОВКА С ПОВТОРНЫМИ ПОПЫТКАМИ ==========
             title_ru = await loop.run_in_executor(None, self._translate_text, title_en)
+            
+            # Если перевод не удался - пробуем еще раз с альтернативным методом
+            if not title_ru or not re.search('[а-яА-Я]', title_ru):
+                logger.warning("⚠️ Заголовок не переведен, пробуем альтернативный метод...")
+                try:
+                    from deep_translator import GoogleTranslator as GT
+                    alt_translator = GT(source='auto', target='ru')
+                    title_ru = alt_translator.translate(title_en[:500])
+                    if title_ru and re.search('[а-яА-Я]', title_ru):
+                        logger.info("✅ Альтернативный перевод заголовка выполнен")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка альтернативного перевода заголовка: {e}")
+                    title_ru = title_en
+            
             title_ru = clean_title(title_ru)
             if not title_ru:
                 title_ru = title_en
 
+            # ========== ПЕРЕВОД КОНТЕНТА ==========
             content_ru = ""
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
+            
             content_ru = await loop.run_in_executor(None, self._translate_text, content_en_truncated)
+            
+            # Если перевод не удался - пробуем альтернативный метод
             if not content_ru or not re.search('[а-яА-Я]', content_ru):
                 logger.warning("⚠️ Контент не переведен, пробуем альтернативный метод...")
                 try:
                     from deep_translator import GoogleTranslator as GT
                     alt_translator = GT(source='auto', target='ru')
                     content_ru = alt_translator.translate(content_en_truncated[:3000])
-                except:
-                    pass
-                if not content_ru or not re.search('[а-яА-Я]', content_ru):
+                    if content_ru and re.search('[а-яА-Я]', content_ru):
+                        logger.info("✅ Альтернативный перевод контента выполнен")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка альтернативного перевода контента: {e}")
                     content_ru = content_en_truncated
 
+            # Очистка от мусора
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
