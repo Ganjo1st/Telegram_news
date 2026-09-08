@@ -15,7 +15,6 @@ import re
 import html
 import random
 import time
-import urllib.parse
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -142,9 +141,9 @@ def is_excluded_author(text: str):
             return True
     return False
 
-# ========== НАДЕЖНЫЙ ПЕРЕВОДЧИК С FALLBACK ==========
+# ========== ПРОСТОЙ ПЕРЕВОДЧИК ==========
 def translate_text(text: str) -> str:
-    """Перевод текста с несколькими методами"""
+    """Перевод текста через Google Translate"""
     if not text or len(text) < 3:
         return text
     
@@ -154,8 +153,8 @@ def translate_text(text: str) -> str:
     
     text_to_translate = text[:3000] if len(text) > 3000 else text
     
-    # ===== МЕТОД 1: Google Translate (бесплатный) =====
     try:
+        # Используем Google Translate
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
             'client': 'gtx',
@@ -164,58 +163,49 @@ def translate_text(text: str) -> str:
             'dt': 't',
             'q': text_to_translate
         }
-        response = requests.get(url, params=params, timeout=10)
+        
+        response = requests.get(url, params=params, timeout=15)
+        
         if response.status_code == 200:
             data = response.json()
             if data and len(data) > 0:
-                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ Google Translate: {len(result)} символов")
+                result = ''
+                for item in data[0]:
+                    if item and len(item) > 0:
+                        result += item[0]
+                if result:
+                    logger.info(f"✅ Перевод выполнен: {len(result)} символов")
                     return result
+        
+        logger.warning(f"⚠️ Google Translate вернул ошибку: {response.status_code}")
+        
     except Exception as e:
-        logger.warning(f"⚠️ Google Translate ошибка: {e}")
+        logger.error(f"❌ Ошибка перевода: {e}")
     
-    # ===== МЕТОД 2: LibreTranslate (открытый) =====
+    # Если перевод не удался, пробуем через другой URL
     try:
-        url = "https://libretranslate.com/translate"
-        payload = {
-            'q': text_to_translate[:2000],
-            'source': 'en',
-            'target': 'ru',
-            'format': 'text'
-        }
-        response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'translatedText' in data:
-                result = data['translatedText']
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ LibreTranslate: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"⚠️ LibreTranslate ошибка: {e}")
-    
-    # ===== МЕТОД 3: MyMemory =====
-    try:
-        url = "https://api.mymemory.translated.net/get"
+        url = "https://translate.google.com/translate_a/single"
         params = {
-            'q': text_to_translate[:2000],
-            'langpair': 'en|ru',
-            'de': 'your_email@example.com'
+            'client': 'at',
+            'sl': 'en',
+            'tl': 'ru',
+            'dt': 't',
+            'q': text_to_translate
         }
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             data = response.json()
-            if data and 'responseData' in data and 'translatedText' in data['responseData']:
-                result = data['responseData']['translatedText']
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ MyMemory: {len(result)} символов")
+            if data and len(data) > 0:
+                result = ''
+                for item in data[0]:
+                    if item and len(item) > 0:
+                        result += item[0]
+                if result:
+                    logger.info(f"✅ Альтернативный перевод: {len(result)} символов")
                     return result
     except Exception as e:
-        logger.warning(f"⚠️ MyMemory ошибка: {e}")
+        logger.error(f"❌ Альтернативный перевод не удался: {e}")
     
-    # ===== МЕТОД 4: Простой fallback - возвращаем оригинал =====
-    logger.warning(f"⚠️ Все методы перевода не удались для текста: {text[:50]}...")
     return text
 
 # ========== ОСНОВНОЙ КЛАСС ==========
@@ -612,29 +602,33 @@ class NewsBot:
 
             logger.info(f"📝 Перевод: {title_en[:80]}...")
 
-            # ========== ПЕРЕВОД ==========
             loop = asyncio.get_event_loop()
             
-            # Перевод заголовка
+            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
             title_ru = await loop.run_in_executor(None, translate_text, title_en)
             title_ru = clean_title(title_ru) or title_ru or title_en
             
-            # Проверяем, что перевод удался
             if not re.search('[а-яА-Я]', title_ru):
-                logger.warning("⚠️ Заголовок не переведен, пробуем снова...")
+                logger.warning("⚠️ Повторная попытка перевода заголовка...")
                 title_ru = await loop.run_in_executor(None, translate_text, title_en[:200])
                 title_ru = clean_title(title_ru) or title_ru or title_en
+            
+            # Если все еще не переведено - используем оригинал с пометкой
+            if not re.search('[а-яА-Я]', title_ru):
+                logger.warning("⚠️ Перевод заголовка не удался, используется оригинал")
+                title_ru = title_en
 
-            # Перевод контента
+            # ========== ПЕРЕВОД КОНТЕНТА ==========
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
             content_ru = await loop.run_in_executor(None, translate_text, content_en_truncated)
             
-            # Проверяем, что перевод удался
             if not re.search('[а-яА-Я]', content_ru):
-                logger.warning("⚠️ Контент не переведен, пробуем снова...")
+                logger.warning("⚠️ Повторная попытка перевода контента...")
                 content_ru = await loop.run_in_executor(None, translate_text, content_en_truncated[:2000])
             
-            content_ru = content_ru or content_en_truncated
+            if not re.search('[а-яА-Я]', content_ru):
+                logger.warning("⚠️ Перевод контента не удался, используется оригинал")
+                content_ru = content_en_truncated
 
             # Очистка
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
