@@ -23,18 +23,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-
-# ========== ИСПРАВЛЕННЫЙ ИМПОРТ ПЕРЕВОДЧИКА ==========
-try:
-    from googletrans import Translator as GoogleTranslator
-    USE_GOOGLETRANS = True
-except ImportError:
-    USE_GOOGLETRANS = False
-    try:
-        from deep_translator import GoogleTranslator
-        USE_DEEP_TRANSLATOR = True
-    except ImportError:
-        USE_DEEP_TRANSLATOR = False
+from deep_translator import GoogleTranslator
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -88,7 +77,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def extract_image_url(soup, base_url: str):
-    # og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         img_url = meta_img['content']
@@ -99,7 +87,6 @@ def extract_image_url(soup, base_url: str):
         if img_url.startswith('http'):
             return img_url
 
-    # twitter:image
     meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta_twitter and meta_twitter.get('content'):
         img_url = meta_twitter['content']
@@ -110,7 +97,6 @@ def extract_image_url(soup, base_url: str):
         if img_url.startswith('http'):
             return img_url
 
-    # article img
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
@@ -125,7 +111,6 @@ def extract_image_url(soup, base_url: str):
                 if src.startswith('http'):
                     return src
 
-    # any img
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
         if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'flag']):
@@ -157,66 +142,26 @@ def is_excluded_author(text: str):
             return True
     return False
 
-# ========== НАДЕЖНЫЙ ПЕРЕВОДЧИК ==========
+# ========== ПЕРЕВОДЧИК ==========
 class SafeTranslator:
     def __init__(self):
-        self.translator = None
-        self._init_translator()
-    
-    def _init_translator(self):
-        try:
-            if USE_GOOGLETRANS:
-                from googletrans import Translator
-                self.translator = Translator()
-                logger.info("✅ Используется googletrans")
-                return True
-        except:
-            pass
-        
-        try:
-            from deep_translator import GoogleTranslator
-            self.translator = GoogleTranslator(source='en', target='ru')
-            logger.info("✅ Используется deep_translator")
-            return True
-        except:
-            pass
-        
-        logger.warning("⚠️ Нет доступных переводчиков!")
-        return False
+        self.translator = GoogleTranslator(source='en', target='ru')
     
     def translate(self, text: str) -> str:
         if not text or len(text) < 3:
             return text
         
-        # Если уже на русском
         if re.search('[а-яА-Я]', text):
             return text
         
-        # Обрезаем длинные тексты
         text_to_translate = text[:3000] if len(text) > 3000 else text
         
         try:
-            if USE_GOOGLETRANS and self.translator:
-                result = self.translator.translate(text_to_translate, dest='ru')
-                if result and result.text:
-                    return result.text
-            
-            if hasattr(self.translator, 'translate'):
-                result = self.translator.translate(text_to_translate)
-                if result:
-                    return result
-                    
+            result = self.translator.translate(text_to_translate)
+            if result:
+                return result
         except Exception as e:
             logger.error(f"Ошибка перевода: {e}")
-            # Пробуем альтернативный метод
-            try:
-                from deep_translator import GoogleTranslator
-                alt = GoogleTranslator(source='auto', target='ru')
-                result = alt.translate(text_to_translate[:2000])
-                if result:
-                    return result
-            except:
-                pass
         
         return text
 
@@ -460,15 +405,14 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Ищем изображение
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
-            # ========== УЛУЧШЕННЫЙ ПОИСК КОНТЕНТА ==========
+            # Поиск контента
             content_parts = []
             
-            # 1. Пробуем найти основной контейнер
+            # Пробуем найти основной контейнер
             content_container = None
             selectors = [
                 'article',
@@ -490,11 +434,9 @@ class NewsBot:
                         break
             
             if content_container:
-                # Удаляем мусорные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if is_excluded_author(text):
@@ -519,7 +461,7 @@ class NewsBot:
                 logger.warning(f"⚠️ {source_name}: недостаточно контента для {url}")
                 return None
 
-            content = '\n\n'.join(content_parts[:20])  # Берем первые 20 абзацев
+            content = '\n\n'.join(content_parts[:20])
             
             if len(content) < 150:
                 logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
