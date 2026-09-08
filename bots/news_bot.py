@@ -3,7 +3,7 @@
 
 """
 Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, RT, ZeroHedge, Al Mayadeen
+Источники: InfoBrics, Global Research, RT, ZeroHedge
 """
 
 import os
@@ -23,7 +23,18 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-from deep_translator import GoogleTranslator
+
+# ========== ИСПРАВЛЕННЫЙ ИМПОРТ ПЕРЕВОДЧИКА ==========
+try:
+    from googletrans import Translator as GoogleTranslator
+    USE_GOOGLETRANS = True
+except ImportError:
+    USE_GOOGLETRANS = False
+    try:
+        from deep_translator import GoogleTranslator
+        USE_DEEP_TRANSLATOR = True
+    except ImportError:
+        USE_DEEP_TRANSLATOR = False
 
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
@@ -35,26 +46,33 @@ logger = logging.getLogger('news_bot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
 
-# Интервалы публикации (секунды)
-MIN_INTERVAL = 2100  # 35 минут
-MAX_INTERVAL = 7200  # 2 часа
+MIN_INTERVAL = 2100
+MAX_INTERVAL = 7200
 MAX_POSTS_PER_DAY = 24
 TIMEZONE_OFFSET = 7
 
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 30
 
 STATE_FILE = 'state_news_bot.json'
 META_FILE = 'posts_meta.json'
 
-# Лимиты Telegram
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# ========== ОПРЕДЕЛЯЕМ РЕЖИМ ЗАПУСКА ==========
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
 
+# ========== ИСКЛЮЧАЕМЫЕ АВТОРЫ ==========
+EXCLUDED_AUTHORS = [
+    'Уриэль Араухо', 'Uriel Araujo',
+    'Ахмед Адель', 'Ahmed Adel',
+    'Лукас Лейроз', 'Lucas Leiros',
+    'Одри Чайлд', 'Audrey Child',
+    'Андрей Корыбко', 'Andrei Korybko',
+    'Стив Уотсон', 'Steve Watson',
+]
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-def get_local_time() -> datetime:
+def get_local_time():
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
@@ -69,8 +87,8 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         logger.error(f"Ошибка запроса {url}: {e}")
         return None
 
-def extract_image_url(soup, base_url: str) -> str | None:
-    """Извлекает URL изображения из страницы"""
+def extract_image_url(soup, base_url: str):
+    # og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         img_url = meta_img['content']
@@ -81,6 +99,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img_url.startswith('http'):
             return img_url
 
+    # twitter:image
     meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta_twitter and meta_twitter.get('content'):
         img_url = meta_twitter['content']
@@ -91,6 +110,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
         if img_url.startswith('http'):
             return img_url
 
+    # article img
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
@@ -105,6 +125,7 @@ def extract_image_url(soup, base_url: str) -> str | None:
                 if src.startswith('http'):
                     return src
 
+    # any img
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
         if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'flag']):
@@ -119,27 +140,16 @@ def extract_image_url(soup, base_url: str) -> str | None:
 
     return None
 
-def clean_title(title: str) -> str:
-    """Очищает заголовок от лишних символов"""
+def clean_title(title: str):
     if not title:
-        return title
-    
+        return ""
     title = re.sub(r'^#+\s*', '', title)
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
     if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
         return ""
-    title = title.strip()
-    return title
+    return title.strip()
 
-# ========== ИСКЛЮЧАЕМЫЕ ИМЕНА АВТОРОВ ==========
-EXCLUDED_AUTHORS = [
-    'Уриэль Араухо', 'Uriel Araujo',
-    'Ахмед Адель', 'Ahmed Adel',
-    'Лукас Лейроз', 'Lucas Leiros',
-    'Одри Чайлд', 'Audrey Child',
-]
-
-def is_excluded_author(text: str) -> bool:
+def is_excluded_author(text: str):
     if not text:
         return False
     for name in EXCLUDED_AUTHORS:
@@ -147,13 +157,76 @@ def is_excluded_author(text: str) -> bool:
             return True
     return False
 
+# ========== НАДЕЖНЫЙ ПЕРЕВОДЧИК ==========
+class SafeTranslator:
+    def __init__(self):
+        self.translator = None
+        self._init_translator()
+    
+    def _init_translator(self):
+        try:
+            if USE_GOOGLETRANS:
+                from googletrans import Translator
+                self.translator = Translator()
+                logger.info("✅ Используется googletrans")
+                return True
+        except:
+            pass
+        
+        try:
+            from deep_translator import GoogleTranslator
+            self.translator = GoogleTranslator(source='en', target='ru')
+            logger.info("✅ Используется deep_translator")
+            return True
+        except:
+            pass
+        
+        logger.warning("⚠️ Нет доступных переводчиков!")
+        return False
+    
+    def translate(self, text: str) -> str:
+        if not text or len(text) < 3:
+            return text
+        
+        # Если уже на русском
+        if re.search('[а-яА-Я]', text):
+            return text
+        
+        # Обрезаем длинные тексты
+        text_to_translate = text[:3000] if len(text) > 3000 else text
+        
+        try:
+            if USE_GOOGLETRANS and self.translator:
+                result = self.translator.translate(text_to_translate, dest='ru')
+                if result and result.text:
+                    return result.text
+            
+            if hasattr(self.translator, 'translate'):
+                result = self.translator.translate(text_to_translate)
+                if result:
+                    return result
+                    
+        except Exception as e:
+            logger.error(f"Ошибка перевода: {e}")
+            # Пробуем альтернативный метод
+            try:
+                from deep_translator import GoogleTranslator
+                alt = GoogleTranslator(source='auto', target='ru')
+                result = alt.translate(text_to_translate[:2000])
+                if result:
+                    return result
+            except:
+                pass
+        
+        return text
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        self.translator = GoogleTranslator(source='en', target='ru')
+        self.translator = SafeTranslator()
 
     def _load_state(self) -> dict:
         try:
@@ -275,7 +348,6 @@ class NewsBot:
 
     def _can_post(self) -> bool:
         if IS_MANUAL_RUN:
-            logger.info("🔓 Ручной запуск - ограничения сняты")
             return True
 
         now = get_local_time()
@@ -337,83 +409,17 @@ class NewsBot:
         max_len = max_len - 100
         return self._truncate_to_last_sentence(text, max_len)
 
-    def _translate_text(self, text: str) -> str:
-        """Надежный перевод с повторными попытками"""
-        if not text:
-            return ""
-
-        # Если текст уже на русском - возвращаем как есть
-        if re.search('[а-яА-Я]', text):
-            return text
-
-        # Если текст слишком короткий - возможно это уже не английский
-        if len(text) < 3:
-            return text
-
-        # Для заголовков - обрезаем до разумной длины
-        if len(text) > 200:
-            text_to_translate = text[:200]
-        else:
-            text_to_translate = text
-
-        # Пробуем перевести с несколькими попытками
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                # Пробуем перевод
-                result = self.translator.translate(text_to_translate)
-                
-                # Проверяем результат
-                if result and len(result) > 0:
-                    # Если есть кириллица - успех
-                    if re.search('[а-яА-Я]', result):
-                        logger.info(f"✅ Перевод выполнен. Длина: {len(result)} символов")
-                        return result
-                    else:
-                        logger.warning(f"⚠️ Попытка {attempt+1}: перевод без кириллицы")
-                        time.sleep(1)
-                        continue
-                else:
-                    logger.warning(f"⚠️ Попытка {attempt+1}: пустой результат")
-                    time.sleep(1)
-                    continue
-                    
-            except Exception as e:
-                logger.error(f"❌ Ошибка перевода (попытка {attempt+1}): {e}")
-                time.sleep(2)
-                continue
-
-        # Если все попытки не удались - пробуем альтернативный метод
-        logger.warning("⚠️ Все попытки перевода не удались, пробуем альтернативный метод...")
-        try:
-            from deep_translator import GoogleTranslator as GT
-            alt_translator = GT(source='auto', target='ru')
-            result = alt_translator.translate(text_to_translate[:150])
-            if result and re.search('[а-яА-Я]', result):
-                logger.info("✅ Альтернативный перевод выполнен")
-                return result
-        except Exception as e:
-            logger.error(f"❌ Альтернативный перевод не удался: {e}")
-
-        # Возвращаем оригинал, если ничего не помогло
-        logger.warning("⚠️ Возвращаем оригинальный текст")
-        return text
-
-    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ RSS ==========
+    # ========== ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
         try:
             feed = feedparser.parse(url)
-            
-            if feed.bozo:
-                logger.warning(f"⚠️ {source_name}: возможные проблемы с RSS")
-            
             articles = []
             
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
-                    logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...' (популярные статьи)")
+                    logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
                 
                 if not title or len(title) < 5:
@@ -423,10 +429,6 @@ class NewsBot:
                         title = summary.split('.')[0].strip()
                         if len(title) < 5 and len(summary) > 10:
                             title = summary[:100].strip()
-                    
-                    if not title or len(title) < 5:
-                        link = entry.get('link', '')
-                        title = f"{source_name} Article {link.split('/')[-1] if link else ''}"
                 
                 title = clean_title(title)
                 if not title:
@@ -441,10 +443,10 @@ class NewsBot:
             
             return articles
         except Exception as e:
-            logger.error(f"❌ Ошибка парсинга RSS {source_name}: {e}")
+            logger.error(f"❌ Ошибка RSS {source_name}: {e}")
             return []
 
-    # ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ СТАТЬИ ==========
+    # ========== ПАРСИНГ СТАТЬИ ==========
     def _parse_article(self, url: str, source_name: str) -> dict | None:
         try:
             response = fetch_url(url)
@@ -452,62 +454,75 @@ class NewsBot:
                 return None
 
             if 'substack.com' in url:
-                logger.warning(f"⏭️ {source_name}: пропуск Substack статьи (403)")
+                logger.warning(f"⏭️ {source_name}: Substack статья пропущена")
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Ищем изображение
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
+            # ========== УЛУЧШЕННЫЙ ПОИСК КОНТЕНТА ==========
+            content_parts = []
+            
+            # 1. Пробуем найти основной контейнер
             content_container = None
-            for class_name in ['entry-content', 'post-content', 'content', 'article-content', 'main-content', 'article__text', 'body']:
-                container = soup.find('div', class_=re.compile(class_name))
-                if container:
-                    content_container = container
-                    break
-
-            if not content_container:
-                content_container = soup.find('article')
-
-            if not content_container:
-                content_container = soup.find('main')
-
-            paragraphs = []
+            selectors = [
+                'article',
+                'div.entry-content',
+                'div.post-content',
+                'div.content',
+                'div.article-content',
+                'div.main-content',
+                'div.article__text',
+                'main',
+                'div.body'
+            ]
+            
+            for selector in selectors:
+                if selector.startswith('div.') or selector.startswith('main') or selector == 'article':
+                    container = soup.select_one(selector)
+                    if container:
+                        content_container = container
+                        break
+            
             if content_container:
+                # Удаляем мусорные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
-
+                
+                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if is_excluded_author(text):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
-                    if len(text) > 30:
+                    if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
-                            paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                main = soup.find('main')
-                if main:
-                    for p in main.find_all('p'):
-                        text = p.get_text(strip=True)
-                        if is_excluded_author(text):
-                            logger.info(f"⏭️ Пропущен абзац с именем автора")
-                            continue
-                        if len(text) > 30:
-                            paragraphs.append(text)
-
-            if len(paragraphs) < 2:
-                logger.warning(f"Недостаточно контента для {url}")
+                            content_parts.append(text)
+            
+            # Если не нашли контент - пробуем найти все p на странице
+            if len(content_parts) < 2:
+                logger.info(f"⚠️ {source_name}: ищем p на всей странице")
+                for p in soup.find_all('p'):
+                    text = p.get_text(strip=True)
+                    if is_excluded_author(text):
+                        continue
+                    if len(text) > 40 and not text.startswith('Read more'):
+                        if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
+                            content_parts.append(text)
+            
+            if len(content_parts) < 2:
+                logger.warning(f"⚠️ {source_name}: недостаточно контента для {url}")
                 return None
 
-            content = '\n\n'.join(paragraphs)
-
+            content = '\n\n'.join(content_parts[:20])  # Берем первые 20 абзацев
+            
             if len(content) < 150:
-                logger.warning(f"Контент слишком короткий ({len(content)} символов)")
+                logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
                 return None
 
             return {
@@ -521,7 +536,7 @@ class NewsBot:
             logger.error(f"Ошибка парсинга {source_name}: {e}")
             return None
 
-    # ========== СПЕЦИФИЧНЫЕ МЕТОДЫ ДЛЯ КАЖДОГО ИСТОЧНИКА ==========
+    # ========== МЕТОДЫ ДЛЯ ИСТОЧНИКОВ ==========
     def _get_infobrics_articles(self) -> list:
         return self._parse_rss_feed('https://infobrics.org/rss/en', 'InfoBrics')
 
@@ -546,12 +561,6 @@ class NewsBot:
     def _parse_zerohedge_article(self, url: str) -> dict | None:
         return self._parse_article(url, 'ZeroHedge')
 
-    def _get_almayadeen_articles(self) -> list:
-        return self._parse_rss_feed('https://english.almayadeen.net/rss', 'Al Mayadeen')
-
-    def _parse_almayadeen_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'Al Mayadeen')
-
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
@@ -561,13 +570,11 @@ class NewsBot:
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
             ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
-            ('Al Mayadeen', self._get_almayadeen_articles, self._parse_almayadeen_article),
         ]
 
         for source_name, get_func, parse_func in sources:
             try:
                 logger.info(f"📰 Парсинг {source_name}...")
-                
                 articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
                 
                 for article in articles[:3]:
@@ -578,15 +585,13 @@ class NewsBot:
                         continue
                     
                     data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
-                    
                     if data:
                         data['title'] = title
                         logger.info(f"✅ {source_name}: {title[:80]}...")
-                        
                         if not self._is_duplicate(url, title, data['content']):
                             items.append(data)
             except Exception as e:
-                logger.error(f"❌ Критическая ошибка при парсинге {source_name}: {e}")
+                logger.error(f"❌ Критическая ошибка {source_name}: {e}")
                 continue
 
         logger.info(f"📊 Всего новых статей: {len(items)}")
@@ -606,70 +611,23 @@ class NewsBot:
 
             title_en = clean_title(title_en)
             if not title_en:
-                logger.warning("⏭️ Пропуск: пустой заголовок после очистки")
+                logger.warning("⏭️ Пропуск: пустой заголовок")
                 return
 
             if url in self.state['sent_links']:
-                logger.warning(f"⛔ Пост уже опубликован по URL: {url[:80]}...")
+                logger.warning(f"⛔ Уже опубликовано: {url[:80]}...")
                 return
-            
-            norm_title = self._normalize_title(title_en)
-            if norm_title and norm_title in self.state['sent_titles']:
-                logger.warning(f"⛔ Пост уже опубликован по заголовку: {title_en[:50]}...")
-                return
-            
-            if content_en:
-                h = self._hash_content(content_en)
-                if h and h in self.state['sent_hashes']:
-                    logger.warning(f"⛔ Пост уже опубликован по содержимому: {title_en[:50]}...")
-                    return
 
-            logger.info(f"📝 Начинается перевод: {title_en[:80]}...")
+            logger.info(f"📝 Перевод: {title_en[:80]}...")
 
-            loop = asyncio.get_event_loop()
+            # ПЕРЕВОД
+            title_ru = await asyncio.get_event_loop().run_in_executor(None, self.translator.translate, title_en)
+            title_ru = clean_title(title_ru) or title_ru or title_en
 
-            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
-            # Обрезаем заголовок до 150 символов для перевода
-            title_for_translate = title_en[:150] if len(title_en) > 150 else title_en
-            title_ru = await loop.run_in_executor(None, self._translate_text, title_for_translate)
-            
-            # Если перевод не удался - пробуем альтернативный метод
-            if not title_ru or not re.search('[а-яА-Я]', title_ru):
-                logger.warning("⚠️ Заголовок не переведен, пробуем альтернативный метод...")
-                try:
-                    from deep_translator import GoogleTranslator as GT
-                    alt_translator = GT(source='auto', target='ru')
-                    title_ru = alt_translator.translate(title_for_translate[:100])
-                    if title_ru and re.search('[а-яА-Я]', title_ru):
-                        logger.info("✅ Альтернативный перевод заголовка выполнен")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка альтернативного перевода заголовка: {e}")
-                    title_ru = title_en
-            
-            title_ru = clean_title(title_ru)
-            if not title_ru:
-                title_ru = title_en
+            content_ru = await asyncio.get_event_loop().run_in_executor(None, self.translator.translate, content_en[:4000])
+            content_ru = content_ru or content_en[:4000]
 
-            # ========== ПЕРЕВОД КОНТЕНТА ==========
-            content_ru = ""
-            content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
-            
-            content_ru = await loop.run_in_executor(None, self._translate_text, content_en_truncated)
-            
-            # Если перевод не удался - пробуем альтернативный метод
-            if not content_ru or not re.search('[а-яА-Я]', content_ru):
-                logger.warning("⚠️ Контент не переведен, пробуем альтернативный метод...")
-                try:
-                    from deep_translator import GoogleTranslator as GT
-                    alt_translator = GT(source='auto', target='ru')
-                    content_ru = alt_translator.translate(content_en_truncated[:3000])
-                    if content_ru and re.search('[а-яА-Я]', content_ru):
-                        logger.info("✅ Альтернативный перевод контента выполнен")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка альтернативного перевода контента: {e}")
-                    content_ru = content_en_truncated
-
-            # Очистка от мусора
+            # Очистка
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
@@ -677,14 +635,13 @@ class NewsBot:
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
-            title_clean = clean_title(title_ru)
-            if not title_clean:
-                title_clean = title_ru
+            title_clean = clean_title(title_ru) or title_ru
             title_escaped = html.escape(title_clean)
             
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
+            # Публикация
             if image_url:
                 logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
                 img_response = fetch_url(image_url, timeout=15)
@@ -694,32 +651,25 @@ class NewsBot:
                     if 'image' in content_type:
                         try:
                             if len(message) > MAX_CAPTION:
-                                logger.warning(f"⚠️ Caption слишком длинный ({len(message)}), обрезаем...")
                                 message = message[:MAX_CAPTION - 50] + "..."
-                            
                             await self.bot.send_photo(
                                 chat_id=CHANNEL_ID,
                                 photo=img_response.content,
                                 caption=message,
                                 parse_mode='Markdown'
                             )
-                            logger.info("✅ Опубликовано С ФОТО (переведено на русский)")
+                            logger.info("✅ Опубликовано С ФОТО")
                             self._mark_sent(url, title_en, content_en)
                             self._log_post(url, title_en)
                             return
                         except TelegramError as e:
-                            logger.warning(f"Ошибка отправки фото: {e}")
-                    else:
-                        logger.warning(f"URL не ведёт на изображение: {content_type}")
-                else:
-                    logger.warning("Не удалось загрузить изображение")
+                            logger.warning(f"Ошибка фото: {e}")
 
-            logger.info("📝 Публикация текстом (без фото)")
+            logger.info("📝 Публикация текстом")
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             
             if len(text_message) > MAX_MESSAGE:
-                logger.warning(f"⚠️ Сообщение слишком длинное ({len(text_message)}), обрезаем...")
                 text_message = text_message[:MAX_MESSAGE - 50] + "..."
             
             await self.bot.send_message(
@@ -728,7 +678,7 @@ class NewsBot:
                 parse_mode='Markdown',
                 disable_web_page_preview=False
             )
-            logger.info("✅ Опубликовано ТЕКСТОМ (переведено на русский)")
+            logger.info("✅ Опубликовано ТЕКСТОМ")
 
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
@@ -736,56 +686,29 @@ class NewsBot:
         except TelegramError as e:
             error_msg = str(e)
             if "Can't parse entities" in error_msg:
-                logger.warning("Ошибка Markdown, отправляем без форматирования")
                 try:
-                    title_clean = clean_title(title_ru)
-                    if not title_clean:
-                        title_clean = title_ru
-                    text_message = f"{title_clean}\n\n{content_ru}"
+                    text_message = f"{title_ru}\n\n{content_ru}"
                     if len(text_message) > MAX_MESSAGE:
                         text_message = text_message[:MAX_MESSAGE - 50] + "..."
-                    
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=text_message,
-                        parse_mode=None
-                    )
+                    await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode=None)
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
                 except Exception as e2:
-                    logger.error(f"❌ Ошибка при отправке без форматирования: {e2}")
-            elif "Message is too long" in error_msg:
-                logger.warning("⚠️ Сообщение слишком длинное, сокращаем...")
-                try:
-                    title_clean = clean_title(title_ru)
-                    if not title_clean:
-                        title_clean = title_ru
-                    short_content = content_ru[:2000] + "..."
-                    text_message = f"{title_clean}\n\n{short_content}"
-                    await self.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=text_message,
-                        parse_mode=None
-                    )
-                    self._mark_sent(url, title_en, content_en)
-                    self._log_post(url, title_en)
-                except Exception as e2:
-                    logger.error(f"❌ Ошибка при отправке сокращенного сообщения: {e2}")
+                    logger.error(f"❌ Ошибка отправки: {e2}")
             else:
                 logger.error(f"❌ Ошибка Telegram: {e}")
         except Exception as e:
-            logger.error(f"❌ Критическая ошибка публикации: {e}")
+            logger.error(f"❌ Критическая ошибка: {e}")
 
     # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
         logger.info("=" * 50)
-        logger.info(f"🚀 Запуск сбора новостей [{get_local_time().strftime('%H:%M:%S')}]")
+        logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
         if IS_MANUAL_RUN:
-            logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА - ограничения сняты")
+            logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА")
         logger.info("=" * 50)
 
         news = await self.fetch_news()
-
         if not news:
             logger.info("📭 Новых статей нет")
             return
@@ -793,25 +716,23 @@ class NewsBot:
         published_count = 0
         for article in news:
             if not self._can_post():
-                logger.info(f"⏸️ Достигнут лимит публикаций, опубликовано {published_count} статей")
+                logger.info(f"⏸️ Лимит, опубликовано {published_count}")
                 break
             
-            logger.info(f"📤 Публикация статьи {published_count + 1}/{len(news)}")
+            logger.info(f"📤 Публикация {published_count + 1}/{len(news)}")
             await self.publish(article)
             published_count += 1
             
             if published_count < len(news):
                 if IS_MANUAL_RUN:
-                    logger.info("⏳ Ожидание 10 секунд перед следующей публикацией...")
                     await asyncio.sleep(10)
                 else:
-                    logger.info("⏳ Ожидание 60 секунд перед следующей публикацией...")
                     await asyncio.sleep(60)
         
-        logger.info(f"✅ Опубликовано статей за запуск: {published_count}")
+        logger.info(f"✅ Опубликовано: {published_count}")
 
     async def run_forever(self):
-        logger.info("🤖 Бот запущен в бесконечном режиме")
+        logger.info("🤖 Бот запущен")
         while True:
             try:
                 await self.run_once()
@@ -819,7 +740,7 @@ class NewsBot:
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"❌ Критическая ошибка: {e}")
+                logger.error(f"❌ Ошибка: {e}")
                 await asyncio.sleep(300)
 
 async def main():
