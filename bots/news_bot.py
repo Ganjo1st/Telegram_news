@@ -24,18 +24,6 @@ from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
 
-# ========== ИСПРАВЛЕННЫЙ ИМПОРТ ПЕРЕВОДЧИКА ==========
-try:
-    from googletrans import Translator as GoogleTranslator
-    USE_GOOGLETRANS = True
-except ImportError:
-    USE_GOOGLETRANS = False
-    try:
-        from deep_translator import GoogleTranslator
-        USE_DEEP_TRANSLATOR = True
-    except ImportError:
-        USE_DEEP_TRANSLATOR = False
-
 # ========== НАСТРОЙКА ==========
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -71,6 +59,359 @@ EXCLUDED_AUTHORS = [
     'Стив Уотсон', 'Steve Watson',
 ]
 
+# ========== ПРОСТОЙ СЛОВАРЬ ПЕРЕВОДОВ ==========
+COMMON_WORDS = {
+    'ukraine': 'Украина', 'ukrainian': 'украинский',
+    'russia': 'Россия', 'russian': 'российский',
+    'us': 'США', 'america': 'Америка', 'american': 'американский',
+    'china': 'Китай', 'chinese': 'китайский',
+    'europe': 'Европа', 'european': 'европейский',
+    'brics': 'БРИКС',
+    'nato': 'НАТО',
+    'israel': 'Израиль', 'israeli': 'израильский',
+    'palestine': 'Палестина', 'palestinian': 'палестинский',
+    'iran': 'Иран', 'iranian': 'иранский',
+    'turkey': 'Турция', 'turkish': 'турецкий',
+    'saudi': 'Саудовская Аравия',
+    'syria': 'Сирия', 'syrian': 'сирийский',
+    'lebanon': 'Ливан', 'lebanese': 'ливанский',
+    'egypt': 'Египет', 'egyptian': 'египетский',
+    'germany': 'Германия', 'german': 'немецкий',
+    'france': 'Франция', 'french': 'французский',
+    'britain': 'Британия', 'british': 'британский',
+    'hungary': 'Венгрия', 'hungarian': 'венгерский',
+    'poland': 'Польша', 'polish': 'польский',
+    'belgium': 'Бельгия', 'belgian': 'бельгийский',
+    'netherlands': 'Нидерланды',
+    'canada': 'Канада', 'canadian': 'канадский',
+    'mexico': 'Мексика', 'mexican': 'мексиканский',
+    'india': 'Индия', 'indian': 'индийский',
+    'brazil': 'Бразилия', 'brazilian': 'бразильский',
+    'south africa': 'ЮАР',
+    'argentina': 'Аргентина',
+    'venezuela': 'Венесуэла',
+    'colombia': 'Колумбия',
+    'chile': 'Чили',
+    'peru': 'Перу',
+    'australia': 'Австралия',
+    'japan': 'Япония', 'japanese': 'японский',
+    'korea': 'Корея', 'korean': 'корейский',
+    'north korea': 'Северная Корея',
+    'south korea': 'Южная Корея',
+    'vietnam': 'Вьетнам',
+    'indonesia': 'Индонезия',
+    'pakistan': 'Пакистан',
+    'afghanistan': 'Афганистан',
+    'iraq': 'Ирак',
+    'yemen': 'Йемен',
+    'libya': 'Ливия',
+    'nigeria': 'Нигерия',
+    'kenya': 'Кения',
+    'ethiopia': 'Эфиопия',
+    'moscow': 'Москва',
+    'kiev': 'Киев',
+    'washington': 'Вашингтон',
+    'beijing': 'Пекин',
+    'london': 'Лондон',
+    'paris': 'Париж',
+    'berlin': 'Берлин',
+    'budapest': 'Будапешт',
+    'ankara': 'Анкара',
+    'tehran': 'Тегеран',
+    'riyadh': 'Эр-Рияд',
+    'dubai': 'Дубай',
+    'military': 'военный', 'army': 'армия', 'defense': 'оборона',
+    'war': 'война', 'conflict': 'конфликт', 'crisis': 'кризис',
+    'peace': 'мир', 'agreement': 'соглашение', 'deal': 'сделка',
+    'sanctions': 'санкции', 'sanction': 'санкции',
+    'economy': 'экономика', 'economic': 'экономический',
+    'trade': 'торговля', 'tariff': 'пошлина', 'tariffs': 'пошлины',
+    'oil': 'нефть', 'gas': 'газ', 'energy': 'энергетика',
+    'nuclear': 'ядерный', 'weapons': 'вооружения',
+    'missile': 'ракета', 'missiles': 'ракеты',
+    'drone': 'беспилотник', 'drones': 'беспилотники',
+    'attack': 'атака', 'strike': 'удар',
+    'defense': 'оборона', 'defense': 'оборона',
+    'security': 'безопасность',
+    'intelligence': 'разведка',
+    'president': 'президент', 'prime minister': 'премьер-министр',
+    'minister': 'министр', 'official': 'официальный',
+    'government': 'правительство',
+    'parliament': 'парламент',
+    'election': 'выборы', 'elections': 'выборы',
+    'party': 'партия',
+    'court': 'суд',
+    'police': 'полиция',
+    'bank': 'банк', 'banks': 'банки',
+    'market': 'рынок', 'markets': 'рынки',
+    'stock': 'акции', 'stocks': 'акции',
+    'bitcoin': 'биткойн',
+    'crypto': 'криптовалюта',
+    'strategy': 'стратегия', 'strategic': 'стратегический',
+    'global': 'глобальный', 'international': 'международный',
+    'national': 'национальный',
+    'foreign': 'внешний', 'foreign policy': 'внешняя политика',
+    'domestic': 'внутренний',
+    'public': 'общественный',
+    'private': 'частный',
+    'company': 'компания', 'companies': 'компании',
+    'corporation': 'корпорация',
+    'ceo': 'генеральный директор',
+    'chairman': 'председатель',
+    'minister': 'министр',
+    'ambassador': 'посол',
+    'embassy': 'посольство',
+    'consultant': 'консультант',
+    'analyst': 'аналитик', 'analysts': 'аналитики',
+    'expert': 'эксперт',
+    'journalist': 'журналист',
+    'media': 'СМИ',
+    'social media': 'социальные сети',
+    'internet': 'интернет',
+    'technology': 'технология', 'tech': 'технологии',
+    'cyber': 'кибер',
+    'data': 'данные',
+    'research': 'исследование',
+    'development': 'развитие',
+    'program': 'программа',
+    'project': 'проект',
+    'plan': 'план',
+    'meeting': 'встреча',
+    'summit': 'саммит',
+    'conference': 'конференция',
+    'negotiations': 'переговоры',
+    'talks': 'переговоры',
+    'dialogue': 'диалог',
+    'partnership': 'партнерство',
+    'alliance': 'альянс',
+    'cooperation': 'сотрудничество',
+    'relations': 'отношения',
+    'crisis': 'кризис',
+    'emergency': 'чрезвычайная ситуация',
+    'disaster': 'катастрофа',
+    'accident': 'авария',
+    'pandemic': 'пандемия',
+    'health': 'здоровье',
+    'vaccine': 'вакцина',
+    'virus': 'вирус',
+    'climate': 'климат',
+    'environment': 'окружающая среда',
+    'pollution': 'загрязнение',
+    'energy': 'энергия',
+    'renewable': 'возобновляемый',
+    'solar': 'солнечный',
+    'wind': 'ветер',
+    'nuclear': 'ядерный',
+    'coal': 'уголь',
+    'mining': 'добыча',
+    'agriculture': 'сельское хозяйство',
+    'food': 'еда', 'food security': 'продовольственная безопасность',
+    'water': 'вода',
+    'space': 'космос',
+    'ai': 'искусственный интеллект',
+    'robot': 'робот',
+    'automation': 'автоматизация',
+    'inflation': 'инфляция',
+    'recession': 'рецессия',
+    'growth': 'рост',
+    'investment': 'инвестиции',
+    'investor': 'инвестор',
+    'shareholder': 'акционер',
+    'dividend': 'дивиденд',
+    'profit': 'прибыль',
+    'loss': 'убыток',
+    'debt': 'долг',
+    'budget': 'бюджет',
+    'tax': 'налог',
+    'taxes': 'налоги',
+    'spending': 'расходы',
+    'funds': 'средства',
+    'billion': 'миллиард',
+    'trillion': 'триллион',
+    'million': 'миллион',
+    'thousand': 'тысяча',
+    'percent': 'процент',
+    'rate': 'ставка',
+    'interest rate': 'процентная ставка',
+    'inflation rate': 'уровень инфляции',
+    'unemployment': 'безработица',
+    'jobs': 'рабочие места',
+    'workers': 'работники',
+    'labor': 'труд',
+    'union': 'союз',
+    'strike': 'забастовка',
+    'protest': 'протест',
+    'protesters': 'протестующие',
+    'police': 'полиция',
+    'prison': 'тюрьма',
+    'justice': 'правосудие',
+    'law': 'закон',
+    'legal': 'юридический',
+    'rights': 'права',
+    'human rights': 'права человека',
+    'freedom': 'свобода',
+    'democracy': 'демократия',
+    'democratic': 'демократический',
+    'republican': 'республиканский',
+    'liberal': 'либеральный',
+    'conservative': 'консервативный',
+    'socialist': 'социалистический',
+    'communist': 'коммунистический',
+    'reform': 'реформа',
+    'revolution': 'революция',
+    'change': 'изменение',
+    'new': 'новый',
+    'old': 'старый',
+    'first': 'первый',
+    'last': 'последний',
+    'big': 'большой',
+    'small': 'маленький',
+    'high': 'высокий',
+    'low': 'низкий',
+    'fast': 'быстрый',
+    'slow': 'медленный',
+    'hard': 'жесткий',
+    'soft': 'мягкий',
+    'good': 'хороший',
+    'bad': 'плохой',
+    'great': 'великий',
+    'terrible': 'ужасный',
+    'important': 'важный',
+    'critical': 'критический',
+    'major': 'крупный',
+    'minor': 'малый',
+    'possible': 'возможный',
+    'impossible': 'невозможный',
+    'likely': 'вероятный',
+    'unlikely': 'маловероятный',
+    'certain': 'определенный',
+    'uncertain': 'неопределенный',
+    'clear': 'ясный',
+    'unclear': 'неясный',
+    'open': 'открытый',
+    'closed': 'закрытый',
+    'free': 'свободный',
+    'controlled': 'контролируемый',
+    'independent': 'независимый',
+    'sovereign': 'суверенный',
+    'territory': 'территория',
+    'border': 'граница',
+    'region': 'регион',
+    'city': 'город',
+    'capital': 'столица',
+    'province': 'провинция',
+    'state': 'государство',
+    'country': 'страна',
+    'nation': 'нация',
+    'people': 'люди',
+    'population': 'население',
+    'citizen': 'гражданин',
+    'refugee': 'беженец',
+    'migrant': 'мигрант',
+    'immigrant': 'иммигрант',
+    'tourist': 'турист',
+    'visitor': 'посетитель',
+    'student': 'студент',
+    'teacher': 'учитель',
+    'doctor': 'врач',
+    'nurse': 'медсестра',
+    'engineer': 'инженер',
+    'scientist': 'ученый',
+    'researcher': 'исследователь',
+    'writer': 'писатель',
+    'artist': 'художник',
+    'musician': 'музыкант',
+    'actor': 'актер',
+    'director': 'режиссер',
+    'producer': 'продюсер',
+    'manager': 'менеджер',
+    'director': 'директор',
+    'chief': 'глава',
+    'leader': 'лидер',
+    'opposition': 'оппозиция',
+    'coalition': 'коалиция',
+    'faction': 'фракция',
+    'movement': 'движение',
+    'campaign': 'кампания',
+    'initiative': 'инициатива',
+    'proposal': 'предложение',
+    'resolution': 'резолюция',
+    'declaration': 'декларация',
+    'statement': 'заявление',
+    'announcement': 'объявление',
+    'decision': 'решение',
+    'action': 'действие',
+    'response': 'ответ',
+    'reaction': 'реакция',
+    'support': 'поддержка',
+    'opposition': 'оппозиция',
+    'criticism': 'критика',
+    'praise': 'похвала',
+    'condemnation': 'осуждение',
+    'approval': 'одобрение',
+    'rejection': 'отклонение',
+    'success': 'успех',
+    'failure': 'неудача',
+    'victory': 'победа',
+    'defeat': 'поражение',
+    'progress': 'прогресс',
+    'setback': 'неудача',
+    'breakthrough': 'прорыв',
+    'collapse': 'крах',
+    'resignation': 'отставка',
+    'appointment': 'назначение',
+    'election': 'выборы',
+    'vote': 'голосование',
+    'ballot': 'бюллетень',
+    'referendum': 'референдум',
+}
+
+# ========== ПРОСТОЙ ПЕРЕВОДЧИК ==========
+def simple_translate(text: str) -> str:
+    """Простой перевод через словарь и Google Translate (как fallback)"""
+    if not text or len(text) < 3:
+        return text
+    
+    # Если уже на русском
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    # Пробуем перевести через Google Translate
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'en',
+            'tl': 'ru',
+            'dt': 't',
+            'q': text[:3000]
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                result = ''
+                for item in data[0]:
+                    if item and len(item) > 0:
+                        result += item[0]
+                if result and re.search('[а-яА-Я]', result):
+                    return result
+    except Exception as e:
+        logger.warning(f"Google Translate не удался: {e}")
+    
+    # Если Google не работает - используем простой словарь
+    result = text
+    for eng, rus in COMMON_WORDS.items():
+        # Заменяем слова с учетом регистра
+        pattern = r'\b' + re.escape(eng) + r'\b'
+        result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
+    
+    # Если перевод не изменился или нет кириллицы - возвращаем оригинал
+    if result == text or not re.search('[а-яА-Я]', result):
+        return text
+    
+    return result
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time():
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
@@ -88,7 +429,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def extract_image_url(soup, base_url: str):
-    # og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
         img_url = meta_img['content']
@@ -99,7 +439,6 @@ def extract_image_url(soup, base_url: str):
         if img_url.startswith('http'):
             return img_url
 
-    # twitter:image
     meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta_twitter and meta_twitter.get('content'):
         img_url = meta_twitter['content']
@@ -110,7 +449,6 @@ def extract_image_url(soup, base_url: str):
         if img_url.startswith('http'):
             return img_url
 
-    # article img
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
@@ -125,7 +463,6 @@ def extract_image_url(soup, base_url: str):
                 if src.startswith('http'):
                     return src
 
-    # any img
     for img in soup.find_all('img', src=True):
         src = img.get('src', '')
         if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'flag']):
@@ -157,76 +494,12 @@ def is_excluded_author(text: str):
             return True
     return False
 
-# ========== НАДЕЖНЫЙ ПЕРЕВОДЧИК ==========
-class SafeTranslator:
-    def __init__(self):
-        self.translator = None
-        self._init_translator()
-    
-    def _init_translator(self):
-        try:
-            if USE_GOOGLETRANS:
-                from googletrans import Translator
-                self.translator = Translator()
-                logger.info("✅ Используется googletrans")
-                return True
-        except:
-            pass
-        
-        try:
-            from deep_translator import GoogleTranslator
-            self.translator = GoogleTranslator(source='en', target='ru')
-            logger.info("✅ Используется deep_translator")
-            return True
-        except:
-            pass
-        
-        logger.warning("⚠️ Нет доступных переводчиков!")
-        return False
-    
-    def translate(self, text: str) -> str:
-        if not text or len(text) < 3:
-            return text
-        
-        # Если уже на русском
-        if re.search('[а-яА-Я]', text):
-            return text
-        
-        # Обрезаем длинные тексты
-        text_to_translate = text[:3000] if len(text) > 3000 else text
-        
-        try:
-            if USE_GOOGLETRANS and self.translator:
-                result = self.translator.translate(text_to_translate, dest='ru')
-                if result and result.text:
-                    return result.text
-            
-            if hasattr(self.translator, 'translate'):
-                result = self.translator.translate(text_to_translate)
-                if result:
-                    return result
-                    
-        except Exception as e:
-            logger.error(f"Ошибка перевода: {e}")
-            # Пробуем альтернативный метод
-            try:
-                from deep_translator import GoogleTranslator
-                alt = GoogleTranslator(source='auto', target='ru')
-                result = alt.translate(text_to_translate[:2000])
-                if result:
-                    return result
-            except:
-                pass
-        
-        return text
-
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
         self.state = self._load_state()
         self.meta = self._load_meta()
         self.bot = Bot(token=TELEGRAM_TOKEN)
-        self.translator = SafeTranslator()
 
     def _load_state(self) -> dict:
         try:
@@ -460,15 +733,13 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Ищем изображение
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
-            # ========== УЛУЧШЕННЫЙ ПОИСК КОНТЕНТА ==========
+            # Поиск контента
             content_parts = []
             
-            # 1. Пробуем найти основной контейнер
             content_container = None
             selectors = [
                 'article',
@@ -490,11 +761,9 @@ class NewsBot:
                         break
             
             if content_container:
-                # Удаляем мусорные теги
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 
-                # Собираем параграфы
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if is_excluded_author(text):
@@ -504,7 +773,6 @@ class NewsBot:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
             
-            # Если не нашли контент - пробуем найти все p на странице
             if len(content_parts) < 2:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
@@ -519,7 +787,7 @@ class NewsBot:
                 logger.warning(f"⚠️ {source_name}: недостаточно контента для {url}")
                 return None
 
-            content = '\n\n'.join(content_parts[:20])  # Берем первые 20 абзацев
+            content = '\n\n'.join(content_parts[:20])
             
             if len(content) < 150:
                 logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
@@ -620,12 +888,16 @@ class NewsBot:
 
             logger.info(f"📝 Перевод: {title_en[:80]}...")
 
-            # ПЕРЕВОД
-            title_ru = await asyncio.get_event_loop().run_in_executor(None, self.translator.translate, title_en)
+            loop = asyncio.get_event_loop()
+            
+            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
+            title_ru = await loop.run_in_executor(None, simple_translate, title_en)
             title_ru = clean_title(title_ru) or title_ru or title_en
-
-            content_ru = await asyncio.get_event_loop().run_in_executor(None, self.translator.translate, content_en[:4000])
-            content_ru = content_ru or content_en[:4000]
+            
+            # ========== ПЕРЕВОД КОНТЕНТА ==========
+            content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
+            content_ru = await loop.run_in_executor(None, simple_translate, content_en_truncated)
+            content_ru = content_ru or content_en_truncated
 
             # Очистка
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
