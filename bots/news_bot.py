@@ -15,6 +15,7 @@ import re
 import html
 import random
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -59,7 +60,7 @@ EXCLUDED_AUTHORS = [
     'Стив Уотсон', 'Steve Watson',
 ]
 
-# ========== ПРОСТОЙ СЛОВАРЬ ПЕРЕВОДОВ ==========
+# ========== СЛОВАРЬ ДЛЯ ПЕРЕВОДА ==========
 COMMON_WORDS = {
     'ukraine': 'Украина', 'ukrainian': 'украинский',
     'russia': 'Россия', 'russian': 'российский',
@@ -82,32 +83,16 @@ COMMON_WORDS = {
     'hungary': 'Венгрия', 'hungarian': 'венгерский',
     'poland': 'Польша', 'polish': 'польский',
     'belgium': 'Бельгия', 'belgian': 'бельгийский',
-    'netherlands': 'Нидерланды',
     'canada': 'Канада', 'canadian': 'канадский',
     'mexico': 'Мексика', 'mexican': 'мексиканский',
     'india': 'Индия', 'indian': 'индийский',
     'brazil': 'Бразилия', 'brazilian': 'бразильский',
-    'south africa': 'ЮАР',
     'argentina': 'Аргентина',
     'venezuela': 'Венесуэла',
     'colombia': 'Колумбия',
-    'chile': 'Чили',
-    'peru': 'Перу',
     'australia': 'Австралия',
     'japan': 'Япония', 'japanese': 'японский',
     'korea': 'Корея', 'korean': 'корейский',
-    'north korea': 'Северная Корея',
-    'south korea': 'Южная Корея',
-    'vietnam': 'Вьетнам',
-    'indonesia': 'Индонезия',
-    'pakistan': 'Пакистан',
-    'afghanistan': 'Афганистан',
-    'iraq': 'Ирак',
-    'yemen': 'Йемен',
-    'libya': 'Ливия',
-    'nigeria': 'Нигерия',
-    'kenya': 'Кения',
-    'ethiopia': 'Эфиопия',
     'moscow': 'Москва',
     'kiev': 'Киев',
     'washington': 'Вашингтон',
@@ -119,7 +104,6 @@ COMMON_WORDS = {
     'ankara': 'Анкара',
     'tehran': 'Тегеран',
     'riyadh': 'Эр-Рияд',
-    'dubai': 'Дубай',
     'military': 'военный', 'army': 'армия', 'defense': 'оборона',
     'war': 'война', 'conflict': 'конфликт', 'crisis': 'кризис',
     'peace': 'мир', 'agreement': 'соглашение', 'deal': 'сделка',
@@ -131,7 +115,6 @@ COMMON_WORDS = {
     'missile': 'ракета', 'missiles': 'ракеты',
     'drone': 'беспилотник', 'drones': 'беспилотники',
     'attack': 'атака', 'strike': 'удар',
-    'defense': 'оборона', 'defense': 'оборона',
     'security': 'безопасность',
     'intelligence': 'разведка',
     'president': 'президент', 'prime minister': 'премьер-министр',
@@ -156,80 +139,21 @@ COMMON_WORDS = {
     'private': 'частный',
     'company': 'компания', 'companies': 'компании',
     'corporation': 'корпорация',
-    'ceo': 'генеральный директор',
-    'chairman': 'председатель',
-    'minister': 'министр',
-    'ambassador': 'посол',
-    'embassy': 'посольство',
-    'consultant': 'консультант',
-    'analyst': 'аналитик', 'analysts': 'аналитики',
-    'expert': 'эксперт',
-    'journalist': 'журналист',
-    'media': 'СМИ',
-    'social media': 'социальные сети',
-    'internet': 'интернет',
-    'technology': 'технология', 'tech': 'технологии',
-    'cyber': 'кибер',
-    'data': 'данные',
-    'research': 'исследование',
-    'development': 'развитие',
-    'program': 'программа',
-    'project': 'проект',
-    'plan': 'план',
-    'meeting': 'встреча',
-    'summit': 'саммит',
-    'conference': 'конференция',
-    'negotiations': 'переговоры',
-    'talks': 'переговоры',
-    'dialogue': 'диалог',
-    'partnership': 'партнерство',
-    'alliance': 'альянс',
-    'cooperation': 'сотрудничество',
-    'relations': 'отношения',
-    'crisis': 'кризис',
-    'emergency': 'чрезвычайная ситуация',
-    'disaster': 'катастрофа',
-    'accident': 'авария',
-    'pandemic': 'пандемия',
-    'health': 'здоровье',
-    'vaccine': 'вакцина',
-    'virus': 'вирус',
-    'climate': 'климат',
-    'environment': 'окружающая среда',
-    'pollution': 'загрязнение',
-    'energy': 'энергия',
-    'renewable': 'возобновляемый',
-    'solar': 'солнечный',
-    'wind': 'ветер',
-    'nuclear': 'ядерный',
-    'coal': 'уголь',
-    'mining': 'добыча',
-    'agriculture': 'сельское хозяйство',
-    'food': 'еда', 'food security': 'продовольственная безопасность',
-    'water': 'вода',
-    'space': 'космос',
-    'ai': 'искусственный интеллект',
-    'robot': 'робот',
-    'automation': 'автоматизация',
     'inflation': 'инфляция',
     'recession': 'рецессия',
     'growth': 'рост',
     'investment': 'инвестиции',
     'investor': 'инвестор',
-    'shareholder': 'акционер',
-    'dividend': 'дивиденд',
     'profit': 'прибыль',
     'loss': 'убыток',
     'debt': 'долг',
     'budget': 'бюджет',
-    'tax': 'налог',
-    'taxes': 'налоги',
+    'tax': 'налог', 'taxes': 'налоги',
     'spending': 'расходы',
     'funds': 'средства',
     'billion': 'миллиард',
     'trillion': 'триллион',
     'million': 'миллион',
-    'thousand': 'тысяча',
     'percent': 'процент',
     'rate': 'ставка',
     'interest rate': 'процентная ставка',
@@ -239,10 +163,8 @@ COMMON_WORDS = {
     'workers': 'работники',
     'labor': 'труд',
     'union': 'союз',
-    'strike': 'забастовка',
     'protest': 'протест',
     'protesters': 'протестующие',
-    'police': 'полиция',
     'prison': 'тюрьма',
     'justice': 'правосудие',
     'law': 'закон',
@@ -309,8 +231,6 @@ COMMON_WORDS = {
     'refugee': 'беженец',
     'migrant': 'мигрант',
     'immigrant': 'иммигрант',
-    'tourist': 'турист',
-    'visitor': 'посетитель',
     'student': 'студент',
     'teacher': 'учитель',
     'doctor': 'врач',
@@ -325,7 +245,6 @@ COMMON_WORDS = {
     'director': 'режиссер',
     'producer': 'продюсер',
     'manager': 'менеджер',
-    'director': 'директор',
     'chief': 'глава',
     'leader': 'лидер',
     'opposition': 'оппозиция',
@@ -344,7 +263,6 @@ COMMON_WORDS = {
     'response': 'ответ',
     'reaction': 'реакция',
     'support': 'поддержка',
-    'opposition': 'оппозиция',
     'criticism': 'критика',
     'praise': 'похвала',
     'condemnation': 'осуждение',
@@ -360,57 +278,49 @@ COMMON_WORDS = {
     'collapse': 'крах',
     'resignation': 'отставка',
     'appointment': 'назначение',
-    'election': 'выборы',
     'vote': 'голосование',
     'ballot': 'бюллетень',
     'referendum': 'референдум',
+    'ai': 'искусственный интеллект',
+    'robot': 'робот',
+    'automation': 'автоматизация',
+    'cyber': 'кибер',
+    'data': 'данные',
+    'research': 'исследование',
+    'development': 'развитие',
+    'program': 'программа',
+    'project': 'проект',
+    'plan': 'план',
+    'meeting': 'встреча',
+    'summit': 'саммит',
+    'conference': 'конференция',
+    'negotiations': 'переговоры',
+    'talks': 'переговоры',
+    'dialogue': 'диалог',
+    'partnership': 'партнерство',
+    'alliance': 'альянс',
+    'cooperation': 'сотрудничество',
+    'relations': 'отношения',
+    'emergency': 'чрезвычайная ситуация',
+    'disaster': 'катастрофа',
+    'accident': 'авария',
+    'pandemic': 'пандемия',
+    'health': 'здоровье',
+    'vaccine': 'вакцина',
+    'virus': 'вирус',
+    'climate': 'климат',
+    'environment': 'окружающая среда',
+    'pollution': 'загрязнение',
+    'renewable': 'возобновляемый',
+    'solar': 'солнечный',
+    'wind': 'ветер',
+    'coal': 'уголь',
+    'mining': 'добыча',
+    'agriculture': 'сельское хозяйство',
+    'food': 'еда',
+    'water': 'вода',
+    'space': 'космос',
 }
-
-# ========== ПРОСТОЙ ПЕРЕВОДЧИК ==========
-def simple_translate(text: str) -> str:
-    """Простой перевод через словарь и Google Translate (как fallback)"""
-    if not text or len(text) < 3:
-        return text
-    
-    # Если уже на русском
-    if re.search('[а-яА-Я]', text):
-        return text
-    
-    # Пробуем перевести через Google Translate
-    try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx',
-            'sl': 'en',
-            'tl': 'ru',
-            'dt': 't',
-            'q': text[:3000]
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                result = ''
-                for item in data[0]:
-                    if item and len(item) > 0:
-                        result += item[0]
-                if result and re.search('[а-яА-Я]', result):
-                    return result
-    except Exception as e:
-        logger.warning(f"Google Translate не удался: {e}")
-    
-    # Если Google не работает - используем простой словарь
-    result = text
-    for eng, rus in COMMON_WORDS.items():
-        # Заменяем слова с учетом регистра
-        pattern = r'\b' + re.escape(eng) + r'\b'
-        result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-    
-    # Если перевод не изменился или нет кириллицы - возвращаем оригинал
-    if result == text or not re.search('[а-яА-Я]', result):
-        return text
-    
-    return result
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time():
@@ -480,8 +390,14 @@ def extract_image_url(soup, base_url: str):
 def clean_title(title: str):
     if not title:
         return ""
+    # Удаляем эмодзи и спецсимволы
     title = re.sub(r'^#+\s*', '', title)
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
+    # Удаляем кавычки и странные символы
+    title = re.sub(r'[„“”"\'`]', '', title)
+    # Удаляем множественные пробелы
+    title = re.sub(r'\s+', ' ', title).strip()
+    # Пропускаем популярные статьи
     if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
         return ""
     return title.strip()
@@ -493,6 +409,95 @@ def is_excluded_author(text: str):
         if name in text:
             return True
     return False
+
+# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
+def translate_with_fallback(text: str) -> str:
+    """Перевод текста с несколькими методами"""
+    if not text or len(text) < 3:
+        return text
+    
+    # Если уже на русском
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    text_to_translate = text[:3000] if len(text) > 3000 else text
+    result = None
+    
+    # ===== МЕТОД 1: Google Translate =====
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'en',
+            'tl': 'ru',
+            'dt': 't',
+            'q': text_to_translate
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info("✅ Google Translate успешно")
+                    return result
+    except Exception as e:
+        logger.warning(f"Google Translate ошибка: {e}")
+    
+    # ===== МЕТОД 2: LibreTranslate =====
+    try:
+        url = "https://libretranslate.com/translate"
+        payload = {
+            'q': text_to_translate[:2000],
+            'source': 'en',
+            'target': 'ru',
+            'format': 'text'
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and 'translatedText' in data:
+                result = data['translatedText']
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info("✅ LibreTranslate успешно")
+                    return result
+    except Exception as e:
+        logger.warning(f"LibreTranslate ошибка: {e}")
+    
+    # ===== МЕТОД 3: MyMemory =====
+    try:
+        url = "https://api.mymemory.translated.net/get"
+        params = {
+            'q': text_to_translate[:2000],
+            'langpair': 'en|ru',
+            'de': 'your_email@example.com'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and 'responseData' in data and 'translatedText' in data['responseData']:
+                result = data['responseData']['translatedText']
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info("✅ MyMemory успешно")
+                    return result
+    except Exception as e:
+        logger.warning(f"MyMemory ошибка: {e}")
+    
+    # ===== МЕТОД 4: Словарь =====
+    try:
+        result = text
+        for eng, rus in COMMON_WORDS.items():
+            pattern = r'\b' + re.escape(eng) + r'\b'
+            result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
+        if result != text and re.search('[а-яА-Я]', result):
+            logger.info("✅ Словарь успешно")
+            return result
+    except Exception as e:
+        logger.warning(f"Словарь ошибка: {e}")
+    
+    # ===== МЕТОД 5: Возвращаем оригинал =====
+    logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
+    return text
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -726,8 +731,8 @@ class NewsBot:
             if not response:
                 return None
 
-            if 'substack.com' in url:
-                logger.warning(f"⏭️ {source_name}: Substack статья пропущена")
+            if 'substack.com' in url or 'asia-pacificresearch.com' in url:
+                logger.warning(f"⏭️ {source_name}: статья пропущена (403)")
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -877,6 +882,7 @@ class NewsBot:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
 
+            # Очищаем заголовок от спецсимволов
             title_en = clean_title(title_en)
             if not title_en:
                 logger.warning("⏭️ Пропуск: пустой заголовок")
@@ -891,12 +897,12 @@ class NewsBot:
             loop = asyncio.get_event_loop()
             
             # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
-            title_ru = await loop.run_in_executor(None, simple_translate, title_en)
+            title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
             title_ru = clean_title(title_ru) or title_ru or title_en
             
             # ========== ПЕРЕВОД КОНТЕНТА ==========
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
-            content_ru = await loop.run_in_executor(None, simple_translate, content_en_truncated)
+            content_ru = await loop.run_in_executor(None, translate_with_fallback, content_en_truncated)
             content_ru = content_ru or content_en_truncated
 
             # Очистка
