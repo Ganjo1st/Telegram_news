@@ -133,7 +133,7 @@ COMMON_WORDS = {
     'strategy': 'стратегия', 'strategic': 'стратегический',
     'global': 'глобальный', 'international': 'международный',
     'national': 'национальный',
-    'foreign': 'внешний', 'foreign policy': 'внешняя политика',
+    'foreign': 'внешний',
     'domestic': 'внутренний',
     'public': 'общественный',
     'private': 'частный',
@@ -156,9 +156,6 @@ COMMON_WORDS = {
     'million': 'миллион',
     'percent': 'процент',
     'rate': 'ставка',
-    'interest rate': 'процентная ставка',
-    'inflation rate': 'уровень инфляции',
-    'unemployment': 'безработица',
     'jobs': 'рабочие места',
     'workers': 'работники',
     'labor': 'труд',
@@ -390,16 +387,10 @@ def extract_image_url(soup, base_url: str):
 def clean_title(title: str):
     if not title:
         return ""
-    # Удаляем эмодзи и спецсимволы
     title = re.sub(r'^#+\s*', '', title)
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
-    # Удаляем кавычки и странные символы
     title = re.sub(r'[„“”"\'`]', '', title)
-    # Удаляем множественные пробелы
     title = re.sub(r'\s+', ' ', title).strip()
-    # Пропускаем популярные статьи
-    if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
-        return ""
     return title.strip()
 
 def is_excluded_author(text: str):
@@ -416,14 +407,13 @@ def translate_with_fallback(text: str) -> str:
     if not text or len(text) < 3:
         return text
     
-    # Если уже на русском
     if re.search('[а-яА-Я]', text):
         return text
     
     text_to_translate = text[:3000] if len(text) > 3000 else text
     result = None
     
-    # ===== МЕТОД 1: Google Translate =====
+    # Google Translate
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
@@ -444,7 +434,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"Google Translate ошибка: {e}")
     
-    # ===== МЕТОД 2: LibreTranslate =====
+    # LibreTranslate
     try:
         url = "https://libretranslate.com/translate"
         payload = {
@@ -464,7 +454,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"LibreTranslate ошибка: {e}")
     
-    # ===== МЕТОД 3: MyMemory =====
+    # MyMemory
     try:
         url = "https://api.mymemory.translated.net/get"
         params = {
@@ -483,7 +473,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
     
-    # ===== МЕТОД 4: Словарь =====
+    # Словарь
     try:
         result = text
         for eng, rus in COMMON_WORDS.items():
@@ -495,7 +485,6 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"Словарь ошибка: {e}")
     
-    # ===== МЕТОД 5: Возвращаем оригинал =====
     logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
     return text
 
@@ -696,6 +685,11 @@ class NewsBot:
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
+                # ========== ПРОПУСКАЕМ ВИДЕО СТАТЬИ ==========
+                if re.search(r'(video|видео|VIDEO)', title, re.IGNORECASE):
+                    logger.info(f"⏭️ {source_name}: пропущено видео '{title[:50]}...'")
+                    continue
+                
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
@@ -742,9 +736,7 @@ class NewsBot:
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
 
-            # Поиск контента
             content_parts = []
-            
             content_container = None
             selectors = [
                 'article',
@@ -779,261 +771,4 @@ class NewsBot:
                             content_parts.append(text)
             
             if len(content_parts) < 2:
-                logger.info(f"⚠️ {source_name}: ищем p на всей странице")
-                for p in soup.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if is_excluded_author(text):
-                        continue
-                    if len(text) > 40 and not text.startswith('Read more'):
-                        if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
-                            content_parts.append(text)
-            
-            if len(content_parts) < 2:
-                logger.warning(f"⚠️ {source_name}: недостаточно контента для {url}")
-                return None
-
-            content = '\n\n'.join(content_parts[:20])
-            
-            if len(content) < 150:
-                logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
-                return None
-
-            return {
-                'content': content,
-                'image': image_url,
-                'source': source_name,
-                'url': url
-            }
-
-        except Exception as e:
-            logger.error(f"Ошибка парсинга {source_name}: {e}")
-            return None
-
-    # ========== МЕТОДЫ ДЛЯ ИСТОЧНИКОВ ==========
-    def _get_infobrics_articles(self) -> list:
-        return self._parse_rss_feed('https://infobrics.org/rss/en', 'InfoBrics')
-
-    def _parse_infobrics_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'InfoBrics')
-
-    def _get_globalresearch_articles(self) -> list:
-        return self._parse_rss_feed('https://www.globalresearch.ca/feed', 'Global Research')
-
-    def _parse_globalresearch_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'Global Research')
-
-    def _get_rt_articles(self) -> list:
-        return self._parse_rss_feed('https://www.rt.com/rss/news/', 'RT')
-
-    def _parse_rt_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'RT')
-
-    def _get_zerohedge_articles(self) -> list:
-        return self._parse_rss_feed('https://feeds.feedburner.com/zerohedge/feed', 'ZeroHedge')
-
-    def _parse_zerohedge_article(self, url: str) -> dict | None:
-        return self._parse_article(url, 'ZeroHedge')
-
-    # ========== СБОР НОВОСТЕЙ ==========
-    async def fetch_news(self) -> list:
-        items = []
-        
-        sources = [
-            ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
-            ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
-            ('RT', self._get_rt_articles, self._parse_rt_article),
-            ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
-        ]
-
-        for source_name, get_func, parse_func in sources:
-            try:
-                logger.info(f"📰 Парсинг {source_name}...")
-                articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
-                
-                for article in articles[:3]:
-                    title = article.get('title', '')
-                    url = article.get('url', '')
-                    
-                    if self._is_duplicate(url, title):
-                        continue
-                    
-                    data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
-                    if data:
-                        data['title'] = title
-                        logger.info(f"✅ {source_name}: {title[:80]}...")
-                        if not self._is_duplicate(url, title, data['content']):
-                            items.append(data)
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка {source_name}: {e}")
-                continue
-
-        logger.info(f"📊 Всего новых статей: {len(items)}")
-        return items
-
-    # ========== ПУБЛИКАЦИЯ ==========
-    async def publish(self, post: dict):
-        try:
-            title_en = post.get('title', '')
-            content_en = post.get('content', '')
-            url = post.get('url', '')
-            image_url = post.get('image')
-
-            if not title_en or not content_en:
-                logger.error("❌ Нет заголовка или содержимого")
-                return
-
-            # Очищаем заголовок от спецсимволов
-            title_en = clean_title(title_en)
-            if not title_en:
-                logger.warning("⏭️ Пропуск: пустой заголовок")
-                return
-
-            if url in self.state['sent_links']:
-                logger.warning(f"⛔ Уже опубликовано: {url[:80]}...")
-                return
-
-            logger.info(f"📝 Перевод: {title_en[:80]}...")
-
-            loop = asyncio.get_event_loop()
-            
-            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
-            title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
-            title_ru = clean_title(title_ru) or title_ru or title_en
-            
-            # ========== ПЕРЕВОД КОНТЕНТА ==========
-            content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
-            content_ru = await loop.run_in_executor(None, translate_with_fallback, content_en_truncated)
-            content_ru = content_ru or content_en_truncated
-
-            # Очистка
-            content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
-            content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
-            content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
-
-            post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
-
-            title_clean = clean_title(title_ru) or title_ru
-            title_escaped = html.escape(title_clean)
-            
-            content_truncated = self._truncate_text(content_ru, is_caption=True)
-            message = f"*{title_escaped}*\n\n{content_truncated}"
-
-            # Публикация
-            if image_url:
-                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
-                img_response = fetch_url(image_url, timeout=15)
-
-                if img_response and img_response.status_code == 200:
-                    content_type = img_response.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            if len(message) > MAX_CAPTION:
-                                message = message[:MAX_CAPTION - 50] + "..."
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en)
-                            self._log_post(url, title_en)
-                            return
-                        except TelegramError as e:
-                            logger.warning(f"Ошибка фото: {e}")
-
-            logger.info("📝 Публикация текстом")
-            text_content = self._truncate_text(content_ru, is_caption=False)
-            text_message = f"*{title_escaped}*\n\n{text_content}"
-            
-            if len(text_message) > MAX_MESSAGE:
-                text_message = text_message[:MAX_MESSAGE - 50] + "..."
-            
-            await self.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text_message,
-                parse_mode='Markdown',
-                disable_web_page_preview=False
-            )
-            logger.info("✅ Опубликовано ТЕКСТОМ")
-
-            self._mark_sent(url, title_en, content_en)
-            self._log_post(url, title_en)
-
-        except TelegramError as e:
-            error_msg = str(e)
-            if "Can't parse entities" in error_msg:
-                try:
-                    text_message = f"{title_ru}\n\n{content_ru}"
-                    if len(text_message) > MAX_MESSAGE:
-                        text_message = text_message[:MAX_MESSAGE - 50] + "..."
-                    await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode=None)
-                    self._mark_sent(url, title_en, content_en)
-                    self._log_post(url, title_en)
-                except Exception as e2:
-                    logger.error(f"❌ Ошибка отправки: {e2}")
-            else:
-                logger.error(f"❌ Ошибка Telegram: {e}")
-        except Exception as e:
-            logger.error(f"❌ Критическая ошибка: {e}")
-
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
-    async def run_once(self):
-        logger.info("=" * 50)
-        logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
-        if IS_MANUAL_RUN:
-            logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА")
-        logger.info("=" * 50)
-
-        news = await self.fetch_news()
-        if not news:
-            logger.info("📭 Новых статей нет")
-            return
-
-        published_count = 0
-        for article in news:
-            if not self._can_post():
-                logger.info(f"⏸️ Лимит, опубликовано {published_count}")
-                break
-            
-            logger.info(f"📤 Публикация {published_count + 1}/{len(news)}")
-            await self.publish(article)
-            published_count += 1
-            
-            if published_count < len(news):
-                if IS_MANUAL_RUN:
-                    await asyncio.sleep(10)
-                else:
-                    await asyncio.sleep(60)
-        
-        logger.info(f"✅ Опубликовано: {published_count}")
-
-    async def run_forever(self):
-        logger.info("🤖 Бот запущен")
-        while True:
-            try:
-                await self.run_once()
-                delay = self._next_delay()
-                logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
-                await asyncio.sleep(delay)
-            except Exception as e:
-                logger.error(f"❌ Ошибка: {e}")
-                await asyncio.sleep(300)
-
-async def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN не задан!")
-        return
-    if not CHANNEL_ID:
-        logger.error("❌ CHANNEL_ID не задан!")
-        return
-
-    bot = NewsBot()
-    if 'GITHUB_ACTIONS' in os.environ:
-        await bot.run_once()
-    else:
-        await bot.run_forever()
-
-if __name__ == '__main__':
-    asyncio.run(main())
+                logger.info(f
