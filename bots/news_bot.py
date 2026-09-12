@@ -59,95 +59,264 @@ EXCLUDED_AUTHORS = [
     'Стив Уотсон', 'Steve Watson',
 ]
 
-# ========== ИСКЛЮЧАЕМЫЕ ФРАЗЫ В АБЗАЦАХ ==========
-EXCLUDED_PHRASES = [
-    'прокрутите вниз', 'scroll down', 'scroll to read',
-    'чтобы прочитать', 'to read this article',
-    'перевод ии', 'ai translation', 'machine translation',
-    'на корейском языке', 'in korean', 'in english',
-    'читайте также', 'read also', 'see also',
-    'подписывайтесь', 'subscribe', 'follow us',
-    'поделиться', 'share this', 'share on',
-    'источник:', 'source:', 'original article',
-    'оригинал статьи', 'read the original',
-]
-
-# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
-def translate_with_fallback(text: str) -> str:
-    """Перевод текста с несколькими методами"""
-    if not text or len(text) < 3:
-        return text
-    
-    if re.search('[а-яА-Я]', text):
-        return text
-    
-    text_to_translate = text[:3000] if len(text) > 3000 else text
-    
-    # ===== МЕТОД 1: Google Translate =====
-    try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx',
-            'sl': 'en',
-            'tl': 'ru',
-            'dt': 't',
-            'q': text_to_translate
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ Google Translate: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"Google Translate ошибка: {e}")
-    
-    # ===== МЕТОД 2: MyMemory =====
-    try:
-        url = "https://api.mymemory.translated.net/get"
-        params = {
-            'q': text_to_translate[:2000],
-            'langpair': 'en|ru',
-            'de': 'your_email@example.com'
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'responseData' in data and 'translatedText' in data['responseData']:
-                result = data['responseData']['translatedText']
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ MyMemory: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"MyMemory ошибка: {e}")
-    
-    # ===== МЕТОД 3: LibreTranslate =====
-    try:
-        url = "https://translate.argosopentech.com/translate"
-        payload = {
-            'q': text_to_translate[:2000],
-            'source': 'en',
-            'target': 'ru',
-            'format': 'text'
-        }
-        response = requests.post(url, json=payload, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'translatedText' in data:
-                result = data['translatedText']
-                if result and re.search('[а-яА-Я]', result):
-                    logger.info(f"✅ LibreTranslate: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"LibreTranslate ошибка: {e}")
-    
-    # ===== МЕТОД 4: Словарь =====
-    # ... (оставляем как было)
-    
-    logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
-    return text
+# ========== СЛОВАРЬ ДЛЯ ПЕРЕВОДА ==========
+COMMON_WORDS = {
+    'ukraine': 'Украина', 'ukrainian': 'украинский',
+    'russia': 'Россия', 'russian': 'российский',
+    'us': 'США', 'america': 'Америка', 'american': 'американский',
+    'china': 'Китай', 'chinese': 'китайский',
+    'europe': 'Европа', 'european': 'европейский',
+    'brics': 'БРИКС',
+    'nato': 'НАТО',
+    'israel': 'Израиль', 'israeli': 'израильский',
+    'palestine': 'Палестина', 'palestinian': 'палестинский',
+    'iran': 'Иран', 'iranian': 'иранский',
+    'turkey': 'Турция', 'turkish': 'турецкий',
+    'saudi': 'Саудовская Аравия',
+    'syria': 'Сирия', 'syrian': 'сирийский',
+    'lebanon': 'Ливан', 'lebanese': 'ливанский',
+    'egypt': 'Египет', 'egyptian': 'египетский',
+    'germany': 'Германия', 'german': 'немецкий',
+    'france': 'Франция', 'french': 'французский',
+    'britain': 'Британия', 'british': 'британский',
+    'hungary': 'Венгрия', 'hungarian': 'венгерский',
+    'poland': 'Польша', 'polish': 'польский',
+    'belgium': 'Бельгия', 'belgian': 'бельгийский',
+    'canada': 'Канада', 'canadian': 'канадский',
+    'mexico': 'Мексика', 'mexican': 'мексиканский',
+    'india': 'Индия', 'indian': 'индийский',
+    'brazil': 'Бразилия', 'brazilian': 'бразильский',
+    'argentina': 'Аргентина',
+    'venezuela': 'Венесуэла',
+    'colombia': 'Колумбия',
+    'australia': 'Австралия',
+    'japan': 'Япония', 'japanese': 'японский',
+    'korea': 'Корея', 'korean': 'корейский',
+    'moscow': 'Москва',
+    'kiev': 'Киев',
+    'washington': 'Вашингтон',
+    'beijing': 'Пекин',
+    'london': 'Лондон',
+    'paris': 'Париж',
+    'berlin': 'Берлин',
+    'budapest': 'Будапешт',
+    'ankara': 'Анкара',
+    'tehran': 'Тегеран',
+    'riyadh': 'Эр-Рияд',
+    'military': 'военный', 'army': 'армия', 'defense': 'оборона',
+    'war': 'война', 'conflict': 'конфликт', 'crisis': 'кризис',
+    'peace': 'мир', 'agreement': 'соглашение', 'deal': 'сделка',
+    'sanctions': 'санкции', 'sanction': 'санкции',
+    'economy': 'экономика', 'economic': 'экономический',
+    'trade': 'торговля', 'tariff': 'пошлина', 'tariffs': 'пошлины',
+    'oil': 'нефть', 'gas': 'газ', 'energy': 'энергетика',
+    'nuclear': 'ядерный', 'weapons': 'вооружения',
+    'missile': 'ракета', 'missiles': 'ракеты',
+    'drone': 'беспилотник', 'drones': 'беспилотники',
+    'attack': 'атака', 'strike': 'удар',
+    'security': 'безопасность',
+    'intelligence': 'разведка',
+    'president': 'президент', 'prime minister': 'премьер-министр',
+    'minister': 'министр', 'official': 'официальный',
+    'government': 'правительство',
+    'parliament': 'парламент',
+    'election': 'выборы', 'elections': 'выборы',
+    'party': 'партия',
+    'court': 'суд',
+    'police': 'полиция',
+    'bank': 'банк', 'banks': 'банки',
+    'market': 'рынок', 'markets': 'рынки',
+    'stock': 'акции', 'stocks': 'акции',
+    'bitcoin': 'биткойн',
+    'crypto': 'криптовалюта',
+    'strategy': 'стратегия', 'strategic': 'стратегический',
+    'global': 'глобальный', 'international': 'международный',
+    'national': 'национальный',
+    'foreign': 'внешний',
+    'domestic': 'внутренний',
+    'public': 'общественный',
+    'private': 'частный',
+    'company': 'компания', 'companies': 'компании',
+    'corporation': 'корпорация',
+    'inflation': 'инфляция',
+    'recession': 'рецессия',
+    'growth': 'рост',
+    'investment': 'инвестиции',
+    'investor': 'инвестор',
+    'profit': 'прибыль',
+    'loss': 'убыток',
+    'debt': 'долг',
+    'budget': 'бюджет',
+    'tax': 'налог', 'taxes': 'налоги',
+    'spending': 'расходы',
+    'funds': 'средства',
+    'billion': 'миллиард',
+    'trillion': 'триллион',
+    'million': 'миллион',
+    'percent': 'процент',
+    'rate': 'ставка',
+    'jobs': 'рабочие места',
+    'workers': 'работники',
+    'labor': 'труд',
+    'union': 'союз',
+    'protest': 'протест',
+    'protesters': 'протестующие',
+    'prison': 'тюрьма',
+    'justice': 'правосудие',
+    'law': 'закон',
+    'legal': 'юридический',
+    'rights': 'права',
+    'human rights': 'права человека',
+    'freedom': 'свобода',
+    'democracy': 'демократия',
+    'democratic': 'демократический',
+    'republican': 'республиканский',
+    'liberal': 'либеральный',
+    'conservative': 'консервативный',
+    'socialist': 'социалистический',
+    'communist': 'коммунистический',
+    'reform': 'реформа',
+    'revolution': 'революция',
+    'change': 'изменение',
+    'new': 'новый',
+    'old': 'старый',
+    'first': 'первый',
+    'last': 'последний',
+    'big': 'большой',
+    'small': 'маленький',
+    'high': 'высокий',
+    'low': 'низкий',
+    'fast': 'быстрый',
+    'slow': 'медленный',
+    'hard': 'жесткий',
+    'soft': 'мягкий',
+    'good': 'хороший',
+    'bad': 'плохой',
+    'great': 'великий',
+    'terrible': 'ужасный',
+    'important': 'важный',
+    'critical': 'критический',
+    'major': 'крупный',
+    'minor': 'малый',
+    'possible': 'возможный',
+    'impossible': 'невозможный',
+    'likely': 'вероятный',
+    'unlikely': 'маловероятный',
+    'certain': 'определенный',
+    'uncertain': 'неопределенный',
+    'clear': 'ясный',
+    'unclear': 'неясный',
+    'open': 'открытый',
+    'closed': 'закрытый',
+    'free': 'свободный',
+    'controlled': 'контролируемый',
+    'independent': 'независимый',
+    'sovereign': 'суверенный',
+    'territory': 'территория',
+    'border': 'граница',
+    'region': 'регион',
+    'city': 'город',
+    'capital': 'столица',
+    'province': 'провинция',
+    'state': 'государство',
+    'country': 'страна',
+    'nation': 'нация',
+    'people': 'люди',
+    'population': 'население',
+    'citizen': 'гражданин',
+    'refugee': 'беженец',
+    'migrant': 'мигрант',
+    'immigrant': 'иммигрант',
+    'student': 'студент',
+    'teacher': 'учитель',
+    'doctor': 'врач',
+    'nurse': 'медсестра',
+    'engineer': 'инженер',
+    'scientist': 'ученый',
+    'researcher': 'исследователь',
+    'writer': 'писатель',
+    'artist': 'художник',
+    'musician': 'музыкант',
+    'actor': 'актер',
+    'director': 'режиссер',
+    'producer': 'продюсер',
+    'manager': 'менеджер',
+    'chief': 'глава',
+    'leader': 'лидер',
+    'opposition': 'оппозиция',
+    'coalition': 'коалиция',
+    'faction': 'фракция',
+    'movement': 'движение',
+    'campaign': 'кампания',
+    'initiative': 'инициатива',
+    'proposal': 'предложение',
+    'resolution': 'резолюция',
+    'declaration': 'декларация',
+    'statement': 'заявление',
+    'announcement': 'объявление',
+    'decision': 'решение',
+    'action': 'действие',
+    'response': 'ответ',
+    'reaction': 'реакция',
+    'support': 'поддержка',
+    'criticism': 'критика',
+    'praise': 'похвала',
+    'condemnation': 'осуждение',
+    'approval': 'одобрение',
+    'rejection': 'отклонение',
+    'success': 'успех',
+    'failure': 'неудача',
+    'victory': 'победа',
+    'defeat': 'поражение',
+    'progress': 'прогресс',
+    'setback': 'неудача',
+    'breakthrough': 'прорыв',
+    'collapse': 'крах',
+    'resignation': 'отставка',
+    'appointment': 'назначение',
+    'vote': 'голосование',
+    'ballot': 'бюллетень',
+    'referendum': 'референдум',
+    'ai': 'искусственный интеллект',
+    'robot': 'робот',
+    'automation': 'автоматизация',
+    'cyber': 'кибер',
+    'data': 'данные',
+    'research': 'исследование',
+    'development': 'развитие',
+    'program': 'программа',
+    'project': 'проект',
+    'plan': 'план',
+    'meeting': 'встреча',
+    'summit': 'саммит',
+    'conference': 'конференция',
+    'negotiations': 'переговоры',
+    'talks': 'переговоры',
+    'dialogue': 'диалог',
+    'partnership': 'партнерство',
+    'alliance': 'альянс',
+    'cooperation': 'сотрудничество',
+    'relations': 'отношения',
+    'emergency': 'чрезвычайная ситуация',
+    'disaster': 'катастрофа',
+    'accident': 'авария',
+    'pandemic': 'пандемия',
+    'health': 'здоровье',
+    'vaccine': 'вакцина',
+    'virus': 'вирус',
+    'climate': 'климат',
+    'environment': 'окружающая среда',
+    'pollution': 'загрязнение',
+    'renewable': 'возобновляемый',
+    'solar': 'солнечный',
+    'wind': 'ветер',
+    'coal': 'уголь',
+    'mining': 'добыча',
+    'agriculture': 'сельское хозяйство',
+    'food': 'еда',
+    'water': 'вода',
+    'space': 'космос',
+}
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_local_time():
@@ -215,33 +384,17 @@ def extract_image_url(soup, base_url: str):
     return None
 
 def clean_title(title: str):
-    """Очищает заголовок от лишних символов и проверяет на валидность"""
     if not title:
         return ""
-    
-    # Удаляем эмодзи и спецсимволы
     title = re.sub(r'^#+\s*', '', title)
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
     title = re.sub(r'[„“”"\'`]', '', title)
     title = re.sub(r'\s+', ' ', title).strip()
-    
-    # Проверяем на невалидные заголовки (набор дат, цифр и т.д.)
-    if re.match(r'^[0-9\s.,;:!?\-–—]+$', title):
+    if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
         return ""
-    
-    # Проверяем на заголовки с большим количеством дат/месяцев
-    months_pattern = r'(январь|февраль|март|апрель|май|июнь|июль|август|сентябрь|октябрь|ноябрь|декабрь|january|february|march|april|may|june|july|august|september|october|november|december)'
-    if len(re.findall(months_pattern, title, re.IGNORECASE)) > 2:
-        return ""
-    
-    # Проверяем на заголовки с большим количеством годов
-    if len(re.findall(r'\b20[0-9]{2}\b', title)) > 3:
-        return ""
-    
     return title.strip()
 
 def is_excluded_author(text: str):
-    """Проверяет, содержит ли текст имя исключаемого автора"""
     if not text:
         return False
     for name in EXCLUDED_AUTHORS:
@@ -249,30 +402,111 @@ def is_excluded_author(text: str):
             return True
     return False
 
-def is_excluded_phrase(text: str):
-    """Проверяет, содержит ли текст исключаемую фразу"""
-    if not text:
-        return False
-    text_lower = text.lower()
-    for phrase in EXCLUDED_PHRASES:
-        if phrase.lower() in text_lower:
-            return True
-    return False
-
-def contains_link(text: str):
-    """Проверяет, содержит ли текст ссылку"""
-    if not text:
-        return False
-    # Проверяем на URL
-    if re.search(r'https?://', text):
-        return True
-    # Проверяем на email
-    if re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text):
-        return True
-    # Проверяем на доменные имена
-    if re.search(r'\b[a-zA-Z0-9-]+\.(com|org|net|ru|io|co|uk|de|fr|info|biz|tv|me)\b', text):
-        return True
-    return False
+# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК С ДОПОЛНИТЕЛЬНЫМИ СЕРВИСАМИ ==========
+def translate_with_fallback(text: str) -> str:
+    """Перевод текста с несколькими методами"""
+    if not text or len(text) < 3:
+        return text
+    
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    text_to_translate = text[:3000] if len(text) > 3000 else text
+    
+    # ===== МЕТОД 1: Google Translate =====
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'en',
+            'tl': 'ru',
+            'dt': 't',
+            'q': text_to_translate
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info(f"✅ Google Translate: {len(result)} символов")
+                    return result
+    except Exception as e:
+        logger.warning(f"Google Translate ошибка: {e}")
+    
+    # ===== МЕТОД 2: MyMemory =====
+    try:
+        url = "https://api.mymemory.translated.net/get"
+        params = {
+            'q': text_to_translate[:2000],
+            'langpair': 'en|ru',
+            'de': 'a1b2c3d4e5f6g7h8@example.com'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and 'responseData' in data and 'translatedText' in data['responseData']:
+                result = data['responseData']['translatedText']
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info(f"✅ MyMemory: {len(result)} символов")
+                    return result
+    except Exception as e:
+        logger.warning(f"MyMemory ошибка: {e}")
+    
+    # ===== МЕТОД 3: LibreTranslate (несколько серверов) =====
+    libretranslate_servers = [
+        "https://translate.argosopentech.com/translate",
+        "https://libretranslate.de/translate",
+        "https://translate.terraprint.co/translate",
+        "https://lt.vern.cc/translate",
+    ]
+    for server in libretranslate_servers:
+        try:
+            payload = {
+                'q': text_to_translate[:2000],
+                'source': 'en',
+                'target': 'ru',
+                'format': 'text'
+            }
+            response = requests.post(server, json=payload, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if data and 'translatedText' in data:
+                    result = data['translatedText']
+                    if result and re.search('[а-яА-Я]', result):
+                        logger.info(f"✅ LibreTranslate ({server.split('/')[2]}): {len(result)} символов")
+                        return result
+        except Exception as e:
+            logger.warning(f"LibreTranslate {server} ошибка: {e}")
+    
+    # ===== МЕТОД 4: Lingva Translate =====
+    try:
+        url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text_to_translate[:2000])}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and 'translation' in data:
+                result = data['translation']
+                if result and re.search('[а-яА-Я]', result):
+                    logger.info(f"✅ Lingva: {len(result)} символов")
+                    return result
+    except Exception as e:
+        logger.warning(f"Lingva ошибка: {e}")
+    
+    # ===== МЕТОД 5: Словарь =====
+    try:
+        result = text
+        for eng, rus in COMMON_WORDS.items():
+            pattern = r'\b' + re.escape(eng) + r'\b'
+            result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
+        if result != text and re.search('[а-яА-Я]', result):
+            logger.info(f"✅ Словарь: {len(result)} символов")
+            return result
+    except Exception as e:
+        logger.warning(f"Словарь ошибка: {e}")
+    
+    logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
+    return text
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -471,12 +705,10 @@ class NewsBot:
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
-                # Пропускаем видео
                 if re.search(r'(video|видео|VIDEO)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео '{title[:50]}...'")
                     continue
                 
-                # Пропускаем популярные статьи
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
@@ -550,22 +782,9 @@ class NewsBot:
                 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    
-                    # Пропускаем абзацы с именем автора
                     if is_excluded_author(text):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
-                    
-                    # Пропускаем абзацы с исключаемыми фразами
-                    if is_excluded_phrase(text):
-                        logger.info(f"⏭️ Пропущен абзац с исключаемой фразой")
-                        continue
-                    
-                    # Пропускаем абзацы со ссылками
-                    if contains_link(text):
-                        logger.info(f"⏭️ Пропущен абзац со ссылкой")
-                        continue
-                    
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
@@ -574,14 +793,8 @@ class NewsBot:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
-                    
                     if is_excluded_author(text):
                         continue
-                    if is_excluded_phrase(text):
-                        continue
-                    if contains_link(text):
-                        continue
-                    
                     if len(text) > 40 and not text.startswith('Read more'):
                         if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
                             content_parts.append(text)
