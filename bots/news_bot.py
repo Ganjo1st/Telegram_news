@@ -402,9 +402,8 @@ def is_excluded_author(text: str):
             return True
     return False
 
-# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК С ДОПОЛНИТЕЛЬНЫМИ СЕРВИСАМИ ==========
+# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
 def translate_with_fallback(text: str) -> str:
-    """Перевод текста с несколькими методами"""
     if not text or len(text) < 3:
         return text
     
@@ -413,7 +412,7 @@ def translate_with_fallback(text: str) -> str:
     
     text_to_translate = text[:3000] if len(text) > 3000 else text
     
-    # ===== МЕТОД 1: Google Translate =====
+    # Google Translate
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
@@ -434,7 +433,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"Google Translate ошибка: {e}")
     
-    # ===== МЕТОД 2: MyMemory =====
+    # MyMemory
     try:
         url = "https://api.mymemory.translated.net/get"
         params = {
@@ -453,7 +452,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
     
-    # ===== МЕТОД 3: LibreTranslate (несколько серверов) =====
+    # LibreTranslate
     libretranslate_servers = [
         "https://translate.argosopentech.com/translate",
         "https://libretranslate.de/translate",
@@ -479,7 +478,7 @@ def translate_with_fallback(text: str) -> str:
         except Exception as e:
             logger.warning(f"LibreTranslate {server} ошибка: {e}")
     
-    # ===== МЕТОД 4: Lingva Translate =====
+    # Lingva
     try:
         url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text_to_translate[:2000])}"
         response = requests.get(url, timeout=10)
@@ -493,7 +492,7 @@ def translate_with_fallback(text: str) -> str:
     except Exception as e:
         logger.warning(f"Lingva ошибка: {e}")
     
-    # ===== МЕТОД 5: Словарь =====
+    # Словарь
     try:
         result = text
         for eng, rus in COMMON_WORDS.items():
@@ -704,6 +703,11 @@ class NewsBot:
             
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
+                
+                # ========== ИСКЛЮЧАЕМ "Избранные статьи:" ==========
+                if re.search(r'(избранные статьи|featured articles|selected articles)', title, re.IGNORECASE):
+                    logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
+                    continue
                 
                 if re.search(r'(video|видео|VIDEO)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео '{title[:50]}...'")
