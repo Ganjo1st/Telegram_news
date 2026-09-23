@@ -402,6 +402,35 @@ def is_excluded_author(text: str):
             return True
     return False
 
+def contains_link(text: str):
+    """Проверяет, содержит ли текст ссылку"""
+    if not text:
+        return False
+    if re.search(r'https?://', text):
+        return True
+    if re.search(r't\.co/|t\.me/|bit\.ly|goo\.gl|tinyurl', text, re.IGNORECASE):
+        return True
+    if re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text):
+        return True
+    if re.search(r'\b[a-zA-Z0-9-]+\.(com|org|net|ru|io|co|uk|de|fr|info|biz|tv|me|es|it)\b', text):
+        return True
+    return False
+
+def is_foreign_text(text: str) -> bool:
+    """Проверяет, содержит ли текст иностранные символы (испанский, французский, немецкий и т.д.)"""
+    if not text:
+        return False
+    # Ищем специфические символы иностранных языков
+    foreign_chars = re.findall(r'[áéíóúñü¿¡àèìòùâêîôûäëïöüçßœæ]', text, re.IGNORECASE)
+    # Если больше 3 таких символов — считаем иностранным
+    if len(foreign_chars) > 3:
+        return True
+    # Если текст содержит много испанских/французских слов — тоже считаем иностранным
+    foreign_words = re.findall(r'\b(el|la|los|las|de|del|en|con|por|para|una|uno|este|esta|como|pero|más|sin|sobre|entre|cuando|donde|qué|quién|también|desde|hasta|hacia|según|tras|durante|contra|mediante)\b', text, re.IGNORECASE)
+    if len(foreign_words) > 5:
+        return True
+    return False
+
 # ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
 def translate_with_fallback(text: str) -> str:
     if not text or len(text) < 3:
@@ -704,13 +733,14 @@ class NewsBot:
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
-                # ========== ИСКЛЮЧАЕМ "Избранные статьи:" ==========
+                # Исключаем "Избранные статьи:"
                 if re.search(r'(избранные статьи|featured articles|selected articles)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
                 
-                if re.search(r'(video|видео|VIDEO)', title, re.IGNORECASE):
-                    logger.info(f"⏭️ {source_name}: пропущено видео '{title[:50]}...'")
+                # ========== ПРОПУСКАЕМ ВИДЕО-СТАТЬИ (включая "СМОТРИТЕ", "WATCH") ==========
+                if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b', title, re.IGNORECASE):
+                    logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
                 
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
@@ -786,9 +816,21 @@ class NewsBot:
                 
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    
                     if is_excluded_author(text):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
+                    
+                    # Пропускаем абзацы со ссылками
+                    if contains_link(text):
+                        logger.info(f"⏭️ Пропущен абзац со ссылкой")
+                        continue
+                    
+                    # Пропускаем абзацы на иностранном языке
+                    if is_foreign_text(text):
+                        logger.info(f"⏭️ Пропущен абзац на иностранном языке")
+                        continue
+                    
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
@@ -797,8 +839,14 @@ class NewsBot:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
+                    
                     if is_excluded_author(text):
                         continue
+                    if contains_link(text):
+                        continue
+                    if is_foreign_text(text):
+                        continue
+                    
                     if len(text) > 40 and not text.startswith('Read more'):
                         if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
                             content_parts.append(text)
