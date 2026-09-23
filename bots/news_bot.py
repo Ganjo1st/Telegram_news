@@ -325,14 +325,9 @@ def get_local_time():
 def unescape_html(text: str) -> str:
     """Декодирует HTML-entities: &#10; → \n, &amp; → &, &quot; → " и т.д."""
     if not text:
-        return text
-    # Числовые entity (&#10; → \n)
-    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-    # Hex-entity (&#x0A; → \n)
+        return text    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
     text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
-    # Именованные entity
     text = html_module.unescape(text)
-    # Убираем лишние пробелы и повторные переводы строк
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
@@ -445,11 +440,79 @@ def is_mixed_translation(text: str) -> bool:
     """Проверяет, есть ли смесь русского и английского в переводе"""
     if not text:
         return False
-    ru_words = len(re.findall(r'\b[а-яА-ЯёЁ]{3,}\b', text))
-    en_words = len(re.findall(r'\b[a-zA-Z]{4,}\b', text))
-    return en_words >= 2 and ru_words >= 2 and en_words / max(ru_words, 1) > 0.15
+    
+    en_words = re.findall(r'\b[a-zA-Z]{3,}\b', text)
+    ru_words = re.findall(r'\b[а-яА-ЯёЁ]{3,}\b', text)
+    
+    allowed_en = {
+        'EU', 'US', 'UN', 'NATO', 'BRICS', 'AI', 'IT', 'GDP', 'CEO', 'USA', 'UK',
+        'CIA', 'FBI', 'NASA', 'WHO', 'IMF', 'OPEC',
+        'Biden', 'Trump', 'Putin', 'Zelensky', 'Netanyahu', 'Merkel', 'Macron',
+        'Gates', 'Musk', 'Xi', 'Kim', 'Erdogan', 'Khamenei',
+        'Iran', 'Iraq', 'Syria', 'Israel', 'Palestine', 'Hamas', 'Hezbollah',
+        'Telegram', 'Google', 'Microsoft', 'Apple', 'Meta', 'Facebook', 'Twitter',
+    }
+    en_words = [w for w in en_words if w not in allowed_en and w.upper() != w]
+    
+    if len(en_words) >= 1:
+        real_en = [w for w in en_words if w.lower() not in COMMON_WORDS]
+        if real_en:
+            return True
+    
+    return False
 
-# ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
+def is_bad_title(title: str) -> bool:
+    """Строгая проверка заголовка — есть ли в нём английские слова"""
+    if not title:
+        return True
+    
+    allowed_en = {
+        'EU', 'US', 'UN', 'NATO', 'BRICS', 'AI', 'IT', 'GDP', 'CEO', 'USA', 'UK',
+        'CIA', 'FBI', 'NASA', 'WHO', 'IMF', 'OPEC',
+        'Biden', 'Trump', 'Putin', 'Zelensky', 'Netanyahu', 'Merkel', 'Macron',
+        'Gates', 'Musk', 'Xi', 'Kim', 'Erdogan', 'Khamenei',
+        'Iran', 'Iraq', 'Syria', 'Israel', 'Palestine', 'Hamas', 'Hezbollah',
+        'Telegram', 'Google', 'Microsoft', 'Apple', 'Meta', 'Facebook', 'Twitter',
+    }
+    
+    en_words = re.findall(r'\b[a-zA-Z]{3,}\b', title)
+    en_words = [w for w in en_words if w not in allowed_en and w.upper() != w]
+    
+    if len(en_words) >= 2:
+        return True
+    if len(en_words) == 1 and en_words[0].lower() not in COMMON_WORDS:
+        return True
+    
+    return False
+
+# ========== ПЕРЕВОДЧИКИ ==========
+def translate_google_direct(text: str) -> str:
+    """Принудительный перевод только через Google Translate"""
+    if not text or len(text) < 3:
+        return text
+    if re.search('[а-яА-Я]', text):
+        return text
+    
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'en',
+            'tl': 'ru',
+            'dt': 't',
+            'q': text[:1500]
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
+                if result:
+                    return result
+    except Exception as e:
+        logger.warning(f"Google direct ошибка: {e}")
+    return text
+
 def translate_with_fallback(text: str) -> str:
     if not text or len(text) < 3:
         return text
@@ -457,9 +520,7 @@ def translate_with_fallback(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
     
-    # Декодируем HTML-entities до перевода
     text = unescape_html(text)
-    
     text_to_translate = text[:3000] if len(text) > 3000 else text
     
     # Google Translate
@@ -481,8 +542,6 @@ def translate_with_fallback(text: str) -> str:
                     result = unescape_html(result)
                     logger.info(f"✅ Google Translate: {len(result)} символов")
                     return result
-                elif result and is_mixed_translation(result):
-                    logger.warning(f"⚠️ Google Translate дал смешанный перевод, пробуем следующий...")
     except Exception as e:
         logger.warning(f"Google Translate ошибка: {e}")
     
@@ -503,8 +562,6 @@ def translate_with_fallback(text: str) -> str:
                     result = unescape_html(result)
                     logger.info(f"✅ MyMemory: {len(result)} символов")
                     return result
-                elif result and is_mixed_translation(result):
-                    logger.warning(f"⚠️ MyMemory дал смешанный перевод, пробуем следующий...")
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
     
@@ -985,10 +1042,22 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             
-            # Перевод заголовка — с декодированием HTML и проверкой на смешанный перевод
+            # Перевод заголовка
             title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
             title_ru = unescape_html(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_en
+
+            # Если заголовок смешанный — пробуем принудительно через Google
+            if is_bad_title(title_ru):
+                logger.warning(f"⚠️ Заголовок смешанный, повторный перевод: {title_ru[:80]}...")
+                title_retry = await loop.run_in_executor(None, translate_google_direct, title_en)
+                title_retry = unescape_html(title_retry)
+                title_retry = clean_title(title_retry)
+                if title_retry and not is_bad_title(title_retry):
+                    title_ru = title_retry
+                    logger.info(f"✅ Повторный перевод удался")
+                else:
+                    logger.warning(f"⚠️ Повторный перевод не помог, оставляем как есть")
 
             # Перевод контента
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
@@ -1000,14 +1069,13 @@ class NewsBot:
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
             
-            # Финальная очистка от HTML-entities
             content_ru = unescape_html(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
 
             title_clean = clean_title(title_ru) or title_ru
-            title_escaped = html.escape(title_clean)
+            title_escaped = html_module.escape(title_clean)
             
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
