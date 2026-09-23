@@ -325,9 +325,14 @@ def get_local_time():
 def unescape_html(text: str) -> str:
     """Декодирует HTML-entities: &#10; → \n, &amp; → &, &quot; → " и т.д."""
     if not text:
-        return text    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
+        return text
+    # Числовые entity (&#10; → \n)
+    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
+    # Hex-entity (&#x0A; → \n)
     text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
+    # Именованные entity
     text = html_module.unescape(text)
+    # Убираем лишние пробелы и повторные переводы строк
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
