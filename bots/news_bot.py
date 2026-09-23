@@ -12,7 +12,7 @@ import logging
 import asyncio
 import hashlib
 import re
-import html
+import html as html_module
 import random
 import time
 from datetime import datetime, timedelta, timezone
@@ -322,6 +322,21 @@ COMMON_WORDS = {
 def get_local_time():
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
 
+def unescape_html(text: str) -> str:
+    """Декодирует HTML-entities: &#10; → \n, &amp; → &, &quot; → " и т.д."""
+    if not text:
+        return text
+    # Числовые entity (&#10; → \n)
+    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
+    # Hex-entity (&#x0A; → \n)
+    text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
+    # Именованные entity
+    text = html_module.unescape(text)
+    # Убираем лишние пробелы и повторные переводы строк
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
         headers = {
@@ -403,7 +418,6 @@ def is_excluded_author(text: str):
     return False
 
 def contains_link(text: str):
-    """Проверяет, содержит ли текст ссылку"""
     if not text:
         return False
     if re.search(r'https?://', text):
@@ -417,19 +431,23 @@ def contains_link(text: str):
     return False
 
 def is_foreign_text(text: str) -> bool:
-    """Проверяет, содержит ли текст иностранные символы (испанский, французский, немецкий и т.д.)"""
     if not text:
         return False
-    # Ищем специфические символы иностранных языков
     foreign_chars = re.findall(r'[áéíóúñü¿¡àèìòùâêîôûäëïöüçßœæ]', text, re.IGNORECASE)
-    # Если больше 3 таких символов — считаем иностранным
     if len(foreign_chars) > 3:
         return True
-    # Если текст содержит много испанских/французских слов — тоже считаем иностранным
     foreign_words = re.findall(r'\b(el|la|los|las|de|del|en|con|por|para|una|uno|este|esta|como|pero|más|sin|sobre|entre|cuando|donde|qué|quién|también|desde|hasta|hacia|según|tras|durante|contra|mediante)\b', text, re.IGNORECASE)
     if len(foreign_words) > 5:
         return True
     return False
+
+def is_mixed_translation(text: str) -> bool:
+    """Проверяет, есть ли смесь русского и английского в переводе"""
+    if not text:
+        return False
+    ru_words = len(re.findall(r'\b[а-яА-ЯёЁ]{3,}\b', text))
+    en_words = len(re.findall(r'\b[a-zA-Z]{4,}\b', text))
+    return en_words >= 2 and ru_words >= 2 and en_words / max(ru_words, 1) > 0.15
 
 # ========== МНОГОСЛОЙНЫЙ ПЕРЕВОДЧИК ==========
 def translate_with_fallback(text: str) -> str:
@@ -438,6 +456,9 @@ def translate_with_fallback(text: str) -> str:
     
     if re.search('[а-яА-Я]', text):
         return text
+    
+    # Декодируем HTML-entities до перевода
+    text = unescape_html(text)
     
     text_to_translate = text[:3000] if len(text) > 3000 else text
     
@@ -456,9 +477,12 @@ def translate_with_fallback(text: str) -> str:
             data = response.json()
             if data and len(data) > 0:
                 result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result and re.search('[а-яА-Я]', result):
+                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
+                    result = unescape_html(result)
                     logger.info(f"✅ Google Translate: {len(result)} символов")
                     return result
+                elif result and is_mixed_translation(result):
+                    logger.warning(f"⚠️ Google Translate дал смешанный перевод, пробуем следующий...")
     except Exception as e:
         logger.warning(f"Google Translate ошибка: {e}")
     
@@ -475,9 +499,12 @@ def translate_with_fallback(text: str) -> str:
             data = response.json()
             if data and 'responseData' in data and 'translatedText' in data['responseData']:
                 result = data['responseData']['translatedText']
-                if result and re.search('[а-яА-Я]', result):
+                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
+                    result = unescape_html(result)
                     logger.info(f"✅ MyMemory: {len(result)} символов")
                     return result
+                elif result and is_mixed_translation(result):
+                    logger.warning(f"⚠️ MyMemory дал смешанный перевод, пробуем следующий...")
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
     
@@ -501,7 +528,8 @@ def translate_with_fallback(text: str) -> str:
                 data = response.json()
                 if data and 'translatedText' in data:
                     result = data['translatedText']
-                    if result and re.search('[а-яА-Я]', result):
+                    if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
+                        result = unescape_html(result)
                         logger.info(f"✅ LibreTranslate ({server.split('/')[2]}): {len(result)} символов")
                         return result
         except Exception as e:
@@ -515,7 +543,8 @@ def translate_with_fallback(text: str) -> str:
             data = response.json()
             if data and 'translation' in data:
                 result = data['translation']
-                if result and re.search('[а-яА-Я]', result):
+                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
+                    result = unescape_html(result)
                     logger.info(f"✅ Lingva: {len(result)} символов")
                     return result
     except Exception as e:
@@ -528,13 +557,14 @@ def translate_with_fallback(text: str) -> str:
             pattern = r'\b' + re.escape(eng) + r'\b'
             result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
         if result != text and re.search('[а-яА-Я]', result):
+            result = unescape_html(result)
             logger.info(f"✅ Словарь: {len(result)} символов")
             return result
     except Exception as e:
         logger.warning(f"Словарь ошибка: {e}")
     
     logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
-    return text
+    return unescape_html(text)
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -733,12 +763,10 @@ class NewsBot:
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
                 
-                # Исключаем "Избранные статьи:"
                 if re.search(r'(избранные статьи|featured articles|selected articles)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
                 
-                # ========== ПРОПУСКАЕМ ВИДЕО-СТАТЬИ (включая "СМОТРИТЕ", "WATCH") ==========
                 if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
@@ -821,12 +849,10 @@ class NewsBot:
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
                     
-                    # Пропускаем абзацы со ссылками
                     if contains_link(text):
                         logger.info(f"⏭️ Пропущен абзац со ссылкой")
                         continue
                     
-                    # Пропускаем абзацы на иностранном языке
                     if is_foreign_text(text):
                         logger.info(f"⏭️ Пропущен абзац на иностранном языке")
                         continue
@@ -856,6 +882,7 @@ class NewsBot:
                 return None
 
             content = '\n\n'.join(content_parts[:20])
+            content = unescape_html(content)
             
             if len(content) < 150:
                 logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
@@ -958,16 +985,23 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
             
+            # Перевод заголовка — с декодированием HTML и проверкой на смешанный перевод
             title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
+            title_ru = unescape_html(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_en
 
+            # Перевод контента
             content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
             content_ru = await loop.run_in_executor(None, translate_with_fallback, content_en_truncated)
+            content_ru = unescape_html(content_ru)
             content_ru = content_ru or content_en_truncated
 
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
+            
+            # Финальная очистка от HTML-entities
+            content_ru = unescape_html(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
