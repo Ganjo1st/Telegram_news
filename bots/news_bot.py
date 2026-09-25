@@ -14,7 +14,6 @@ import hashlib
 import re
 import html as html_module
 import random
-import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -47,6 +46,9 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
+# Лимит текста ДО перевода (чтобы переводчик точно справился)
+MAX_TRANSLATE_INPUT = 1500
+
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
 
 # ========== ИСКЛЮЧАЕМЫЕ АВТОРЫ ==========
@@ -60,17 +62,12 @@ EXCLUDED_AUTHORS = [
 ]
 
 # ========== СЛОВАРЬ ДЛЯ ПОСТОБРАБОТКИ ПЕРЕВОДА ==========
-# Словарь для замены оставшихся английских слов в русском тексте
 POST_TRANSLATION_FIXES = {
-    'США': 'США',
     'Spanish': 'испанское',
-    'правительство': 'правительство',
     'extradition': 'экстрадиция',
     'communist': 'коммунистический',
     'centimillionaire': 'мультимиллионер',
-    'Bloomberg': 'Bloomberg',
     'reported': 'сообщил',
-    'court': 'суд',
     'detained': 'задержан',
     'arrest': 'арест',
     'Ibiza': 'Ибица',
@@ -102,7 +99,6 @@ POST_TRANSLATION_FIXES = {
     'modest': 'скромные',
     'hopes': 'надежды',
     'deal': 'сделку',
-    'AI': 'ИИ',
     'While': 'Хотя',
     'provide': 'предоставим',
     'detailed': 'подробный',
@@ -132,7 +128,6 @@ POST_TRANSLATION_FIXES = {
     'unlikely': 'маловероятно',
     'significant': 'значительным',
     'enough': 'достаточно',
-    'provide': 'обеспечить',
     'sustainable': 'устойчивый',
     'boost': 'рост',
     'related': 'связанных',
@@ -144,14 +139,11 @@ POST_TRANSLATION_FIXES = {
     'hours': 'часов',
     'negotiations': 'переговоров',
     'Vice Premier': 'вице-премьером',
-    'new': 'Нью',
-    'York': 'Йорке',
     'said': 'сказал',
     'two sides': 'две стороны',
     'agreed': 'согласились',
     'create': 'создать',
     'called': 'назвал',
-    'US-China': 'США-Китай',
     'dialogue': 'диалог',
     'technology': 'технологии',
     'benefits': 'выгоды',
@@ -166,13 +158,9 @@ def unescape_html(text: str) -> str:
     """Декодирует HTML-entities: &#10; → \n, &amp; → &, &quot; → " и т.д."""
     if not text:
         return text
-    # Числовые entity (&#10; → \n)
     text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-    # Hex-entity (&#x0A; → \n)
     text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
-    # Именованные entity
     text = html_module.unescape(text)
-    # Убираем лишние пробелы и повторные переводы строк
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
@@ -183,22 +171,38 @@ def postprocess_translation(text: str) -> str:
         return text
 
     result = text
-
-    # Сначала многословные фразы (чтобы не разбивались)
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
 
-    # Затем одиночные слова
     single = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' not in k}
     for eng, rus in single.items():
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
 
-    # Убираем возможные двойные пробелы
     result = re.sub(r'\s+', ' ', result).strip()
     return result
+
+def truncate_for_translation(text: str, max_len: int = MAX_TRANSLATE_INPUT) -> str:
+    """Обрезает текст до max_len символов по последнему предложению или пробелу."""
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text.strip()
+
+    # Ищем конец предложения в пределах лимита
+    for punct in ['.', '!', '?']:
+        last = text.rfind(punct, 0, max_len)
+        if last != -1 and last > max_len // 2:
+            return text[:last + 1].strip()
+
+    # Иначе — по последнему пробелу
+    last_space = text.rfind(' ', 0, max_len)
+    if last_space != -1:
+        return text[:last_space].strip()
+
+    return text[:max_len].strip()
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
@@ -304,36 +308,9 @@ def is_foreign_text(text: str) -> bool:
         return True
     return False
 
-def is_mixed_translation(text: str) -> bool:
-    """Проверяет, есть ли смесь русского и английского в переводе"""
-    if not text:
-        return False
-
-    allowed_en = {
-        'EU', 'US', 'UN', 'NATO', 'BRICS', 'AI', 'IT', 'GDP', 'CEO', 'USA', 'UK',
-        'CIA', 'FBI', 'NASA', 'WHO', 'IMF', 'OPEC', 'FBI',
-        'Biden', 'Trump', 'Putin', 'Zelensky', 'Netanyahu', 'Merkel', 'Macron',
-        'Gates', 'Musk', 'Xi', 'Kim', 'Erdogan', 'Khamenei', 'Sanchez',
-        'Iran', 'Iraq', 'Syria', 'Israel', 'Palestine', 'Hamas', 'Hezbollah',
-        'Telegram', 'Google', 'Microsoft', 'Apple', 'Meta', 'Facebook', 'Twitter',
-        'Bloomberg', 'Reuters', 'Cox', 'Chambers', 'Fergie', 'Bessent', 'He Lifeng',
-    }
-
-    en_words = re.findall(r'\b[a-zA-Z]{3,}\b', text)
-    en_words = [w for w in en_words if w not in allowed_en and w.upper() != w]
-
-    if len(en_words) >= 1:
-        real_en = [w for w in en_words if w.lower() not in POST_TRANSLATION_FIXES]
-        if real_en:
-            return True
-
-    return False
-
 def is_bad_title(title: str) -> bool:
-    """Строгая проверка заголовка — есть ли в нём английские слова"""
     if not title:
         return True
-
     allowed_en = {
         'EU', 'US', 'UN', 'NATO', 'BRICS', 'AI', 'IT', 'GDP', 'CEO', 'USA', 'UK',
         'CIA', 'FBI', 'NASA', 'WHO', 'IMF', 'OPEC',
@@ -342,25 +319,17 @@ def is_bad_title(title: str) -> bool:
         'Iran', 'Iraq', 'Syria', 'Israel', 'Palestine', 'Hamas', 'Hezbollah',
         'Telegram', 'Google', 'Microsoft', 'Apple', 'Meta', 'Facebook', 'Twitter',
     }
-
     en_words = re.findall(r'\b[a-zA-Z]{3,}\b', title)
     en_words = [w for w in en_words if w not in allowed_en and w.upper() != w]
-
     if len(en_words) >= 2:
         return True
     if len(en_words) == 1 and en_words[0].lower() not in POST_TRANSLATION_FIXES:
         return True
-
     return False
 
-# ========== ПЕРЕВОДЧИКИ ==========
-def translate_google_direct(text: str) -> str:
-    """Принудительный перевод только через Google Translate"""
-    if not text or len(text) < 3:
-        return text
-    if re.search('[а-яА-Я]', text):
-        return text
-
+# ========== ПЕРЕВОДЧИКИ (для коротких кусков ≤1500 символов) ==========
+def translate_google(text: str) -> str:
+    """Google Translate — основной метод (текст уже ≤1500 символов)."""
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
@@ -368,115 +337,87 @@ def translate_google_direct(text: str) -> str:
             'sl': 'en',
             'tl': 'ru',
             'dt': 't',
-            'q': text[:1500]
+            'q': text
         }
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if data and len(data) > 0:
                 result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result:
+                if result and re.search('[а-яА-Я]', result):
                     return result
     except Exception as e:
-        logger.warning(f"Google direct ошибка: {e}")
-    return text
+        logger.warning(f"Google ошибка: {e}")
+    return None
 
-def translate_with_fallback(text: str) -> str:
-    if not text or len(text) < 3:
-        return text
-
-    if re.search('[а-яА-Я]', text):
-        return text
-
-    text = unescape_html(text)
-    text_to_translate = text[:3000] if len(text) > 3000 else text
-
-    # Google Translate
-    try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx',
-            'sl': 'en',
-            'tl': 'ru',
-            'dt': 't',
-            'q': text_to_translate
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
-                    result = unescape_html(result)
-                    logger.info(f"✅ Google Translate: {len(result)} символов")
-                    return result
-    except Exception as e:
-        logger.warning(f"Google Translate ошибка: {e}")
-
-    # MyMemory
+def translate_mymemory(text: str) -> str:
+    """MyMemory — только для текстов ≤500 символов."""
+    if len(text) > 500:
+        return None
     try:
         url = "https://api.mymemory.translated.net/get"
         params = {
-            'q': text_to_translate[:2000],
+            'q': text,
             'langpair': 'en|ru',
             'de': 'a1b2c3d4e5f6g7h8@example.com'
         }
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if data and 'responseData' in data and 'translatedText' in data['responseData']:
                 result = data['responseData']['translatedText']
-                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
-                    result = unescape_html(result)
-                    logger.info(f"✅ MyMemory: {len(result)} символов")
+                if result and re.search('[а-яА-Я]', result):
                     return result
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
+    return None
 
-    # LibreTranslate
-    libretranslate_servers = [
-        "https://translate.argosopentech.com/translate",
-        "https://libretranslate.de/translate",
-        "https://translate.terraprint.co/translate",
-        "https://lt.vern.cc/translate",
-    ]
-    for server in libretranslate_servers:
-        try:
-            payload = {
-                'q': text_to_translate[:2000],
-                'source': 'en',
-                'target': 'ru',
-                'format': 'text'
-            }
-            response = requests.post(server, json=payload, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if data and 'translatedText' in data:
-                    result = data['translatedText']
-                    if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
-                        result = unescape_html(result)
-                        logger.info(f"✅ LibreTranslate ({server.split('/')[2]}): {len(result)} символов")
-                        return result
-        except Exception as e:
-            logger.warning(f"LibreTranslate {server} ошибка: {e}")
-
-    # Lingva
+def translate_lingva(text: str) -> str:
+    """Lingva Translate — альтернатива Google."""
     try:
-        url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text_to_translate[:2000])}"
-        response = requests.get(url, timeout=10)
+        url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text)}"
+        response = requests.get(url, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if data and 'translation' in data:
                 result = data['translation']
-                if result and re.search('[а-яА-Я]', result) and not is_mixed_translation(result):
-                    result = unescape_html(result)
-                    logger.info(f"✅ Lingva: {len(result)} символов")
+                if result and re.search('[а-яА-Я]', result):
                     return result
     except Exception as e:
         logger.warning(f"Lingva ошибка: {e}")
+    return None
+
+def translate_text(text: str) -> str:
+    """
+    Переводит текст. Текст ДОЛЖЕН быть уже обрезан до 1500 символов.
+    Порядок: Google → MyMemory (если ≤500) → Lingva.
+    """
+    if not text or len(text) < 3:
+        return text
+
+    if re.search('[а-яА-Я]', text):
+        return text
+
+    # 1. Google
+    result = translate_google(text)
+    if result:
+        logger.info(f"✅ Google Translate: {len(result)} символов")
+        return result
+
+    # 2. MyMemory (только короткие тексты)
+    result = translate_mymemory(text)
+    if result:
+        logger.info(f"✅ MyMemory: {len(result)} символов")
+        return result
+
+    # 3. Lingva
+    result = translate_lingva(text)
+    if result:
+        logger.info(f"✅ Lingva: {len(result)} символов")
+        return result
 
     logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
-    return unescape_html(text)
+    return text
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -897,35 +838,35 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # ========== ПЕРЕВОД ЗАГОЛОВКА ==========
-            title_ru = await loop.run_in_executor(None, translate_with_fallback, title_en)
+            # ========== ОБРЕЗАЕМ ТЕКСТ ДО 1500 СИМВОЛОВ, ПОТОМ ПЕРЕВОДИМ ==========
+            title_short = truncate_for_translation(title_en, max_len=300)
+            content_short = truncate_for_translation(content_en, max_len=MAX_TRANSLATE_INPUT)
+
+            logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
+            logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
+
+            # Перевод заголовка
+            title_ru = await loop.run_in_executor(None, translate_text, title_short)
             title_ru = unescape_html(title_ru)
-            title_ru = clean_title(title_ru) or title_ru or title_en
-
-            # Постобработка — заменяем оставшиеся английские слова
             title_ru = postprocess_translation(title_ru)
+            title_ru = clean_title(title_ru) or title_ru or title_short
 
-            # Если заголовок всё ещё смешанный — принудительно через Google
+            # Повторная попытка, если заголовок смешанный
             if is_bad_title(title_ru):
-                logger.warning(f"⚠️ Заголовок смешанный, повторный перевод: {title_ru[:80]}...")
-                title_retry = await loop.run_in_executor(None, translate_google_direct, title_en)
+                logger.warning(f"⚠️ Заголовок смешанный, повторный перевод...")
+                title_retry = await loop.run_in_executor(None, translate_text, title_short)
                 title_retry = unescape_html(title_retry)
                 title_retry = postprocess_translation(title_retry)
                 title_retry = clean_title(title_retry)
                 if title_retry and not is_bad_title(title_retry):
                     title_ru = title_retry
                     logger.info(f"✅ Повторный перевод удался")
-                else:
-                    logger.warning(f"⚠️ Повторный перевод не помог, оставляем как есть")
 
-            # ========== ПЕРЕВОД КОНТЕНТА ==========
-            content_en_truncated = content_en[:4000] if len(content_en) > 4000 else content_en
-            content_ru = await loop.run_in_executor(None, translate_with_fallback, content_en_truncated)
+            # Перевод контента
+            content_ru = await loop.run_in_executor(None, translate_text, content_short)
             content_ru = unescape_html(content_ru)
-            content_ru = content_ru or content_en_truncated
-
-            # Постобработка контента
             content_ru = postprocess_translation(content_ru)
+            content_ru = content_ru or content_short
 
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
