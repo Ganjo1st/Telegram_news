@@ -46,8 +46,11 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# Лимит текста ДО перевода (чтобы переводчик точно справился)
+# Лимит текста ДО перевода
 MAX_TRANSLATE_INPUT = 1500
+
+# Размер куска для перевода (чтобы MyMemory точно справился)
+TRANSLATE_CHUNK_SIZE = 450
 
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
 
@@ -148,6 +151,37 @@ POST_TRANSLATION_FIXES = {
     'technology': 'технологии',
     'benefits': 'выгоды',
     'threats': 'угрозы',
+    'The': 'Этот',
+    'narrative': 'нарратив',
+    'pushed': 'продвигаемый',
+    'certain': 'некоторыми',
+    'pro-war': 'провоенными',
+    'European': 'европейскими',
+    'hard': 'трудно',
+    'imagine': 'представить',
+    'how': 'как',
+    'hackers': 'хакеры',
+    'have': 'украли',
+    'stolen': 'украли',
+    'nearly': 'почти',
+    'million': 'миллионов',
+    'from': 'из',
+    'major': 'крупной',
+    'crypto': 'криптобиржи',
+    'exchange': 'биржи',
+    'Vladimir': 'Владимир',
+    'put': 'поставил',
+    'his': 'свои',
+    'personal': 'личные',
+    'interests': 'интересы',
+    'first': 'на первое место',
+    'wants': 'хочет',
+    'colonize': 'колонизировать',
+    'Brazil': 'Бразилию',
+    'campaign': 'кампания',
+    'age': 'эпоха',
+    'global': 'глобальных',
+    'empires': 'империй',
 }
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -155,7 +189,6 @@ def get_local_time():
     return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
 
 def unescape_html(text: str) -> str:
-    """Декодирует HTML-entities: &#10; → \n, &amp; → &, &quot; → " и т.д."""
     if not text:
         return text
     text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
@@ -166,43 +199,74 @@ def unescape_html(text: str) -> str:
     return text.strip()
 
 def postprocess_translation(text: str) -> str:
-    """Заменяет оставшиеся английские слова на русские после перевода"""
     if not text:
         return text
-
     result = text
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-
     single = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' not in k}
     for eng, rus in single.items():
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
 def truncate_for_translation(text: str, max_len: int = MAX_TRANSLATE_INPUT) -> str:
-    """Обрезает текст до max_len символов по последнему предложению или пробелу."""
     if not text:
         return ""
     if len(text) <= max_len:
         return text.strip()
-
-    # Ищем конец предложения в пределах лимита
     for punct in ['.', '!', '?']:
         last = text.rfind(punct, 0, max_len)
         if last != -1 and last > max_len // 2:
             return text[:last + 1].strip()
-
-    # Иначе — по последнему пробелу
     last_space = text.rfind(' ', 0, max_len)
     if last_space != -1:
         return text[:last_space].strip()
-
     return text[:max_len].strip()
+
+def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
+    """Разбивает текст на куски ≤ max_chunk символов по границам предложений."""
+    if not text:
+        return []
+    if len(text) <= max_chunk:
+        return [text]
+
+    chunks = []
+    current = ""
+
+    # Разбиваем по предложениям
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+
+        # Если предложение само длиннее лимита — режем по словам
+        if len(sent) > max_chunk:
+            words = sent.split(' ')
+            for w in words:
+                if len(current) + len(w) + 1 <= max_chunk:
+                    current = (current + ' ' + w).strip()
+                else:
+                    if current:
+                        chunks.append(current)
+                    current = w
+        else:
+            if len(current) + len(sent) + 1 <= max_chunk:
+                current = (current + ' ' + sent).strip() if current else sent
+            else:
+                if current:
+                    chunks.append(current)
+                current = sent
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
@@ -327,17 +391,13 @@ def is_bad_title(title: str) -> bool:
         return True
     return False
 
-# ========== ПЕРЕВОДЧИКИ (для коротких кусков ≤1500 символов) ==========
+# ========== ПЕРЕВОДЧИКИ ==========
 def translate_google(text: str) -> str:
-    """Google Translate — основной метод (текст уже ≤1500 символов)."""
+    """Google Translate."""
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
-            'client': 'gtx',
-            'sl': 'en',
-            'tl': 'ru',
-            'dt': 't',
-            'q': text
+            'client': 'gtx', 'sl': 'en', 'tl': 'ru', 'dt': 't', 'q': text
         }
         response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
@@ -373,7 +433,7 @@ def translate_mymemory(text: str) -> str:
     return None
 
 def translate_lingva(text: str) -> str:
-    """Lingva Translate — альтернатива Google."""
+    """Lingva Translate."""
     try:
         url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text)}"
         response = requests.get(url, timeout=15)
@@ -387,10 +447,32 @@ def translate_lingva(text: str) -> str:
         logger.warning(f"Lingva ошибка: {e}")
     return None
 
+def translate_chunk(chunk: str) -> tuple:
+    """
+    Переводит один кусок (≤450 символов).
+    Возвращает (перевод, имя_метода).
+    """
+    # 1. Google
+    result = translate_google(chunk)
+    if result:
+        return (result, 'Google')
+
+    # 2. MyMemory (гарантированно работает для ≤500 символов)
+    result = translate_mymemory(chunk)
+    if result:
+        return (result, 'MyMemory')
+
+    # 3. Lingva
+    result = translate_lingva(chunk)
+    if result:
+        return (result, 'Lingva')
+
+    return (chunk, None)
+
 def translate_text(text: str) -> str:
     """
-    Переводит текст. Текст ДОЛЖЕН быть уже обрезан до 1500 символов.
-    Порядок: Google → MyMemory (если ≤500) → Lingva.
+    Переводит текст, разбивая его на куски ≤450 символов.
+    Для каждого куска применяет translate_chunk.
     """
     if not text or len(text) < 3:
         return text
@@ -398,26 +480,27 @@ def translate_text(text: str) -> str:
     if re.search('[а-яА-Я]', text):
         return text
 
-    # 1. Google
-    result = translate_google(text)
-    if result:
-        logger.info(f"✅ Google Translate: {len(result)} символов")
-        return result
+    chunks = split_into_chunks(text, max_chunk=TRANSLATE_CHUNK_SIZE)
+    logger.info(f"  🔪 Разбито на {len(chunks)} кусков")
 
-    # 2. MyMemory (только короткие тексты)
-    result = translate_mymemory(text)
-    if result:
-        logger.info(f"✅ MyMemory: {len(result)} символов")
-        return result
+    translated_parts = []
+    method_stats = {}
 
-    # 3. Lingva
-    result = translate_lingva(text)
-    if result:
-        logger.info(f"✅ Lingva: {len(result)} символов")
-        return result
+    for i, chunk in enumerate(chunks):
+        result, method = translate_chunk(chunk)
+        if method:
+            method_stats[method] = method_stats.get(method, 0) + 1
+            translated_parts.append(result)
+        else:
+            # Не удалось — оставляем оригинал
+            logger.warning(f"  ⚠️ Кусок {i+1}/{len(chunks)} не переведён ({len(chunk)} символов)")
+            translated_parts.append(chunk)
 
-    logger.warning(f"⚠️ Все методы перевода не удались для: {text[:50]}...")
-    return text
+    if method_stats:
+        stats_str = ', '.join(f"{k}: {v}" for k, v in method_stats.items())
+        logger.info(f"  ✅ Методы перевода: {stats_str}")
+
+    return ' '.join(translated_parts)
 
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
@@ -588,18 +671,15 @@ class NewsBot:
     def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
         if len(text) <= max_len:
             return text
-
         for punct in ['.', '!', '?']:
             last = text.rfind(punct, 0, max_len)
             if last != -1 and last > max_len // 2:
                 result = text[:last + 1].strip()
                 if len(result) <= max_len:
                     return result
-
         last_space = text.rfind(' ', 0, max_len)
         if last_space != -1:
             return text[:last_space].strip()
-
         return text[:max_len].strip()
 
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
@@ -838,7 +918,7 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # ========== ОБРЕЗАЕМ ТЕКСТ ДО 1500 СИМВОЛОВ, ПОТОМ ПЕРЕВОДИМ ==========
+            # Обрезаем перед переводом
             title_short = truncate_for_translation(title_en, max_len=300)
             content_short = truncate_for_translation(content_en, max_len=MAX_TRANSLATE_INPUT)
 
@@ -851,7 +931,7 @@ class NewsBot:
             title_ru = postprocess_translation(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_short
 
-            # Повторная попытка, если заголовок смешанный
+            # Повторная попытка если заголовок смешанный
             if is_bad_title(title_ru):
                 logger.warning(f"⚠️ Заголовок смешанный, повторный перевод...")
                 title_retry = await loop.run_in_executor(None, translate_text, title_short)
