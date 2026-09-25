@@ -46,10 +46,7 @@ META_FILE = 'posts_meta.json'
 MAX_CAPTION = 1024
 MAX_MESSAGE = 4096
 
-# Лимит текста ДО перевода
 MAX_TRANSLATE_INPUT = 1500
-
-# Размер куска для перевода (чтобы MyMemory точно справился)
 TRANSLATE_CHUNK_SIZE = 450
 
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
@@ -213,60 +210,44 @@ def postprocess_translation(text: str) -> str:
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
-def truncate_for_translation(text: str, max_len: int = MAX_TRANSLATE_INPUT) -> str:
+def truncate_at_sentence(text: str, max_len: int) -> str:
+    """
+    Обрезает текст до max_len, ВСЕГДА заканчивая на границе предложения.
+    Если в пределах max_len нет конца предложения — возвращает текст до
+    ПРЕДЫДУЩЕГО конца предложения (даже если он короче max_len).
+    Если предложений нет вообще — возвращает пустую строку.
+    """
     if not text:
         return ""
+
+    text = text.strip()
     if len(text) <= max_len:
-        return text.strip()
+        return text
+
+    # Ищем последний знак конца предложения в пределах max_len
+    cut_pos = -1
     for punct in ['.', '!', '?']:
-        last = text.rfind(punct, 0, max_len)
-        if last != -1 and last > max_len // 2:
-            return text[:last + 1].strip()
-    last_space = text.rfind(' ', 0, max_len)
-    if last_space != -1:
-        return text[:last_space].strip()
-    return text[:max_len].strip()
+        # Ищем позицию, где за пунктуацией идёт пробел или конец строки
+        for m in re.finditer(re.escape(punct) + r'(?=\s|$)', text[:max_len + 1]):
+            if m.end() > cut_pos:
+                cut_pos = m.end()
 
-def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
-    """Разбивает текст на куски ≤ max_chunk символов по границам предложений."""
-    if not text:
-        return []
-    if len(text) <= max_chunk:
-        return [text]
+    if cut_pos != -1:
+        return text[:cut_pos].strip()
 
-    chunks = []
-    current = ""
+    # Если в пределах max_len нет ни одного конца предложения,
+    # ищем ПЕРВЫЙ конец предложения ЗА пределами max_len
+    for punct in ['.', '!', '?']:
+        m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
+        if m:
+            end_pos = max_len + m.end()
+            # Если первое предложение слишком длинное (больше 2×max_len) — не берём
+            if end_pos <= max_len * 2:
+                return text[:end_pos].strip()
+            break
 
-    # Разбиваем по предложениям
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-
-    for sent in sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-
-        # Если предложение само длиннее лимита — режем по словам
-        if len(sent) > max_chunk:
-            words = sent.split(' ')
-            for w in words:
-                if len(current) + len(w) + 1 <= max_chunk:
-                    current = (current + ' ' + w).strip()
-                else:
-                    if current:
-                        chunks.append(current)
-                    current = w
-        else:
-            if len(current) + len(sent) + 1 <= max_chunk:
-                current = (current + ' ' + sent).strip() if current else sent
-            else:
-                if current:
-                    chunks.append(current)
-                current = sent
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+    # Совсем нет конца предложения — возвращаем пусто (лучше ничего, чем обрывок)
+    return ""
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
     try:
@@ -393,12 +374,9 @@ def is_bad_title(title: str) -> bool:
 
 # ========== ПЕРЕВОДЧИКИ ==========
 def translate_google(text: str) -> str:
-    """Google Translate."""
     try:
         url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx', 'sl': 'en', 'tl': 'ru', 'dt': 't', 'q': text
-        }
+        params = {'client': 'gtx', 'sl': 'en', 'tl': 'ru', 'dt': 't', 'q': text}
         response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             data = response.json()
@@ -411,16 +389,11 @@ def translate_google(text: str) -> str:
     return None
 
 def translate_mymemory(text: str) -> str:
-    """MyMemory — только для текстов ≤500 символов."""
     if len(text) > 500:
         return None
     try:
         url = "https://api.mymemory.translated.net/get"
-        params = {
-            'q': text,
-            'langpair': 'en|ru',
-            'de': 'a1b2c3d4e5f6g7h8@example.com'
-        }
+        params = {'q': text, 'langpair': 'en|ru', 'de': 'a1b2c3d4e5f6g7h8@example.com'}
         response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             data = response.json()
@@ -433,7 +406,6 @@ def translate_mymemory(text: str) -> str:
     return None
 
 def translate_lingva(text: str) -> str:
-    """Lingva Translate."""
     try:
         url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text)}"
         response = requests.get(url, timeout=15)
@@ -448,35 +420,56 @@ def translate_lingva(text: str) -> str:
     return None
 
 def translate_chunk(chunk: str) -> tuple:
-    """
-    Переводит один кусок (≤450 символов).
-    Возвращает (перевод, имя_метода).
-    """
-    # 1. Google
     result = translate_google(chunk)
     if result:
         return (result, 'Google')
-
-    # 2. MyMemory (гарантированно работает для ≤500 символов)
     result = translate_mymemory(chunk)
     if result:
         return (result, 'MyMemory')
-
-    # 3. Lingva
     result = translate_lingva(chunk)
     if result:
         return (result, 'Lingva')
-
     return (chunk, None)
 
+def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
+    if not text:
+        return []
+    if len(text) <= max_chunk:
+        return [text]
+
+    chunks = []
+    current = ""
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        if len(sent) > max_chunk:
+            words = sent.split(' ')
+            for w in words:
+                if len(current) + len(w) + 1 <= max_chunk:
+                    current = (current + ' ' + w).strip()
+                else:
+                    if current:
+                        chunks.append(current)
+                    current = w
+        else:
+            if len(current) + len(sent) + 1 <= max_chunk:
+                current = (current + ' ' + sent).strip() if current else sent
+            else:
+                if current:
+                    chunks.append(current)
+                current = sent
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
 def translate_text(text: str) -> str:
-    """
-    Переводит текст, разбивая его на куски ≤450 символов.
-    Для каждого куска применяет translate_chunk.
-    """
     if not text or len(text) < 3:
         return text
-
     if re.search('[а-яА-Я]', text):
         return text
 
@@ -492,7 +485,6 @@ def translate_text(text: str) -> str:
             method_stats[method] = method_stats.get(method, 0) + 1
             translated_parts.append(result)
         else:
-            # Не удалось — оставляем оригинал
             logger.warning(f"  ⚠️ Кусок {i+1}/{len(chunks)} не переведён ({len(chunk)} символов)")
             translated_parts.append(chunk)
 
@@ -668,24 +660,11 @@ class NewsBot:
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
-    def _truncate_to_last_sentence(self, text: str, max_len: int) -> str:
-        if len(text) <= max_len:
-            return text
-        for punct in ['.', '!', '?']:
-            last = text.rfind(punct, 0, max_len)
-            if last != -1 and last > max_len // 2:
-                result = text[:last + 1].strip()
-                if len(result) <= max_len:
-                    return result
-        last_space = text.rfind(' ', 0, max_len)
-        if last_space != -1:
-            return text[:last_space].strip()
-        return text[:max_len].strip()
-
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         max_len = max_len - 100
-        return self._truncate_to_last_sentence(text, max_len)
+        # truncate_at_sentence гарантирует, что текст всегда заканчивается на границе предложения
+        return truncate_at_sentence(text, max_len)
 
     # ========== ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
@@ -918,9 +897,15 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # Обрезаем перед переводом
-            title_short = truncate_for_translation(title_en, max_len=300)
-            content_short = truncate_for_translation(content_en, max_len=MAX_TRANSLATE_INPUT)
+            # Обрезаем ДО перевода, всегда по границе предложения
+            title_short = truncate_at_sentence(title_en, max_len=300)
+            content_short = truncate_at_sentence(content_en, max_len=MAX_TRANSLATE_INPUT)
+
+            if not title_short:
+                title_short = title_en[:300]
+            if not content_short:
+                logger.warning("⚠️ Контент не удалось обрезать по предложению, пропуск")
+                return
 
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
@@ -931,7 +916,6 @@ class NewsBot:
             title_ru = postprocess_translation(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_short
 
-            # Повторная попытка если заголовок смешанный
             if is_bad_title(title_ru):
                 logger.warning(f"⚠️ Заголовок смешанный, повторный перевод...")
                 title_retry = await loop.run_in_executor(None, translate_text, title_short)
@@ -972,7 +956,13 @@ class NewsBot:
                     if 'image' in content_type:
                         try:
                             if len(message) > MAX_CAPTION:
-                                message = message[:MAX_CAPTION - 50] + "..."
+                                # Обрезаем caption по границе предложения
+                                title_part = f"*{title_escaped}*\n\n"
+                                available = MAX_CAPTION - len(title_part) - 50
+                                truncated_body = truncate_at_sentence(content_ru, available)
+                                if not truncated_body:
+                                    truncated_body = content_ru[:available]
+                                message = f"*{title_escaped}*\n\n{truncated_body}"
                             await self.bot.send_photo(
                                 chat_id=CHANNEL_ID,
                                 photo=img_response.content,
@@ -991,7 +981,12 @@ class NewsBot:
             text_message = f"*{title_escaped}*\n\n{text_content}"
 
             if len(text_message) > MAX_MESSAGE:
-                text_message = text_message[:MAX_MESSAGE - 50] + "..."
+                title_part = f"*{title_escaped}*\n\n"
+                available = MAX_MESSAGE - len(title_part) - 50
+                truncated_body = truncate_at_sentence(content_ru, available)
+                if not truncated_body:
+                    truncated_body = content_ru[:available]
+                text_message = f"*{title_escaped}*\n\n{truncated_body}"
 
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
