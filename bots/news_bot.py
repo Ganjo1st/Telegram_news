@@ -49,6 +49,12 @@ MAX_MESSAGE = 4096
 MAX_TRANSLATE_INPUT = 1500
 TRANSLATE_CHUNK_SIZE = 450
 
+# Заглушка — используется, если у статьи нет картинки
+FALLBACK_IMAGE_URL = os.getenv(
+    'FALLBACK_IMAGE_URL',
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Newspaper_icon.png/240px-Newspaper_icon.png'
+)
+
 IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
 
 # ========== ИСКЛЮЧАЕМЫЕ АВТОРЫ ==========
@@ -59,6 +65,35 @@ EXCLUDED_AUTHORS = [
     'Одри Чайлд', 'Audrey Child',
     'Андрей Корыбко', 'Andrei Korybko',
     'Стив Уотсон', 'Steve Watson',
+]
+
+# ========== ФРАЗЫ, ОБОЗНАЧАЮЩИЕ МУСОР ==========
+JUNK_PHRASES = [
+    'artigo em inglês', 'artigo em ingles',
+    'membro da associação', 'membro da associacao',
+    'comentário à', 'comentario a',
+    'comentário a', 'em nossa página',
+    'em nossa pagina', 'pesquisador do centro',
+    'especialista militar', 'associado ao centro',
+    'pesquisa sobre a globalização',
+    'pesquisa sobre a globalizacao',
+    'artigo em português', 'artigo em portugues',
+    'en español', 'en espanol',
+    'leer más', 'leer mas', 'read in english',
+    'this article was originally published',
+]
+
+# ========== ПОРТУГАЛЬСКИЕ/ИСПАНСКИЕ МАРКЕРЫ В ЗАГОЛОВКЕ ==========
+FOREIGN_TITLE_WORDS = [
+    ' conflito ', ' será ', ' sera ', ' decidido ',
+    ' campo ', ' batalha ', ' ucrânia ', ' ucrania ',
+    ' na ', ' da ', ' do ', ' dos ', ' das ',
+    ' governo ', ' presidente ', ' ministro ',
+    ' sobre ', ' com ', ' mais ', ' não ', ' nao ',
+    ' também ', ' tambem ', ' está ', ' esta ',
+    ' según ', ' segun ', ' tras ', ' desde ',
+    ' democracia ', ' declínio ', ' declinio ',
+    ' aponta ', ' relatório ', ' relatorio ',
 ]
 
 # ========== СЛОВАРЬ ДЛЯ ПОСТОБРАБОТКИ ПЕРЕВОДА ==========
@@ -195,6 +230,46 @@ def unescape_html(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
+def balance_brackets(text: str) -> str:
+    """Убирает незакрытые скобки в конце текста."""
+    if not text:
+        return text
+    # Если в тексте есть открывающая без закрывающей — убираем хвост до ближайшего пробела после открывающей
+    open_paren = text.count('(')
+    close_paren = text.count(')')
+    if open_paren > close_paren:
+        # Ищем последнюю открывающую скобку и удаляем всё после неё
+        last_open = text.rfind('(')
+        if last_open != -1:
+            text = text[:last_open].rstrip()
+    open_quote = text.count('«')
+    close_quote = text.count('»')
+    if open_quote > close_quote:
+        last_open = text.rfind('«')
+        if last_open != -1:
+            text = text[:last_open].rstrip()
+    open_sq = text.count('[')
+    close_sq = text.count(']')
+    if open_sq > close_sq:
+        last_open = text.rfind('[')
+        if last_open != -1:
+            text = text[:last_open].rstrip()
+    return text.strip()
+
+def remove_junk_paragraphs(text: str) -> str:
+    """Убирает абзацы с мусорными фразами."""
+    if not text:
+        return text
+    paragraphs = text.split('\n\n')
+    clean = []
+    for p in paragraphs:
+        p_lower = p.lower()
+        if any(junk in p_lower for junk in JUNK_PHRASES):
+            logger.info(f"⏭️ Удалён мусорный абзац: {p[:60]}...")
+            continue
+        clean.append(p)
+    return '\n\n'.join(clean).strip()
+
 def postprocess_translation(text: str) -> str:
     if not text:
         return text
@@ -211,23 +286,15 @@ def postprocess_translation(text: str) -> str:
     return result
 
 def truncate_at_sentence(text: str, max_len: int) -> str:
-    """
-    Обрезает текст до max_len, ВСЕГДА заканчивая на границе предложения.
-    Если в пределах max_len нет конца предложения — возвращает текст до
-    ПРЕДЫДУЩЕГО конца предложения (даже если он короче max_len).
-    Если предложений нет вообще — возвращает пустую строку.
-    """
+    """Обрезает текст до max_len, ВСЕГДА заканчивая на границе предложения."""
     if not text:
         return ""
-
     text = text.strip()
     if len(text) <= max_len:
         return text
 
-    # Ищем последний знак конца предложения в пределах max_len
     cut_pos = -1
     for punct in ['.', '!', '?']:
-        # Ищем позицию, где за пунктуацией идёт пробел или конец строки
         for m in re.finditer(re.escape(punct) + r'(?=\s|$)', text[:max_len + 1]):
             if m.end() > cut_pos:
                 cut_pos = m.end()
@@ -235,18 +302,14 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
     if cut_pos != -1:
         return text[:cut_pos].strip()
 
-    # Если в пределах max_len нет ни одного конца предложения,
-    # ищем ПЕРВЫЙ конец предложения ЗА пределами max_len
     for punct in ['.', '!', '?']:
         m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
         if m:
             end_pos = max_len + m.end()
-            # Если первое предложение слишком длинное (больше 2×max_len) — не берём
             if end_pos <= max_len * 2:
                 return text[:end_pos].strip()
             break
 
-    # Совсем нет конца предложения — возвращаем пусто (лучше ничего, чем обрывок)
     return ""
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
@@ -261,53 +324,101 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         logger.error(f"Ошибка запроса {url}: {e}")
         return None
 
+def is_bad_image_url(url: str) -> bool:
+    """Проверяет, является ли URL картинки мусорной (логотип, иконка, плейсхолдер)."""
+    if not url:
+        return True
+    url_lower = url.lower()
+    bad_markers = [
+        'logo', 'icon', 'avatar', 'placeholder', 'default',
+        'no-image', 'noimage', 'blank', 'spacer', 'pixel',
+        '1x1', 'transparent', 'sprite',
+    ]
+    for marker in bad_markers:
+        if marker in url_lower:
+            return True
+    # Картинки с «logo» в имени файла часто логотипы
+    if re.search(r'/(logo|icon|avatar|banner)[-_./]', url_lower):
+        return True
+    return False
+
 def extract_image_url(soup, base_url: str):
+    """Извлекает URL изображения из страницы, отбрасывая мусорные картинки."""
+    candidates = []
+
+    # 1. og:image
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
-        img_url = meta_img['content']
-        if img_url.startswith('//'):
-            return 'https:' + img_url
-        if img_url.startswith('/'):
-            return urljoin(base_url, img_url)
-        if img_url.startswith('http'):
-            return img_url
+        candidates.append(meta_img['content'])
 
+    # 2. og:image:secure_url
+    meta_img_secure = soup.find('meta', property='og:image:secure_url')
+    if meta_img_secure and meta_img_secure.get('content'):
+        candidates.append(meta_img_secure['content'])
+
+    # 3. twitter:image
     meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
     if meta_twitter and meta_twitter.get('content'):
-        img_url = meta_twitter['content']
-        if img_url.startswith('//'):
-            return 'https:' + img_url
-        if img_url.startswith('/'):
-            return urljoin(base_url, img_url)
-        if img_url.startswith('http'):
-            return img_url
+        candidates.append(meta_twitter['content'])
 
+    # 4. Картинки в article
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
-            src = img.get('src', '')
-            if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'banner', 'flag']):
-                continue
-            if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                if src.startswith('//'):
-                    return 'https:' + src
-                if src.startswith('/'):
-                    return urljoin(base_url, src)
-                if src.startswith('http'):
-                    return src
+            candidates.append(img.get('src', ''))
 
+    # 5. Картинки на странице
     for img in soup.find_all('img', src=True):
-        src = img.get('src', '')
-        if any(x in src.lower() for x in ['logo', 'icon', 'avatar', 'svg', 'gif', 'flag']):
-            continue
-        if src.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-            if src.startswith('//'):
-                return 'https:' + src
-            if src.startswith('/'):
-                return urljoin(base_url, src)
-            if src.startswith('http'):
-                return src
+        candidates.append(img.get('src', ''))
 
+    # Нормализуем и отбрасываем мусор
+    for raw in candidates:
+        if not raw:
+            continue
+        url = raw.strip()
+        if url.startswith('//'):
+            url = 'https:' + url
+        elif url.startswith('/'):
+            url = urljoin(base_url, url)
+        elif not url.startswith('http'):
+            continue
+
+        # Расширение картинки
+        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
+            continue
+
+        if is_bad_image_url(url):
+            continue
+
+        return url
+
+    return None
+
+def fetch_image_with_fallback(image_url: str, referer: str = None):
+    """
+    Загружает картинку. Если image_url пустой или не загрузился — возвращает картинку-заглушку.
+    """
+    if image_url:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            if referer:
+                headers['Referer'] = referer
+            r = requests.get(image_url, headers=headers, timeout=15)
+            if r.status_code == 200 and 'image' in r.headers.get('Content-Type', ''):
+                return r.content
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
+
+    # Фолбэк
+    try:
+        r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
+        if r.status_code == 200:
+            logger.info("🖼️ Использована заглушка для картинки")
+            return r.content
+    except Exception as e:
+        logger.error(f"Не удалось загрузить заглушку: {e}")
     return None
 
 def clean_title(title: str):
@@ -320,6 +431,21 @@ def clean_title(title: str):
     if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
         return ""
     return title.strip()
+
+def is_foreign_title(title: str) -> bool:
+    """Определяет, что заголовок на португальском/испанском."""
+    if not title:
+        return False
+    title_lower = ' ' + title.lower() + ' '
+    hits = sum(1 for w in FOREIGN_TITLE_WORDS if w in title_lower)
+    # Если ≥3 маркера — точно иностранный
+    if hits >= 3:
+        return True
+    # Если ≥2 маркера и нет английских слов длиннее 4 — тоже иностранный
+    en_words = re.findall(r'\b[a-zA-Z]{4,}\b', title)
+    if hits >= 2 and len(en_words) <= 1:
+        return True
+    return False
 
 def is_excluded_author(text: str):
     if not text:
@@ -663,8 +789,8 @@ class NewsBot:
     def _truncate_text(self, text: str, is_caption: bool = False) -> str:
         max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
         max_len = max_len - 100
-        # truncate_at_sentence гарантирует, что текст всегда заканчивается на границе предложения
-        return truncate_at_sentence(text, max_len)
+        result = truncate_at_sentence(text, max_len)
+        return balance_brackets(result)
 
     # ========== ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
@@ -685,6 +811,11 @@ class NewsBot:
 
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
+                    continue
+
+                # Фильтр португальских/испанских заголовков
+                if is_foreign_title(title):
+                    logger.info(f"⏭️ {source_name}: пропущен нерусский/неанглийский заголовок '{title[:50]}...'")
                     continue
 
                 if not title or len(title) < 5:
@@ -725,9 +856,12 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
+            # Картинка — обязательна (с фолбэком)
             image_url = extract_image_url(soup, base_url)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
+            else:
+                logger.info(f"⚠️ Изображение не найдено, будет использована заглушка")
 
             content_parts = []
             content_container = None
@@ -769,6 +903,12 @@ class NewsBot:
                         logger.info(f"⏭️ Пропущен абзац на иностранном языке")
                         continue
 
+                    # Мусорные фразы
+                    text_lower = text.lower()
+                    if any(junk in text_lower for junk in JUNK_PHRASES):
+                        logger.info(f"⏭️ Пропущен мусорный абзац")
+                        continue
+
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
@@ -784,6 +924,9 @@ class NewsBot:
                         continue
                     if is_foreign_text(text):
                         continue
+                    text_lower = text.lower()
+                    if any(junk in text_lower for junk in JUNK_PHRASES):
+                        continue
 
                     if len(text) > 40 and not text.startswith('Read more'):
                         if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
@@ -795,6 +938,8 @@ class NewsBot:
 
             content = '\n\n'.join(content_parts[:20])
             content = unescape_html(content)
+            content = remove_junk_paragraphs(content)
+            content = balance_brackets(content)
 
             if len(content) < 150:
                 logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
@@ -897,7 +1042,6 @@ class NewsBot:
 
             loop = asyncio.get_event_loop()
 
-            # Обрезаем ДО перевода, всегда по границе предложения
             title_short = truncate_at_sentence(title_en, max_len=300)
             content_short = truncate_at_sentence(content_en, max_len=MAX_TRANSLATE_INPUT)
 
@@ -910,7 +1054,6 @@ class NewsBot:
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
 
-            # Перевод заголовка
             title_ru = await loop.run_in_executor(None, translate_text, title_short)
             title_ru = unescape_html(title_ru)
             title_ru = postprocess_translation(title_ru)
@@ -926,7 +1069,6 @@ class NewsBot:
                     title_ru = title_retry
                     logger.info(f"✅ Повторный перевод удался")
 
-            # Перевод контента
             content_ru = await loop.run_in_executor(None, translate_text, content_short)
             content_ru = unescape_html(content_ru)
             content_ru = postprocess_translation(content_ru)
@@ -937,6 +1079,7 @@ class NewsBot:
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
 
             content_ru = unescape_html(content_ru)
+            content_ru = balance_brackets(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
@@ -947,34 +1090,31 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            if image_url:
-                logger.info(f"🖼️ Загрузка изображения: {image_url[:80]}...")
-                img_response = fetch_url(image_url, timeout=15)
+            # ========== КАРТИНКА С ФОЛБЭКОМ ==========
+            img_bytes = fetch_image_with_fallback(image_url, referer=url)
 
-                if img_response and img_response.status_code == 200:
-                    content_type = img_response.headers.get('Content-Type', '')
-                    if 'image' in content_type:
-                        try:
-                            if len(message) > MAX_CAPTION:
-                                # Обрезаем caption по границе предложения
-                                title_part = f"*{title_escaped}*\n\n"
-                                available = MAX_CAPTION - len(title_part) - 50
-                                truncated_body = truncate_at_sentence(content_ru, available)
-                                if not truncated_body:
-                                    truncated_body = content_ru[:available]
-                                message = f"*{title_escaped}*\n\n{truncated_body}"
-                            await self.bot.send_photo(
-                                chat_id=CHANNEL_ID,
-                                photo=img_response.content,
-                                caption=message,
-                                parse_mode='Markdown'
-                            )
-                            logger.info("✅ Опубликовано С ФОТО")
-                            self._mark_sent(url, title_en, content_en)
-                            self._log_post(url, title_en)
-                            return
-                        except TelegramError as e:
-                            logger.warning(f"Ошибка фото: {e}")
+            if img_bytes:
+                try:
+                    if len(message) > MAX_CAPTION:
+                        title_part = f"*{title_escaped}*\n\n"
+                        available = MAX_CAPTION - len(title_part) - 50
+                        truncated_body = truncate_at_sentence(content_ru, available)
+                        if not truncated_body:
+                            truncated_body = content_ru[:available]
+                        truncated_body = balance_brackets(truncated_body)
+                        message = f"*{title_escaped}*\n\n{truncated_body}"
+                    await self.bot.send_photo(
+                        chat_id=CHANNEL_ID,
+                        photo=img_bytes,
+                        caption=message,
+                        parse_mode='Markdown'
+                    )
+                    logger.info("✅ Опубликовано С ФОТО")
+                    self._mark_sent(url, title_en, content_en)
+                    self._log_post(url, title_en)
+                    return
+                except TelegramError as e:
+                    logger.warning(f"Ошибка фото: {e}")
 
             logger.info("📝 Публикация текстом")
             text_content = self._truncate_text(content_ru, is_caption=False)
@@ -986,6 +1126,7 @@ class NewsBot:
                 truncated_body = truncate_at_sentence(content_ru, available)
                 if not truncated_body:
                     truncated_body = content_ru[:available]
+                truncated_body = balance_brackets(truncated_body)
                 text_message = f"*{title_escaped}*\n\n{truncated_body}"
 
             await self.bot.send_message(
@@ -1006,6 +1147,7 @@ class NewsBot:
                     text_message = f"{title_ru}\n\n{content_ru}"
                     if len(text_message) > MAX_MESSAGE:
                         text_message = text_message[:MAX_MESSAGE - 50] + "..."
+                    text_message = balance_brackets(text_message)
                     await self.bot.send_message(chat_id=CHANNEL_ID, text=text_message, parse_mode=None)
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
