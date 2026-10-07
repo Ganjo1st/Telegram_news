@@ -49,7 +49,6 @@ MAX_MESSAGE = 4096
 MAX_TRANSLATE_INPUT = 1500
 TRANSLATE_CHUNK_SIZE = 450
 
-# Заглушка — используется, если у статьи нет картинки
 FALLBACK_IMAGE_URL = os.getenv(
     'FALLBACK_IMAGE_URL',
     'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Newspaper_icon.png/240px-Newspaper_icon.png'
@@ -67,7 +66,6 @@ EXCLUDED_AUTHORS = [
     'Стив Уотсон', 'Steve Watson',
 ]
 
-# ========== ФРАЗЫ, ОБОЗНАЧАЮЩИЕ МУСОР ==========
 JUNK_PHRASES = [
     'artigo em inglês', 'artigo em ingles',
     'membro da associação', 'membro da associacao',
@@ -83,7 +81,6 @@ JUNK_PHRASES = [
     'this article was originally published',
 ]
 
-# ========== ПОРТУГАЛЬСКИЕ/ИСПАНСКИЕ МАРКЕРЫ В ЗАГОЛОВКЕ ==========
 FOREIGN_TITLE_WORDS = [
     ' conflito ', ' será ', ' sera ', ' decidido ',
     ' campo ', ' batalha ', ' ucrânia ', ' ucrania ',
@@ -96,124 +93,41 @@ FOREIGN_TITLE_WORDS = [
     ' aponta ', ' relatório ', ' relatorio ',
 ]
 
-# ========== СЛОВАРЬ ДЛЯ ПОСТОБРАБОТКИ ПЕРЕВОДА ==========
 POST_TRANSLATION_FIXES = {
-    'Spanish': 'испанское',
-    'extradition': 'экстрадиция',
-    'communist': 'коммунистический',
-    'centimillionaire': 'мультимиллионер',
-    'reported': 'сообщил',
-    'detained': 'задержан',
-    'arrest': 'арест',
-    'Ibiza': 'Ибица',
-    'wanted': 'разыскивается',
-    'money laundering': 'отмывание денег',
-    'riot': 'бунт',
-    'conspiracy': 'сговор',
-    'charges': 'обвинения',
-    'demonstrations': 'демонстрации',
-    'transfers': 'переводы',
-    'company': 'компания',
-    'Tunisia': 'Тунис',
-    'previously': 'ранее',
-    'lived': 'проживал',
-    'spokeswoman': 'представитель',
-    'confirmed': 'подтвердил',
-    'outlet': 'издание',
-    'courts': 'суды',
-    'review': 'рассмотрение',
-    'request': 'запрос',
-    'judges': 'судьи',
-    'approve': 'одобрят',
-    'final': 'окончательное',
-    'decision': 'решение',
-    'returns': 'возвращается',
-    'Prime Minister': 'премьер-министру',
-    'Cabinet': 'кабинет',
-    'Traders': 'трейдеры',
-    'modest': 'скромные',
-    'hopes': 'надежды',
-    'deal': 'сделку',
-    'While': 'Хотя',
-    'provide': 'предоставим',
-    'detailed': 'подробный',
-    'preview': 'обзор',
-    'summit': 'саммит',
-    'subsequent': 'последующем',
-    'post': 'посте',
-    'signs': 'признаки',
-    'President': 'президент',
-    'Chinese': 'китайский',
-    'counterpart': 'коллега',
-    'emerge': 'выйти',
-    'upcoming': 'предстоящего',
-    'agreement': 'соглашение',
-    'artificial': 'искусственного',
-    'intelligence': 'интеллекта',
-    'industry': 'отрасли',
-    'increasingly': 'всё более',
-    'prominent': 'заметной',
-    'flash point': 'точкой напряжённости',
-    'between': 'между',
-    'world': 'мира',
-    'biggest': 'крупнейшими',
-    'economies': 'экономиками',
-    'fund managers': 'управляющие фондами',
-    'say': 'говорят',
-    'unlikely': 'маловероятно',
-    'significant': 'значительным',
-    'enough': 'достаточно',
-    'sustainable': 'устойчивый',
-    'boost': 'рост',
-    'related': 'связанных',
-    'stocks': 'акций',
-    'Over': 'В',
-    'weekend': 'выходные',
-    'Treasury Secretary': 'министр финансов',
-    'after': 'после',
-    'hours': 'часов',
-    'negotiations': 'переговоров',
-    'Vice Premier': 'вице-премьером',
-    'said': 'сказал',
-    'two sides': 'две стороны',
-    'agreed': 'согласились',
-    'create': 'создать',
-    'called': 'назвал',
-    'dialogue': 'диалог',
-    'technology': 'технологии',
-    'benefits': 'выгоды',
-    'threats': 'угрозы',
-    'The': 'Этот',
-    'narrative': 'нарратив',
-    'pushed': 'продвигаемый',
-    'certain': 'некоторыми',
-    'pro-war': 'провоенными',
-    'European': 'европейскими',
-    'hard': 'трудно',
-    'imagine': 'представить',
-    'how': 'как',
-    'hackers': 'хакеры',
-    'have': 'украли',
-    'stolen': 'украли',
-    'nearly': 'почти',
-    'million': 'миллионов',
-    'from': 'из',
-    'major': 'крупной',
-    'crypto': 'криптобиржи',
-    'exchange': 'биржи',
-    'Vladimir': 'Владимир',
-    'put': 'поставил',
-    'his': 'свои',
-    'personal': 'личные',
-    'interests': 'интересы',
-    'first': 'на первое место',
-    'wants': 'хочет',
-    'colonize': 'колонизировать',
-    'Brazil': 'Бразилию',
-    'campaign': 'кампания',
-    'age': 'эпоха',
-    'global': 'глобальных',
-    'empires': 'империй',
+    'Spanish': 'испанское', 'extradition': 'экстрадиция',
+    'communist': 'коммунистический', 'centimillionaire': 'мультимиллионер',
+    'reported': 'сообщил', 'detained': 'задержан', 'arrest': 'арест',
+    'Ibiza': 'Ибица', 'wanted': 'разыскивается',
+    'money laundering': 'отмывание денег', 'riot': 'бунт',
+    'conspiracy': 'сговор', 'charges': 'обвинения',
+    'demonstrations': 'демонстрации', 'transfers': 'переводы',
+    'company': 'компания', 'Tunisia': 'Тунис', 'previously': 'ранее',
+    'lived': 'проживал', 'spokeswoman': 'представитель',
+    'confirmed': 'подтвердил', 'outlet': 'издание', 'courts': 'суды',
+    'review': 'рассмотрение', 'request': 'запрос', 'judges': 'судьи',
+    'approve': 'одобрят', 'final': 'окончательное', 'decision': 'решение',
+    'returns': 'возвращается', 'Prime Minister': 'премьер-министру',
+    'Cabinet': 'кабинет', 'Traders': 'трейдеры', 'modest': 'скромные',
+    'hopes': 'надежды', 'deal': 'сделку', 'While': 'Хотя',
+    'provide': 'предоставим', 'detailed': 'подробный', 'preview': 'обзор',
+    'summit': 'саммит', 'subsequent': 'последующем', 'post': 'посте',
+    'signs': 'признаки', 'President': 'президент', 'Chinese': 'китайский',
+    'counterpart': 'коллега', 'emerge': 'выйти', 'upcoming': 'предстоящего',
+    'agreement': 'соглашение', 'artificial': 'искусственного',
+    'intelligence': 'интеллекта', 'industry': 'отрасли',
+    'increasingly': 'всё более', 'prominent': 'заметной',
+    'flash point': 'точкой напряжённости', 'between': 'между',
+    'world': 'мира', 'biggest': 'крупнейшими', 'economies': 'экономиками',
+    'fund managers': 'управляющие фондами', 'say': 'говорят',
+    'unlikely': 'маловероятно', 'significant': 'значительным',
+    'enough': 'достаточно', 'sustainable': 'устойчивый', 'boost': 'рост',
+    'related': 'связанных', 'stocks': 'акций', 'Over': 'В',
+    'weekend': 'выходные', 'Treasury Secretary': 'министр финансов',
+    'after': 'после', 'hours': 'часов', 'negotiations': 'переговоров',
+    'Vice Premier': 'вице-премьером', 'said': 'сказал',
+    'two sides': 'две стороны', 'agreed': 'согласились',
+    'create': 'создать', 'called': 'назвал', 'dialogue': 'диалог',
+    'technology': 'технологии', 'benefits': 'выгоды', 'threats': 'угрозы',
 }
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -231,33 +145,23 @@ def unescape_html(text: str) -> str:
     return text.strip()
 
 def balance_brackets(text: str) -> str:
-    """Убирает незакрытые скобки в конце текста."""
     if not text:
         return text
-    # Если в тексте есть открывающая без закрывающей — убираем хвост до ближайшего пробела после открывающей
-    open_paren = text.count('(')
-    close_paren = text.count(')')
-    if open_paren > close_paren:
-        # Ищем последнюю открывающую скобку и удаляем всё после неё
+    if text.count('(') > text.count(')'):
         last_open = text.rfind('(')
         if last_open != -1:
             text = text[:last_open].rstrip()
-    open_quote = text.count('«')
-    close_quote = text.count('»')
-    if open_quote > close_quote:
+    if text.count('«') > text.count('»'):
         last_open = text.rfind('«')
         if last_open != -1:
             text = text[:last_open].rstrip()
-    open_sq = text.count('[')
-    close_sq = text.count(']')
-    if open_sq > close_sq:
+    if text.count('[') > text.count(']'):
         last_open = text.rfind('[')
         if last_open != -1:
             text = text[:last_open].rstrip()
     return text.strip()
 
 def remove_junk_paragraphs(text: str) -> str:
-    """Убирает абзацы с мусорными фразами."""
     if not text:
         return text
     paragraphs = text.split('\n\n')
@@ -286,7 +190,6 @@ def postprocess_translation(text: str) -> str:
     return result
 
 def truncate_at_sentence(text: str, max_len: int) -> str:
-    """Обрезает текст до max_len, ВСЕГДА заканчивая на границе предложения."""
     if not text:
         return ""
     text = text.strip()
@@ -325,7 +228,7 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def is_bad_image_url(url: str) -> bool:
-    """Проверяет, является ли URL картинки мусорной (логотип, иконка, плейсхолдер)."""
+    """Проверяет, является ли URL картинки мусорной."""
     if not url:
         return True
     url_lower = url.lower()
@@ -337,39 +240,54 @@ def is_bad_image_url(url: str) -> bool:
     for marker in bad_markers:
         if marker in url_lower:
             return True
-    # Картинки с «logo» в имени файла часто логотипы
     if re.search(r'/(logo|icon|avatar|banner)[-_./]', url_lower):
+        return True
+    # Флаги стран — не подходят как иллюстрации к статьям
+    if re.search(r'/flag\.(jpg|jpeg|png|webp|gif|svg)', url_lower):
+        return True
+    if re.search(r'/flags?/', url_lower):
         return True
     return False
 
-def extract_image_url(soup, base_url: str):
-    """Извлекает URL изображения из страницы, отбрасывая мусорные картинки."""
+def extract_image_url_for_infobrics(soup, base_url: str):
+    """
+    Специальный поиск картинки для InfoBrics.
+    InfoBrics в og:image кладёт флаг страны, поэтому og:image игнорируется.
+    Картинку ищем прямо в HTML-теле статьи.
+    """
+    # Ищем контейнер статьи
+    article = soup.find('article')
+    if not article:
+        # Пробуем найти div с классом article или post
+        article = soup.find('div', class_=re.compile(r'(article|post|news)', re.IGNORECASE))
+
+    # Список кандидатов: сначала в article, потом везде
     candidates = []
 
-    # 1. og:image
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        candidates.append(meta_img['content'])
-
-    # 2. og:image:secure_url
-    meta_img_secure = soup.find('meta', property='og:image:secure_url')
-    if meta_img_secure and meta_img_secure.get('content'):
-        candidates.append(meta_img_secure['content'])
-
-    # 3. twitter:image
-    meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
-    if meta_twitter and meta_twitter.get('content'):
-        candidates.append(meta_twitter['content'])
-
-    # 4. Картинки в article
-    article = soup.find('article')
     if article:
+        # 1. Картинки внутри article
         for img in article.find_all('img', src=True):
             candidates.append(img.get('src', ''))
+        # 2. Источники srcset
+        for img in article.find_all('img', attrs={'data-src': True}):
+            candidates.append(img.get('data-src', ''))
+        for source in article.find_all('source', attrs={'srcset': True}):
+            srcset = source.get('srcset', '')
+            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
+            if first:
+                candidates.append(first)
 
-    # 5. Картинки на странице
-    for img in soup.find_all('img', src=True):
-        candidates.append(img.get('src', ''))
+    # Если в article ничего не нашли — ищем во всём документе
+    if not candidates:
+        for img in soup.find_all('img', src=True):
+            candidates.append(img.get('src', ''))
+        for img in soup.find_all('img', attrs={'data-src': True}):
+            candidates.append(img.get('data-src', ''))
+        for source in soup.find_all('source', attrs={'srcset': True}):
+            srcset = source.get('srcset', '')
+            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
+            if first:
+                candidates.append(first)
 
     # Нормализуем и отбрасываем мусор
     for raw in candidates:
@@ -383,21 +301,79 @@ def extract_image_url(soup, base_url: str):
         elif not url.startswith('http'):
             continue
 
-        # Расширение картинки
-        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
+        # Пропускаем мелкие картинки-иконки
+        if re.search(r'(icon|logo|avatar|flag|sprite|placeholder)', url, re.IGNORECASE):
             continue
 
         if is_bad_image_url(url):
+            continue
+
+        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
             continue
 
         return url
 
     return None
 
+def extract_image_url_generic(soup, base_url: str):
+    """
+    Универсальный поиск картинки (для RT, ZeroHedge, Global Research).
+    Работает как раньше: og:image → twitter:image → article → все img.
+    """
+    candidates = []
+
+    meta_img = soup.find('meta', property='og:image')
+    if meta_img and meta_img.get('content'):
+        candidates.append(meta_img['content'])
+
+    meta_img_secure = soup.find('meta', property='og:image:secure_url')
+    if meta_img_secure and meta_img_secure.get('content'):
+        candidates.append(meta_img_secure['content'])
+
+    meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
+    if meta_twitter and meta_twitter.get('content'):
+        candidates.append(meta_twitter['content'])
+
+    article = soup.find('article')
+    if article:
+        for img in article.find_all('img', src=True):
+            candidates.append(img.get('src', ''))
+        for img in article.find_all('img', attrs={'data-src': True}):
+            candidates.append(img.get('data-src', ''))
+
+    for img in soup.find_all('img', src=True):
+        candidates.append(img.get('src', ''))
+    for img in soup.find_all('img', attrs={'data-src': True}):
+        candidates.append(img.get('data-src', ''))
+
+    for raw in candidates:
+        if not raw:
+            continue
+        url = raw.strip()
+        if url.startswith('//'):
+            url = 'https:' + url
+        elif url.startswith('/'):
+            url = urljoin(base_url, url)
+        elif not url.startswith('http'):
+            continue
+
+        if is_bad_image_url(url):
+            continue
+
+        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
+            continue
+
+        return url
+
+    return None
+
+def extract_image_url(soup, base_url: str, source_name: str = ''):
+    """Диспетчер: для InfoBrics — спец-функция, для остальных — универсальная."""
+    if source_name == 'InfoBrics':
+        return extract_image_url_for_infobrics(soup, base_url)
+    return extract_image_url_generic(soup, base_url)
+
 def fetch_image_with_fallback(image_url: str, referer: str = None):
-    """
-    Загружает картинку. Если image_url пустой или не загрузился — возвращает картинку-заглушку.
-    """
     if image_url:
         try:
             headers = {
@@ -411,7 +387,6 @@ def fetch_image_with_fallback(image_url: str, referer: str = None):
         except Exception as e:
             logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
 
-    # Фолбэк
     try:
         r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
         if r.status_code == 200:
@@ -433,15 +408,12 @@ def clean_title(title: str):
     return title.strip()
 
 def is_foreign_title(title: str) -> bool:
-    """Определяет, что заголовок на португальском/испанском."""
     if not title:
         return False
     title_lower = ' ' + title.lower() + ' '
     hits = sum(1 for w in FOREIGN_TITLE_WORDS if w in title_lower)
-    # Если ≥3 маркера — точно иностранный
     if hits >= 3:
         return True
-    # Если ≥2 маркера и нет английских слов длиннее 4 — тоже иностранный
     en_words = re.findall(r'\b[a-zA-Z]{4,}\b', title)
     if hits >= 2 and len(en_words) <= 1:
         return True
@@ -813,7 +785,6 @@ class NewsBot:
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
 
-                # Фильтр португальских/испанских заголовков
                 if is_foreign_title(title):
                     logger.info(f"⏭️ {source_name}: пропущен нерусский/неанглийский заголовок '{title[:50]}...'")
                     continue
@@ -856,8 +827,8 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Картинка — обязательна (с фолбэком)
-            image_url = extract_image_url(soup, base_url)
+            # Для InfoBrics используется спец-поиск картинки
+            image_url = extract_image_url(soup, base_url, source_name)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
             else:
@@ -903,7 +874,6 @@ class NewsBot:
                         logger.info(f"⏭️ Пропущен абзац на иностранном языке")
                         continue
 
-                    # Мусорные фразы
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         logger.info(f"⏭️ Пропущен мусорный абзац")
@@ -1090,7 +1060,6 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # ========== КАРТИНКА С ФОЛБЭКОМ ==========
             img_bytes = fetch_image_with_fallback(image_url, referer=url)
 
             if img_bytes:
