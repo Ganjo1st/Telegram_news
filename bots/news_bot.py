@@ -228,7 +228,6 @@ def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
         return None
 
 def is_bad_image_url(url: str) -> bool:
-    """Проверяет, является ли URL картинки мусорной."""
     if not url:
         return True
     url_lower = url.lower()
@@ -242,7 +241,6 @@ def is_bad_image_url(url: str) -> bool:
             return True
     if re.search(r'/(logo|icon|avatar|banner)[-_./]', url_lower):
         return True
-    # Флаги стран — не подходят как иллюстрации к статьям
     if re.search(r'/flag\.(jpg|jpeg|png|webp|gif|svg)', url_lower):
         return True
     if re.search(r'/flags?/', url_lower):
@@ -250,25 +248,15 @@ def is_bad_image_url(url: str) -> bool:
     return False
 
 def extract_image_url_for_infobrics(soup, base_url: str):
-    """
-    Специальный поиск картинки для InfoBrics.
-    InfoBrics в og:image кладёт флаг страны, поэтому og:image игнорируется.
-    Картинку ищем прямо в HTML-теле статьи.
-    """
-    # Ищем контейнер статьи
     article = soup.find('article')
     if not article:
-        # Пробуем найти div с классом article или post
         article = soup.find('div', class_=re.compile(r'(article|post|news)', re.IGNORECASE))
 
-    # Список кандидатов: сначала в article, потом везде
     candidates = []
 
     if article:
-        # 1. Картинки внутри article
         for img in article.find_all('img', src=True):
             candidates.append(img.get('src', ''))
-        # 2. Источники srcset
         for img in article.find_all('img', attrs={'data-src': True}):
             candidates.append(img.get('data-src', ''))
         for source in article.find_all('source', attrs={'srcset': True}):
@@ -277,7 +265,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
             if first:
                 candidates.append(first)
 
-    # Если в article ничего не нашли — ищем во всём документе
     if not candidates:
         for img in soup.find_all('img', src=True):
             candidates.append(img.get('src', ''))
@@ -289,7 +276,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
             if first:
                 candidates.append(first)
 
-    # Нормализуем и отбрасываем мусор
     for raw in candidates:
         if not raw:
             continue
@@ -301,13 +287,10 @@ def extract_image_url_for_infobrics(soup, base_url: str):
         elif not url.startswith('http'):
             continue
 
-        # Пропускаем мелкие картинки-иконки
         if re.search(r'(icon|logo|avatar|flag|sprite|placeholder)', url, re.IGNORECASE):
             continue
-
         if is_bad_image_url(url):
             continue
-
         if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
             continue
 
@@ -316,10 +299,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
     return None
 
 def extract_image_url_generic(soup, base_url: str):
-    """
-    Универсальный поиск картинки (для RT, ZeroHedge, Global Research).
-    Работает как раньше: og:image → twitter:image → article → все img.
-    """
     candidates = []
 
     meta_img = soup.find('meta', property='og:image')
@@ -359,7 +338,6 @@ def extract_image_url_generic(soup, base_url: str):
 
         if is_bad_image_url(url):
             continue
-
         if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
             continue
 
@@ -368,32 +346,76 @@ def extract_image_url_generic(soup, base_url: str):
     return None
 
 def extract_image_url(soup, base_url: str, source_name: str = ''):
-    """Диспетчер: для InfoBrics — спец-функция, для остальных — универсальная."""
     if source_name == 'InfoBrics':
         return extract_image_url_for_infobrics(soup, base_url)
     return extract_image_url_generic(soup, base_url)
 
-def fetch_image_with_fallback(image_url: str, referer: str = None):
-    if image_url:
+def fetch_zerohedge_image(image_url: str) -> bytes:
+    """
+    Специальная загрузка картинки для ZeroHedge.
+    cms.zerohedge.com и assets.zerohedge.com требуют правильных заголовков:
+    Referer, Origin, Accept (без webp). Если сразу не получается —
+    пробуем альтернативные варианты Accept.
+    """
+    if not image_url:
+        return None
+
+    base_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.zerohedge.com/',
+        'Origin': 'https://www.zerohedge.com',
+    }
+
+    # Варианты Accept: сначала обычный, потом image/*, потом */*
+    accept_variants = [
+        'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5',
+        '*/*',
+    ]
+
+    for accept in accept_variants:
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            if referer:
-                headers['Referer'] = referer
-            r = requests.get(image_url, headers=headers, timeout=15)
-            if r.status_code == 200 and 'image' in r.headers.get('Content-Type', ''):
+            headers = dict(base_headers)
+            headers['Accept'] = accept
+            r = requests.get(image_url, headers=headers, timeout=20, allow_redirects=True)
+            ct = r.headers.get('Content-Type', '').lower()
+            logger.info(f"ZeroHedge image: {image_url[:60]} → {r.status_code}, {ct[:40]}")
+            if r.status_code == 200 and ct.startswith('image/'):
                 return r.content
         except Exception as e:
-            logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
+            logger.warning(f"ZeroHedge image ошибка ({accept[:20]}): {e}")
 
-    try:
-        r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
-        if r.status_code == 200:
-            logger.info("🖼️ Использована заглушка для картинки")
-            return r.content
-    except Exception as e:
-        logger.error(f"Не удалось загрузить заглушку: {e}")
+    return None
+
+def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
+    if image_url:
+        # Для ZeroHedge — спец-логика с заголовками
+        if source == 'ZeroHedge' and 'zerohedge.com' in image_url:
+            content = fetch_zerohedge_image(image_url)
+            if content:
+                return content
+        else:
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                if referer:
+                    headers['Referer'] = referer
+                r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
+                ct = r.headers.get('Content-Type', '').lower()
+                if r.status_code == 200 and ct.startswith('image/'):
+                    return r.content
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
+
+    if FALLBACK_IMAGE_URL:
+        try:
+            r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
+            if r.status_code == 200 and r.headers.get('Content-Type', '').startswith('image/'):
+                logger.info("🖼️ Использована заглушка для картинки")
+                return r.content
+        except Exception as e:
+            logger.error(f"Не удалось загрузить заглушку: {e}")
     return None
 
 def clean_title(title: str):
@@ -827,7 +849,6 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Для InfoBrics используется спец-поиск картинки
             image_url = extract_image_url(soup, base_url, source_name)
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
@@ -994,6 +1015,7 @@ class NewsBot:
             content_en = post.get('content', '')
             url = post.get('url', '')
             image_url = post.get('image')
+            source_name = post.get('source', '')
 
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
@@ -1052,7 +1074,7 @@ class NewsBot:
             content_ru = balance_brackets(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
-            self._add_to_meta(post_id, post.get('source', ''), url, title_en, content_en)
+            self._add_to_meta(post_id, source_name, url, title_en, content_en)
 
             title_clean = clean_title(title_ru) or title_ru
             title_escaped = html_module.escape(title_clean)
@@ -1060,7 +1082,8 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            img_bytes = fetch_image_with_fallback(image_url, referer=url)
+            # Загрузка картинки с учётом источника
+            img_bytes = fetch_image_with_fallback(image_url, referer=url, source=source_name)
 
             if img_bytes:
                 try:
