@@ -79,7 +79,62 @@ JUNK_PHRASES = [
     'en español', 'en espanol',
     'leer más', 'leer mas', 'read in english',
     'this article was originally published',
+    # Футеры Global Research (русские варианты и английские оригиналы)
+    'комментируйте статьи о глобальных исследованиях',
+    'комментарий к статьям глобальных исследований',
+    'comment on global research articles',
+    'comment on this article',
+    'on our facebook page',
+    'на нашей странице в facebook',
+    'follow us on',
+    'подписывайтесь на',
+    'поделиться статьёй',
+    'share this article',
+    'read more articles',
+    'читайте больше статей',
 ]
+
+# ========== МАРКЕРЫ ИНОСТРАННЫХ ЯЗЫКОВ В ТЕЛЕ СТАТЬИ ==========
+# Итальянский/испанский/португальский служебные слова — если их много, текст не английский
+NON_ENGLISH_MARKERS = [
+    # итальянский
+    ' sono ', ' della ', ' degli ', ' delle ', ' nella ', ' nelle ', ' questo ', ' questa ',
+    ' questi ', ' queste ', ' perché ', ' perche ', ' dopo ', ' fatto ', ' stato ', ' stata ',
+    ' Finalmente ', ' parece ', ' país ', ' regione ', ' programma ', ' asiatico ',
+    # испанский
+    ' también ', ' tambien ', ' según ', ' segun ', ' porque ', ' donde ', ' cuando ',
+    ' mientras ', ' hacia ', ' desde ', ' hasta ', ' aunque ', ' país ',
+    # португальский
+    ' também ', ' tambem ', ' porque ', ' onde ', ' quando ', ' enquanto ',
+    ' está ', ' esta ', ' são ', ' sao ', ' têm ', ' tem ',
+]
+
+# ========== ЛИТЕРАТУРНЫЕ ЗАМЕНЫ ИДИОМ И КАЛЬКИРОВАННЫХ ФРАЗ ==========
+# (исправляем ошибки машинного перевода идиом)
+IDIOM_FIXES = {
+    # «забивает мяч» → «одерживает победу» (EU scores a goal in Georgia)
+    'забивает мяч в': 'одерживает верх в',
+    'забивает гол в': 'одерживает верх в',
+    'забить мяч в': 'одержать верх в',
+    'забить гол в': 'одержать верх в',
+    'забивает мяч в грузию': 'одерживает верх в Грузии',
+    'UE забивает мяч': 'ЕС одерживает верх',
+    'UE fa gol': 'ЕС одерживает верх',
+    'es gibt ein Tor': 'одерживает верх',
+    # «как мудрость, как учёба» — грузинское слово осталось непереведённым (kak sabedoria)
+    'как sabedoria, как учёба': 'как мудрость, так и учёба',
+    'kak sabedoria': 'как мудрость',
+    # Политические штампы
+    'выиграл мяч': 'одержал победу',
+    'выиграла мяч': 'одержала победу',
+    'мяч в ворота': 'победа',
+    'европейская сказка': 'европейская мечта',
+    'европеизм кажется': 'европеизм, по-видимому,',
+    'европеизм parece': 'европеизм, по-видимому,',
+    # Итальянские хвосты (машинный перевод)
+    'parece ter Finalmente prevalecido': 'по-видимому, одержал верх',
+    'parece ter finalmente prevalecido': 'по-видимому, одержал верх',
+}
 
 FOREIGN_TITLE_WORDS = [
     ' conflito ', ' será ', ' sera ', ' decidido ',
@@ -161,6 +216,54 @@ def balance_brackets(text: str) -> str:
             text = text[:last_open].rstrip()
     return text.strip()
 
+def is_non_english_body(text: str) -> bool:
+    """Определяет, что тело статьи на итальянском/испанском/португальском,
+    а не на английском."""
+    if not text:
+        return False
+    text_lower = ' ' + text.lower() + ' '
+    hits = sum(1 for marker in NON_ENGLISH_MARKERS if marker in text_lower)
+    if hits >= 3:
+        return True
+    return False
+
+def cut_non_english_tail(text: str) -> str:
+    """
+    Если в тексте есть хвост на иностранном языке (итальянский, испанский,
+    португальский), обрезаем его — оставляем только русские/английские части.
+    """
+    if not text:
+        return text
+
+    # Разбиваем по абзацам и идём с начала.
+    # Как только встречаем абзац, где много иностранных маркеров или мало кириллицы — стоп.
+    paragraphs = text.split('\n\n')
+    clean = []
+    for p in paragraphs:
+        p_stripped = p.strip()
+        if not p_stripped:
+            continue
+
+        # Считаем долю кириллицы
+        cyr = len(re.findall(r'[а-яА-ЯёЁ]', p_stripped))
+        total = len(re.findall(r'\w', p_stripped))
+        cyr_ratio = cyr / total if total > 0 else 0
+
+        # Если в абзаце больше половины не-кириллических букв и есть иностранные маркеры — стоп
+        if cyr_ratio < 0.5 and is_non_english_body(p_stripped):
+            logger.info(f"⏭️ Отсечён иностранный хвост: {p_stripped[:60]}...")
+            break
+
+        # Если в абзаце почти нет кириллицы и есть латинские «слипшиеся» слова длиной 12+ — стоп
+        long_latin = re.findall(r'\b[a-zA-Z]{12,}\b', p_stripped)
+        if cyr_ratio < 0.3 and len(long_latin) >= 2:
+            logger.info(f"⏭️ Отсечён хвост с длинными латинскими словами: {p_stripped[:60]}...")
+            break
+
+        clean.append(p_stripped)
+
+    return '\n\n'.join(clean).strip()
+
 def remove_junk_paragraphs(text: str) -> str:
     if not text:
         return text
@@ -174,10 +277,31 @@ def remove_junk_paragraphs(text: str) -> str:
         clean.append(p)
     return '\n\n'.join(clean).strip()
 
+def apply_idiom_fixes(text: str) -> str:
+    """Заменяет калькированные фразы и идиомы на литературные."""
+    if not text:
+        return text
+    result = text
+    # Многословные — сначала, чтобы не разбивались
+    multiword = {k: v for k, v in IDIOM_FIXES.items() if ' ' in k}
+    for src, dst in sorted(multiword.items(), key=lambda x: -len(x[0])):
+        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(src) + r'(?![а-яА-Яa-zA-Z])'
+        result = re.sub(pattern, dst, result, flags=re.IGNORECASE)
+    single = {k: v for k, v in IDIOM_FIXES.items() if ' ' not in k}
+    for src, dst in single.items():
+        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(src) + r'(?![а-яА-Яa-zA-Z])'
+        result = re.sub(pattern, dst, result, flags=re.IGNORECASE)
+    return result
+
 def postprocess_translation(text: str) -> str:
     if not text:
         return text
     result = text
+
+    # 1. Идиомы и кальки
+    result = apply_idiom_fixes(result)
+
+    # 2. Словарные замены
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
@@ -186,6 +310,8 @@ def postprocess_translation(text: str) -> str:
     for eng, rus in single.items():
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
+
+    # 3. Очистка лишних пробелов
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
@@ -351,12 +477,6 @@ def extract_image_url(soup, base_url: str, source_name: str = ''):
     return extract_image_url_generic(soup, base_url)
 
 def fetch_zerohedge_image(image_url: str) -> bytes:
-    """
-    Специальная загрузка картинки для ZeroHedge.
-    cms.zerohedge.com и assets.zerohedge.com требуют правильных заголовков:
-    Referer, Origin, Accept (без webp). Если сразу не получается —
-    пробуем альтернативные варианты Accept.
-    """
     if not image_url:
         return None
 
@@ -366,7 +486,6 @@ def fetch_zerohedge_image(image_url: str) -> bytes:
         'Origin': 'https://www.zerohedge.com',
     }
 
-    # Варианты Accept: сначала обычный, потом image/*, потом */*
     accept_variants = [
         'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         'image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5',
@@ -389,7 +508,6 @@ def fetch_zerohedge_image(image_url: str) -> bytes:
 
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
     if image_url:
-        # Для ZeroHedge — спец-логика с заголовками
         if source == 'ZeroHedge' and 'zerohedge.com' in image_url:
             content = fetch_zerohedge_image(image_url)
             if content:
@@ -1071,6 +1189,8 @@ class NewsBot:
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
 
             content_ru = unescape_html(content_ru)
+            # Отсекаем иностранные хвосты
+            content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
@@ -1082,7 +1202,6 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # Загрузка картинки с учётом источника
             img_bytes = fetch_image_with_fallback(image_url, referer=url, source=source_name)
 
             if img_bytes:
