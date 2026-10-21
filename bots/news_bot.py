@@ -67,6 +67,7 @@ EXCLUDED_AUTHORS = [
 ]
 
 JUNK_PHRASES = [
+    # португальские служебные хвосты Global Research
     'artigo em inglês', 'artigo em ingles',
     'membro da associação', 'membro da associacao',
     'comentário à', 'comentario a',
@@ -79,7 +80,7 @@ JUNK_PHRASES = [
     'en español', 'en espanol',
     'leer más', 'leer mas', 'read in english',
     'this article was originally published',
-    # Футеры Global Research (русские варианты и английские оригиналы)
+    # футеры Global Research (русские варианты и английские оригиналы)
     'комментируйте статьи о глобальных исследованиях',
     'комментарий к статьям глобальных исследований',
     'comment on global research articles',
@@ -92,46 +93,67 @@ JUNK_PHRASES = [
     'share this article',
     'read more articles',
     'читайте больше статей',
+    # футеры Global Research Books
+    'станьте участником',
+    'стать участником',
+    'global researchfree books',
+    'global research free books',
+    'global research online books',
+    'global research books',
+    'become a member',
+    'become a supporter',
+    'support global research',
+    'поддержите глобальные исследования',
+    'поддержите global research',
+    'our online e-book project',
+    'our e-books are our authors',
+    'наши электронные книги',
+    'electronic books',
+    'gift to global research',
+    'подарок для global research',
+    'global research e-books',
+    'global research ebook',
 ]
 
 # ========== МАРКЕРЫ ИНОСТРАННЫХ ЯЗЫКОВ В ТЕЛЕ СТАТЬИ ==========
-# Итальянский/испанский/португальский служебные слова — если их много, текст не английский
 NON_ENGLISH_MARKERS = [
-    # итальянский
     ' sono ', ' della ', ' degli ', ' delle ', ' nella ', ' nelle ', ' questo ', ' questa ',
     ' questi ', ' queste ', ' perché ', ' perche ', ' dopo ', ' fatto ', ' stato ', ' stata ',
     ' Finalmente ', ' parece ', ' país ', ' regione ', ' programma ', ' asiatico ',
-    # испанский
-    ' también ', ' tambien ', ' según ', ' segun ', ' porque ', ' donde ', ' cuando ',
-    ' mientras ', ' hacia ', ' desde ', ' hasta ', ' aunque ', ' país ',
-    # португальский
     ' também ', ' tambem ', ' porque ', ' onde ', ' quando ', ' enquanto ',
     ' está ', ' esta ', ' são ', ' sao ', ' têm ', ' tem ',
+    ' según ', ' segun ', ' donde ', ' cuando ', ' mientras ', ' hacia ', ' desde ', ' hasta ',
+    ' хотя ', ' хотя ',
 ]
 
-# ========== ЛИТЕРАТУРНЫЕ ЗАМЕНЫ ИДИОМ И КАЛЬКИРОВАННЫХ ФРАЗ ==========
-# (исправляем ошибки машинного перевода идиом)
+# ========== СЛОВА-МАРКЕРЫ ПОРТУГАЛЬСКОГО/ИСПАНСКОГО (для вставок внутри предложений) ==========
+FOREIGN_INLINE_WORDS = [
+    'trabalhadores', 'setores', 'críticos', 'criticos',
+    'não', 'nao', 'será', 'sera', 'para', 'como', 'também', 'tambem',
+    'está', 'esta', 'são', 'sao', 'muito', 'mais', 'ainda', 'desde',
+    'estrangeiro', 'estrangeiros', 'governo', 'presidente',
+    'política', 'politica', 'economia', 'militar',
+    'trabajadores', 'sectores', 'críticos', 'criticos',
+    'gobierno', 'presidente', 'política', 'politica',
+]
+
+# ========== ЛИТЕРАТУРНЫЕ ЗАМЕНЫ ИДИОМ ==========
 IDIOM_FIXES = {
-    # «забивает мяч» → «одерживает победу» (EU scores a goal in Georgia)
     'забивает мяч в': 'одерживает верх в',
     'забивает гол в': 'одерживает верх в',
     'забить мяч в': 'одержать верх в',
     'забить гол в': 'одержать верх в',
-    'забивает мяч в грузию': 'одерживает верх в Грузии',
     'UE забивает мяч': 'ЕС одерживает верх',
     'UE fa gol': 'ЕС одерживает верх',
     'es gibt ein Tor': 'одерживает верх',
-    # «как мудрость, как учёба» — грузинское слово осталось непереведённым (kak sabedoria)
     'как sabedoria, как учёба': 'как мудрость, так и учёба',
     'kak sabedoria': 'как мудрость',
-    # Политические штампы
     'выиграл мяч': 'одержал победу',
     'выиграла мяч': 'одержала победу',
     'мяч в ворота': 'победа',
     'европейская сказка': 'европейская мечта',
     'европеизм кажется': 'европеизм, по-видимому,',
     'европеизм parece': 'европеизм, по-видимому,',
-    # Итальянские хвосты (машинный перевод)
     'parece ter Finalmente prevalecido': 'по-видимому, одержал верх',
     'parece ter finalmente prevalecido': 'по-видимому, одержал верх',
 }
@@ -146,6 +168,7 @@ FOREIGN_TITLE_WORDS = [
     ' según ', ' segun ', ' tras ', ' desde ',
     ' democracia ', ' declínio ', ' declinio ',
     ' aponta ', ' relatório ', ' relatorio ',
+    ' trabalhadores ', ' setores ', ' críticos ',
 ]
 
 POST_TRANSLATION_FIXES = {
@@ -216,9 +239,57 @@ def balance_brackets(text: str) -> str:
             text = text[:last_open].rstrip()
     return text.strip()
 
+def remove_inline_foreign(text: str) -> str:
+    """
+    Убирает иностранные вставки внутри русского текста (по границам слов).
+    Например: 'мобилизаторов trabalhadores de setores críticos' → 'мобилизаторов'
+    """
+    if not text:
+        return text
+
+    result = text
+    # Убираем одиночные иностранные слова и короткие фразы
+    for word in FOREIGN_INLINE_WORDS:
+        # Если слово стоит отдельно — удаляем его вместе с предшествующим/последующим пробелом
+        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(word) + r'(?![а-яА-Яa-zA-Z])'
+        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+
+    # Схлопываем лишние пробелы и висячие знаки
+    result = re.sub(r'\s+', ' ', result)
+    result = re.sub(r'\s+([,.;:!?])', r'\1', result)
+    result = re.sub(r'([,.;:!?])\s+', r'\1 ', result)
+    return result.strip()
+
+def remove_repeated_start(text: str) -> str:
+    """
+    Убирает повторяющиеся фразы в начале текста.
+    Пример: 'Украина: «Новых солдат на поле боя нет». Киевский режим хочет мобилизовать рабочих из критических секторов Украины: «Новых солдат на поле боя нет». Киевский режим хочет мобилизовать рабочих из критических секторов'
+    → оставляет только первую часть до повторения.
+    """
+    if not text:
+        return text
+
+    # Разбиваем на предложения
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) < 2:
+        return text
+
+    # Ищем повтор первой фразы в тексте
+    first = sentences[0].strip()
+    if len(first) < 15:
+        return text
+
+    # Нормализованный ключ из первых 40 символов
+    key = first[:40].lower().strip()
+    for i in range(1, len(sentences)):
+        if sentences[i].lower().strip().startswith(key):
+            # Нашли повтор — оставляем всё до него
+            logger.info(f"⏭️ Отсечён повтор с {i+1}-го предложения")
+            return ' '.join(sentences[:i]).strip()
+
+    return text
+
 def is_non_english_body(text: str) -> bool:
-    """Определяет, что тело статьи на итальянском/испанском/португальском,
-    а не на английском."""
     if not text:
         return False
     text_lower = ' ' + text.lower() + ' '
@@ -228,15 +299,9 @@ def is_non_english_body(text: str) -> bool:
     return False
 
 def cut_non_english_tail(text: str) -> str:
-    """
-    Если в тексте есть хвост на иностранном языке (итальянский, испанский,
-    португальский), обрезаем его — оставляем только русские/английские части.
-    """
     if not text:
         return text
 
-    # Разбиваем по абзацам и идём с начала.
-    # Как только встречаем абзац, где много иностранных маркеров или мало кириллицы — стоп.
     paragraphs = text.split('\n\n')
     clean = []
     for p in paragraphs:
@@ -244,17 +309,14 @@ def cut_non_english_tail(text: str) -> str:
         if not p_stripped:
             continue
 
-        # Считаем долю кириллицы
         cyr = len(re.findall(r'[а-яА-ЯёЁ]', p_stripped))
         total = len(re.findall(r'\w', p_stripped))
         cyr_ratio = cyr / total if total > 0 else 0
 
-        # Если в абзаце больше половины не-кириллических букв и есть иностранные маркеры — стоп
         if cyr_ratio < 0.5 and is_non_english_body(p_stripped):
             logger.info(f"⏭️ Отсечён иностранный хвост: {p_stripped[:60]}...")
             break
 
-        # Если в абзаце почти нет кириллицы и есть латинские «слипшиеся» слова длиной 12+ — стоп
         long_latin = re.findall(r'\b[a-zA-Z]{12,}\b', p_stripped)
         if cyr_ratio < 0.3 and len(long_latin) >= 2:
             logger.info(f"⏭️ Отсечён хвост с длинными латинскими словами: {p_stripped[:60]}...")
@@ -278,11 +340,9 @@ def remove_junk_paragraphs(text: str) -> str:
     return '\n\n'.join(clean).strip()
 
 def apply_idiom_fixes(text: str) -> str:
-    """Заменяет калькированные фразы и идиомы на литературные."""
     if not text:
         return text
     result = text
-    # Многословные — сначала, чтобы не разбивались
     multiword = {k: v for k, v in IDIOM_FIXES.items() if ' ' in k}
     for src, dst in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(src) + r'(?![а-яА-Яa-zA-Z])'
@@ -298,10 +358,13 @@ def postprocess_translation(text: str) -> str:
         return text
     result = text
 
-    # 1. Идиомы и кальки
+    # 1. Убираем иностранные вставки внутри русского текста
+    result = remove_inline_foreign(result)
+
+    # 2. Идиомы и кальки
     result = apply_idiom_fixes(result)
 
-    # 2. Словарные замены
+    # 3. Словарные замены
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
@@ -311,7 +374,10 @@ def postprocess_translation(text: str) -> str:
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
 
-    # 3. Очистка лишних пробелов
+    # 4. Убираем повтор в начале
+    result = remove_repeated_start(result)
+
+    # 5. Очистка лишних пробелов
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
@@ -1189,7 +1255,6 @@ class NewsBot:
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
 
             content_ru = unescape_html(content_ru)
-            # Отсекаем иностранные хвосты
             content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
 
