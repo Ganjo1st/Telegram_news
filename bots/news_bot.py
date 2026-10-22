@@ -67,7 +67,6 @@ EXCLUDED_AUTHORS = [
 ]
 
 JUNK_PHRASES = [
-    # португальские служебные хвосты Global Research
     'artigo em inglês', 'artigo em ingles',
     'membro da associação', 'membro da associacao',
     'comentário à', 'comentario a',
@@ -80,7 +79,6 @@ JUNK_PHRASES = [
     'en español', 'en espanol',
     'leer más', 'leer mas', 'read in english',
     'this article was originally published',
-    # футеры Global Research (русские варианты и английские оригиналы)
     'комментируйте статьи о глобальных исследованиях',
     'комментарий к статьям глобальных исследований',
     'comment on global research articles',
@@ -93,7 +91,6 @@ JUNK_PHRASES = [
     'share this article',
     'read more articles',
     'читайте больше статей',
-    # футеры Global Research Books
     'станьте участником',
     'стать участником',
     'global researchfree books',
@@ -115,7 +112,6 @@ JUNK_PHRASES = [
     'global research ebook',
 ]
 
-# ========== МАРКЕРЫ ИНОСТРАННЫХ ЯЗЫКОВ В ТЕЛЕ СТАТЬИ ==========
 NON_ENGLISH_MARKERS = [
     ' sono ', ' della ', ' degli ', ' delle ', ' nella ', ' nelle ', ' questo ', ' questa ',
     ' questi ', ' queste ', ' perché ', ' perche ', ' dopo ', ' fatto ', ' stato ', ' stata ',
@@ -123,10 +119,8 @@ NON_ENGLISH_MARKERS = [
     ' também ', ' tambem ', ' porque ', ' onde ', ' quando ', ' enquanto ',
     ' está ', ' esta ', ' são ', ' sao ', ' têm ', ' tem ',
     ' según ', ' segun ', ' donde ', ' cuando ', ' mientras ', ' hacia ', ' desde ', ' hasta ',
-    ' хотя ', ' хотя ',
 ]
 
-# ========== СЛОВА-МАРКЕРЫ ПОРТУГАЛЬСКОГО/ИСПАНСКОГО (для вставок внутри предложений) ==========
 FOREIGN_INLINE_WORDS = [
     'trabalhadores', 'setores', 'críticos', 'criticos',
     'não', 'nao', 'será', 'sera', 'para', 'como', 'também', 'tambem',
@@ -137,7 +131,6 @@ FOREIGN_INLINE_WORDS = [
     'gobierno', 'presidente', 'política', 'politica',
 ]
 
-# ========== ЛИТЕРАТУРНЫЕ ЗАМЕНЫ ИДИОМ ==========
 IDIOM_FIXES = {
     'забивает мяч в': 'одерживает верх в',
     'забивает гол в': 'одерживает верх в',
@@ -240,50 +233,34 @@ def balance_brackets(text: str) -> str:
     return text.strip()
 
 def remove_inline_foreign(text: str) -> str:
-    """
-    Убирает иностранные вставки внутри русского текста (по границам слов).
-    Например: 'мобилизаторов trabalhadores de setores críticos' → 'мобилизаторов'
-    """
     if not text:
         return text
 
     result = text
-    # Убираем одиночные иностранные слова и короткие фразы
     for word in FOREIGN_INLINE_WORDS:
-        # Если слово стоит отдельно — удаляем его вместе с предшествующим/последующим пробелом
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(word) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
 
-    # Схлопываем лишние пробелы и висячие знаки
     result = re.sub(r'\s+', ' ', result)
     result = re.sub(r'\s+([,.;:!?])', r'\1', result)
     result = re.sub(r'([,.;:!?])\s+', r'\1 ', result)
     return result.strip()
 
 def remove_repeated_start(text: str) -> str:
-    """
-    Убирает повторяющиеся фразы в начале текста.
-    Пример: 'Украина: «Новых солдат на поле боя нет». Киевский режим хочет мобилизовать рабочих из критических секторов Украины: «Новых солдат на поле боя нет». Киевский режим хочет мобилизовать рабочих из критических секторов'
-    → оставляет только первую часть до повторения.
-    """
     if not text:
         return text
 
-    # Разбиваем на предложения
     sentences = re.split(r'(?<=[.!?])\s+', text)
     if len(sentences) < 2:
         return text
 
-    # Ищем повтор первой фразы в тексте
     first = sentences[0].strip()
     if len(first) < 15:
         return text
 
-    # Нормализованный ключ из первых 40 символов
     key = first[:40].lower().strip()
     for i in range(1, len(sentences)):
         if sentences[i].lower().strip().startswith(key):
-            # Нашли повтор — оставляем всё до него
             logger.info(f"⏭️ Отсечён повтор с {i+1}-го предложения")
             return ' '.join(sentences[:i]).strip()
 
@@ -358,13 +335,9 @@ def postprocess_translation(text: str) -> str:
         return text
     result = text
 
-    # 1. Убираем иностранные вставки внутри русского текста
     result = remove_inline_foreign(result)
-
-    # 2. Идиомы и кальки
     result = apply_idiom_fixes(result)
 
-    # 3. Словарные замены
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
@@ -374,10 +347,7 @@ def postprocess_translation(text: str) -> str:
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
 
-    # 4. Убираем повтор в начале
     result = remove_repeated_start(result)
-
-    # 5. Очистка лишних пробелов
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
@@ -490,7 +460,8 @@ def extract_image_url_for_infobrics(soup, base_url: str):
 
     return None
 
-def extract_image_url_generic(soup, base_url: str):
+def collect_image_candidates_generic(soup, base_url: str) -> list:
+    """Собирает все возможные URL картинок для универсального поиска."""
     candidates = []
 
     meta_img = soup.find('meta', property='og:image')
@@ -511,12 +482,19 @@ def extract_image_url_generic(soup, base_url: str):
             candidates.append(img.get('src', ''))
         for img in article.find_all('img', attrs={'data-src': True}):
             candidates.append(img.get('data-src', ''))
+        for source in article.find_all('source', attrs={'srcset': True}):
+            srcset = source.get('srcset', '')
+            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
+            if first:
+                candidates.append(first)
 
     for img in soup.find_all('img', src=True):
         candidates.append(img.get('src', ''))
     for img in soup.find_all('img', attrs={'data-src': True}):
         candidates.append(img.get('data-src', ''))
 
+    # Нормализуем
+    normalized = []
     for raw in candidates:
         if not raw:
             continue
@@ -533,16 +511,21 @@ def extract_image_url_generic(soup, base_url: str):
         if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
             continue
 
-        return url
+        if url not in normalized:
+            normalized.append(url)
 
-    return None
+    return normalized
 
-def extract_image_url(soup, base_url: str, source_name: str = ''):
+def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
+    """Возвращает первый подходящий URL картинки (без загрузки)."""
     if source_name == 'InfoBrics':
         return extract_image_url_for_infobrics(soup, base_url)
-    return extract_image_url_generic(soup, base_url)
+
+    candidates = collect_image_candidates_generic(soup, base_url)
+    return candidates[0] if candidates else None
 
 def fetch_zerohedge_image(image_url: str) -> bytes:
+    """Загрузка картинки ZeroHedge с расширенными заголовками."""
     if not image_url:
         return None
 
@@ -572,25 +555,47 @@ def fetch_zerohedge_image(image_url: str) -> bytes:
 
     return None
 
+def fetch_image_for_zerohedge(soup, base_url: str) -> bytes:
+    """
+    Специальная загрузка картинки для ZeroHedge.
+    Перебираем ВСЕ кандидаты (og:image, twitter:image, img в article, все img),
+    и для каждого пробуем загрузить. Возвращаем первые байты, которые реально картинка.
+    """
+    candidates = collect_image_candidates_generic(soup, base_url)
+
+    if not candidates:
+        logger.warning("ZeroHedge: нет ни одного кандидата на картинку")
+        return None
+
+    logger.info(f"ZeroHedge: {len(candidates)} кандидатов на картинку")
+
+    for i, url in enumerate(candidates):
+        logger.info(f"  ZeroHedge кандидат {i+1}/{len(candidates)}: {url[:70]}")
+        content = fetch_zerohedge_image(url)
+        if content:
+            return content
+
+    logger.warning("ZeroHedge: ни один кандидат не загрузился")
+    return None
+
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
+    """
+    Стандартная загрузка картинки (для всех, кроме ZeroHedge).
+    Для ZeroHedge используется отдельная логика в publish().
+    """
     if image_url:
-        if source == 'ZeroHedge' and 'zerohedge.com' in image_url:
-            content = fetch_zerohedge_image(image_url)
-            if content:
-                return content
-        else:
-            try:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
-                if referer:
-                    headers['Referer'] = referer
-                r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
-                ct = r.headers.get('Content-Type', '').lower()
-                if r.status_code == 200 and ct.startswith('image/'):
-                    return r.content
-            except Exception as e:
-                logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            if referer:
+                headers['Referer'] = referer
+            r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
+            ct = r.headers.get('Content-Type', '').lower()
+            if r.status_code == 200 and ct.startswith('image/'):
+                return r.content
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
 
     if FALLBACK_IMAGE_URL:
         try:
@@ -1033,7 +1038,14 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            image_url = extract_image_url(soup, base_url, source_name)
+            # Пробуем собрать ВСЕ кандидаты картинок — пригодится для ZeroHedge
+            if source_name == 'ZeroHedge':
+                # Не проверяем загрузку тут, оставим это в publish, но соберём кандидатов
+                candidates = collect_image_candidates_generic(soup, base_url)
+                image_url = candidates[0] if candidates else None
+            else:
+                image_url = extract_image_url(soup, base_url, source_name)
+
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
             else:
@@ -1124,7 +1136,11 @@ class NewsBot:
                 'content': content,
                 'image': image_url,
                 'source': source_name,
-                'url': url
+                'url': url,
+                # для ZeroHedge сохраним всех кандидатов (как список URL)
+                'image_candidates': (
+                    collect_image_candidates_generic(soup, base_url) if source_name == 'ZeroHedge' else []
+                ),
             }
 
         except Exception as e:
@@ -1200,6 +1216,7 @@ class NewsBot:
             url = post.get('url', '')
             image_url = post.get('image')
             source_name = post.get('source', '')
+            image_candidates = post.get('image_candidates', [])
 
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
@@ -1267,7 +1284,35 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            img_bytes = fetch_image_with_fallback(image_url, referer=url, source=source_name)
+            # ========== ЗАГРУЗКА КАРТИНКИ ==========
+            img_bytes = None
+
+            if source_name == 'ZeroHedge':
+                # Для ZeroHedge перебираем ВСЕ кандидаты, пока не найдём работающий
+                if image_url:
+                    logger.info(f"ZeroHedge: пробуем первую картинку {image_url[:60]}")
+                    img_bytes = fetch_zerohedge_image(image_url)
+
+                if not img_bytes and image_candidates:
+                    for i, cand_url in enumerate(image_candidates):
+                        if cand_url == image_url:
+                            continue
+                        logger.info(f"ZeroHedge: пробуем альтернативу {i+1}: {cand_url[:60]}")
+                        img_bytes = fetch_zerohedge_image(cand_url)
+                        if img_bytes:
+                            break
+            else:
+                img_bytes = fetch_image_with_fallback(image_url, referer=url, source=source_name)
+
+            # Если для ZeroHedge не получилось и кандидатов нет — пробуем заглушку
+            if not img_bytes:
+                try:
+                    r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
+                    if r.status_code == 200 and r.headers.get('Content-Type', '').startswith('image/'):
+                        logger.info("🖼️ Использована заглушка для картинки")
+                        img_bytes = r.content
+                except Exception as e:
+                    logger.error(f"Не удалось загрузить заглушку: {e}")
 
             if img_bytes:
                 try:
