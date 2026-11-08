@@ -15,7 +15,7 @@ import re
 import html as html_module
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 import feedparser
@@ -367,6 +367,7 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
     if cut_pos != -1:
         return text[:cut_pos].strip()
 
+    # Если нет знака конца предложения — не рвём по середине
     for punct in ['.', '!', '?']:
         m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
         if m:
@@ -409,89 +410,76 @@ def is_bad_image_url(url: str) -> bool:
         return True
     return False
 
-def extract_image_url_for_infobrics(soup, base_url: str):
-    article = soup.find('article')
-    if not article:
-        article = soup.find('div', class_=re.compile(r'(article|post|news)', re.IGNORECASE))
-
-    candidates = []
-
-    if article:
-        for img in article.find_all('img', src=True):
-            candidates.append(img.get('src', ''))
-        for img in article.find_all('img', attrs={'data-src': True}):
-            candidates.append(img.get('data-src', ''))
-        for source in article.find_all('source', attrs={'srcset': True}):
-            srcset = source.get('srcset', '')
-            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
-            if first:
-                candidates.append(first)
-
-    if not candidates:
-        for img in soup.find_all('img', src=True):
-            candidates.append(img.get('src', ''))
-        for img in soup.find_all('img', attrs={'data-src': True}):
-            candidates.append(img.get('data-src', ''))
-        for source in soup.find_all('source', attrs={'srcset': True}):
-            srcset = source.get('srcset', '')
-            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
-            if first:
-                candidates.append(first)
-
-    for raw in candidates:
-        if not raw:
-            continue
-        url = raw.strip()
-        if url.startswith('//'):
-            url = 'https:' + url
-        elif url.startswith('/'):
-            url = urljoin(base_url, url)
-        elif not url.startswith('http'):
-            continue
-
-        if re.search(r'(icon|logo|avatar|flag|sprite|placeholder)', url, re.IGNORECASE):
-            continue
-        if is_bad_image_url(url):
-            continue
-        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
-            continue
-
-        return url
-
-    return None
-
+# ========== СБОР КАНДИДАТОВ КАРТИНОК ==========
 def collect_image_candidates_generic(soup, base_url: str) -> list:
-    """Собирает все возможные URL картинок для универсального поиска."""
+    """Собирает все возможные URL картинок со страницы."""
     candidates = []
 
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        candidates.append(meta_img['content'])
+    # 1. og:image
+    for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
+        tag = soup.find('meta', property=prop)
+        if tag and tag.get('content'):
+            candidates.append(tag['content'])
 
-    meta_img_secure = soup.find('meta', property='og:image:secure_url')
-    if meta_img_secure and meta_img_secure.get('content'):
-        candidates.append(meta_img_secure['content'])
+    # 2. twitter:image
+    tag = soup.find('meta', attrs={'name': 'twitter:image'})
+    if tag and tag.get('content'):
+        candidates.append(tag['content'])
+    tag = soup.find('meta', attrs={'name': 'twitter:image:src'})
+    if tag and tag.get('content'):
+        candidates.append(tag['content'])
 
-    meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
-    if meta_twitter and meta_twitter.get('content'):
-        candidates.append(meta_twitter['content'])
-
-    article = soup.find('article')
-    if article:
-        for img in article.find_all('img', src=True):
+    # 3. <img> в article, figure, picture
+    for container in [soup.find('article'), soup.find('main'), soup]:
+        if not container:
+            continue
+        for img in container.find_all('img', src=True):
             candidates.append(img.get('src', ''))
-        for img in article.find_all('img', attrs={'data-src': True}):
+        for img in container.find_all('img', attrs={'data-src': True}):
             candidates.append(img.get('data-src', ''))
-        for source in article.find_all('source', attrs={'srcset': True}):
+        for img in container.find_all('img', attrs={'data-srcset': True}):
+            srcset = img.get('data-srcset', '')
+            for part in srcset.split(','):
+                u = part.strip().split(' ')[0]
+                if u:
+                    candidates.append(u)
+        for img in container.find_all('img', attrs={'srcset': True}):
+            srcset = img.get('srcset', '')
+            for part in srcset.split(','):
+                u = part.strip().split(' ')[0]
+                if u:
+                    candidates.append(u)
+        for source in container.find_all('source', attrs={'srcset': True}):
             srcset = source.get('srcset', '')
-            first = srcset.split(',')[0].strip().split(' ')[0] if srcset else ''
-            if first:
-                candidates.append(first)
+            for part in srcset.split(','):
+                u = part.strip().split(' ')[0]
+                if u:
+                    candidates.append(u)
+        for figure in container.find_all('figure'):
+            for img in figure.find_all('img', src=True):
+                candidates.append(img.get('src', ''))
 
-    for img in soup.find_all('img', src=True):
-        candidates.append(img.get('src', ''))
-    for img in soup.find_all('img', attrs={'data-src': True}):
-        candidates.append(img.get('data-src', ''))
+    # 4. JSON-LD image
+    for script in soup.find_all('script', attrs={'type': 'application/ld+json'}):
+        try:
+            data = json.loads(script.string)
+            images = []
+            if isinstance(data, dict):
+                img = data.get('image')
+                if isinstance(img, str):
+                    images.append(img)
+                elif isinstance(img, list):
+                    for it in img:
+                        if isinstance(it, str):
+                            images.append(it)
+                        elif isinstance(it, dict) and it.get('url'):
+                            images.append(it['url'])
+                elif isinstance(img, dict) and img.get('url'):
+                    images.append(img['url'])
+            for it in images:
+                candidates.append(it)
+        except Exception:
+            continue
 
     # Нормализуем
     normalized = []
@@ -508,7 +496,7 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
 
         if is_bad_image_url(url):
             continue
-        if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
+        if not re.search(r'\.(jpg|jpeg|png|webp|gif)(\?|$)', url, re.IGNORECASE):
             continue
 
         if url not in normalized:
@@ -516,24 +504,27 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
 
     return normalized
 
+def extract_image_url_for_infobrics(soup, base_url: str) -> str:
+    return None
+
 def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
     """Возвращает первый подходящий URL картинки (без загрузки)."""
-    if source_name == 'InfoBrics':
-        return extract_image_url_for_infobrics(soup, base_url)
-
     candidates = collect_image_candidates_generic(soup, base_url)
     return candidates[0] if candidates else None
 
-def fetch_zerohedge_image(image_url: str) -> bytes:
-    """Загрузка картинки ZeroHedge с расширенными заголовками."""
-    if not image_url:
+# ========== ЗАГРУЗКА КАРТИНКИ ZEROEDGE ==========
+def try_download_image(url: str, referer: str = None) -> bytes:
+    """Пробует скачать картинку с разными заголовками."""
+    if not url:
         return None
 
-    base_headers = {
+    headers_base = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.zerohedge.com/',
-        'Origin': 'https://www.zerohedge.com',
     }
+    if referer:
+        headers_base['Referer'] = referer
+        p = urlparse(referer)
+        headers_base['Origin'] = f'{p.scheme}://{p.netloc}'
 
     accept_variants = [
         'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
@@ -541,48 +532,43 @@ def fetch_zerohedge_image(image_url: str) -> bytes:
         '*/*',
     ]
 
-    for accept in accept_variants:
-        try:
-            headers = dict(base_headers)
-            headers['Accept'] = accept
-            r = requests.get(image_url, headers=headers, timeout=20, allow_redirects=True)
-            ct = r.headers.get('Content-Type', '').lower()
-            logger.info(f"ZeroHedge image: {image_url[:60]} → {r.status_code}, {ct[:40]}")
-            if r.status_code == 200 and ct.startswith('image/'):
-                return r.content
-        except Exception as e:
-            logger.warning(f"ZeroHedge image ошибка ({accept[:20]}): {e}")
+    variants = [url]
+    # Если есть query — пробуем и без него
+    if '?' in url:
+        variants.append(url.split('?')[0])
 
+    for u in variants:
+        for accept in accept_variants:
+            try:
+                headers = dict(headers_base)
+                headers['Accept'] = accept
+                r = requests.get(u, headers=headers, timeout=20, allow_redirects=True)
+                ct = r.headers.get('Content-Type', '').lower()
+                if r.status_code == 200 and ct.startswith('image/') and len(r.content) > 2000:
+                    logger.info(f"  ✅ Картинка скачана: {u[:70]} → {len(r.content)} байт")
+                    return r.content
+            except Exception as e:
+                logger.warning(f"  ⚠️ Ошибка загрузки {u[:60]}: {e}")
     return None
 
-def fetch_image_for_zerohedge(soup, base_url: str) -> bytes:
-    """
-    Специальная загрузка картинки для ZeroHedge.
-    Перебираем ВСЕ кандидаты (og:image, twitter:image, img в article, все img),
-    и для каждого пробуем загрузить. Возвращаем первые байты, которые реально картинка.
-    """
-    candidates = collect_image_candidates_generic(soup, base_url)
-
-    if not candidates:
-        logger.warning("ZeroHedge: нет ни одного кандидата на картинку")
+def fetch_image_for_zerohedge(image_candidates: list) -> bytes:
+    """Перебирает всех кандидатов и загружает первый рабочий."""
+    if not image_candidates:
         return None
 
-    logger.info(f"ZeroHedge: {len(candidates)} кандидатов на картинку")
+    logger.info(f"ZeroHedge: пробуем {len(image_candidates)} кандидатов на картинку")
 
-    for i, url in enumerate(candidates):
-        logger.info(f"  ZeroHedge кандидат {i+1}/{len(candidates)}: {url[:70]}")
-        content = fetch_zerohedge_image(url)
+    for i, url in enumerate(image_candidates):
+        logger.info(f"  Кандидат {i+1}/{len(image_candidates)}: {url[:70]}")
+        content = try_download_image(url, referer='https://www.zerohedge.com/')
         if content:
             return content
 
-    logger.warning("ZeroHedge: ни один кандидат не загрузился")
+    logger.warning("ZeroHedge: ни один кандидат не подошёл")
     return None
 
-def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
-    """
-    Стандартная загрузка картинки (для всех, кроме ZeroHedge).
-    Для ZeroHedge используется отдельная логика в publish().
-    """
+def fetch_image_with_fallback(image_url: str, referer: str = None) -> bytes:
+    """Стандартная загрузка картинки для не-ZeroHedge."""
     if image_url:
         try:
             headers = {
@@ -592,7 +578,7 @@ def fetch_image_with_fallback(image_url: str, referer: str = None, source: str =
                 headers['Referer'] = referer
             r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
             ct = r.headers.get('Content-Type', '').lower()
-            if r.status_code == 200 and ct.startswith('image/'):
+            if r.status_code == 200 and ct.startswith('image/') and len(r.content) > 1000:
                 return r.content
         except Exception as e:
             logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
@@ -1038,18 +1024,13 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # Пробуем собрать ВСЕ кандидаты картинок — пригодится для ZeroHedge
-            if source_name == 'ZeroHedge':
-                # Не проверяем загрузку тут, оставим это в publish, но соберём кандидатов
-                candidates = collect_image_candidates_generic(soup, base_url)
-                image_url = candidates[0] if candidates else None
-            else:
-                image_url = extract_image_url(soup, base_url, source_name)
+            image_candidates = collect_image_candidates_generic(soup, base_url)
+            image_url = image_candidates[0] if image_candidates else None
 
             if image_url:
-                logger.info(f"Найдено изображение: {image_url[:80]}...")
+                logger.info(f"Найдено {len(image_candidates)} кандидатов, первый: {image_url[:80]}...")
             else:
-                logger.info(f"⚠️ Изображение не найдено, будет использована заглушка")
+                logger.info(f"⚠️ Кандидаты на изображение не найдены")
 
             content_parts = []
             content_container = None
@@ -1135,12 +1116,9 @@ class NewsBot:
             return {
                 'content': content,
                 'image': image_url,
+                'image_candidates': image_candidates,
                 'source': source_name,
-                'url': url,
-                # для ZeroHedge сохраним всех кандидатов (как список URL)
-                'image_candidates': (
-                    collect_image_candidates_generic(soup, base_url) if source_name == 'ZeroHedge' else []
-                ),
+                'url': url
             }
 
         except Exception as e:
@@ -1215,8 +1193,8 @@ class NewsBot:
             content_en = post.get('content', '')
             url = post.get('url', '')
             image_url = post.get('image')
-            source_name = post.get('source', '')
             image_candidates = post.get('image_candidates', [])
+            source_name = post.get('source', '')
 
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
@@ -1284,27 +1262,13 @@ class NewsBot:
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
-            # ========== ЗАГРУЗКА КАРТИНКИ ==========
-            img_bytes = None
-
+            # ========== КАРТИНКА ==========
             if source_name == 'ZeroHedge':
-                # Для ZeroHedge перебираем ВСЕ кандидаты, пока не найдём работающий
-                if image_url:
-                    logger.info(f"ZeroHedge: пробуем первую картинку {image_url[:60]}")
-                    img_bytes = fetch_zerohedge_image(image_url)
-
-                if not img_bytes and image_candidates:
-                    for i, cand_url in enumerate(image_candidates):
-                        if cand_url == image_url:
-                            continue
-                        logger.info(f"ZeroHedge: пробуем альтернативу {i+1}: {cand_url[:60]}")
-                        img_bytes = fetch_zerohedge_image(cand_url)
-                        if img_bytes:
-                            break
+                img_bytes = fetch_image_for_zerohedge(image_candidates)
             else:
-                img_bytes = fetch_image_with_fallback(image_url, referer=url, source=source_name)
+                img_bytes = fetch_image_with_fallback(image_url, referer=url)
 
-            # Если для ZeroHedge не получилось и кандидатов нет — пробуем заглушку
+            # Финальный фолбэк на заглушку
             if not img_bytes:
                 try:
                     r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
