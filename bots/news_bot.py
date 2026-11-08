@@ -235,12 +235,10 @@ def balance_brackets(text: str) -> str:
 def remove_inline_foreign(text: str) -> str:
     if not text:
         return text
-
     result = text
     for word in FOREIGN_INLINE_WORDS:
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(word) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-
     result = re.sub(r'\s+', ' ', result)
     result = re.sub(r'\s+([,.;:!?])', r'\1', result)
     result = re.sub(r'([,.;:!?])\s+', r'\1 ', result)
@@ -249,21 +247,17 @@ def remove_inline_foreign(text: str) -> str:
 def remove_repeated_start(text: str) -> str:
     if not text:
         return text
-
     sentences = re.split(r'(?<=[.!?])\s+', text)
     if len(sentences) < 2:
         return text
-
     first = sentences[0].strip()
     if len(first) < 15:
         return text
-
     key = first[:40].lower().strip()
     for i in range(1, len(sentences)):
         if sentences[i].lower().strip().startswith(key):
             logger.info(f"⏭️ Отсечён повтор с {i+1}-го предложения")
             return ' '.join(sentences[:i]).strip()
-
     return text
 
 def is_non_english_body(text: str) -> bool:
@@ -271,36 +265,28 @@ def is_non_english_body(text: str) -> bool:
         return False
     text_lower = ' ' + text.lower() + ' '
     hits = sum(1 for marker in NON_ENGLISH_MARKERS if marker in text_lower)
-    if hits >= 3:
-        return True
-    return False
+    return hits >= 3
 
 def cut_non_english_tail(text: str) -> str:
     if not text:
         return text
-
     paragraphs = text.split('\n\n')
     clean = []
     for p in paragraphs:
         p_stripped = p.strip()
         if not p_stripped:
             continue
-
         cyr = len(re.findall(r'[а-яА-ЯёЁ]', p_stripped))
         total = len(re.findall(r'\w', p_stripped))
         cyr_ratio = cyr / total if total > 0 else 0
-
         if cyr_ratio < 0.5 and is_non_english_body(p_stripped):
             logger.info(f"⏭️ Отсечён иностранный хвост: {p_stripped[:60]}...")
             break
-
         long_latin = re.findall(r'\b[a-zA-Z]{12,}\b', p_stripped)
         if cyr_ratio < 0.3 and len(long_latin) >= 2:
             logger.info(f"⏭️ Отсечён хвост с длинными латинскими словами: {p_stripped[:60]}...")
             break
-
         clean.append(p_stripped)
-
     return '\n\n'.join(clean).strip()
 
 def remove_junk_paragraphs(text: str) -> str:
@@ -334,10 +320,8 @@ def postprocess_translation(text: str) -> str:
     if not text:
         return text
     result = text
-
     result = remove_inline_foreign(result)
     result = apply_idiom_fixes(result)
-
     multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
     for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
@@ -346,7 +330,6 @@ def postprocess_translation(text: str) -> str:
     for eng, rus in single.items():
         pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
         result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-
     result = remove_repeated_start(result)
     result = re.sub(r'\s+', ' ', result).strip()
     return result
@@ -357,17 +340,13 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
     text = text.strip()
     if len(text) <= max_len:
         return text
-
     cut_pos = -1
     for punct in ['.', '!', '?']:
         for m in re.finditer(re.escape(punct) + r'(?=\s|$)', text[:max_len + 1]):
             if m.end() > cut_pos:
                 cut_pos = m.end()
-
     if cut_pos != -1:
         return text[:cut_pos].strip()
-
-    # Если нет знака конца предложения — не рвём по середине
     for punct in ['.', '!', '?']:
         m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
         if m:
@@ -375,7 +354,6 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
             if end_pos <= max_len * 2:
                 return text[:end_pos].strip()
             break
-
     return ""
 
 def fetch_url(url: str, timeout: int = REQUEST_TIMEOUT):
@@ -410,26 +388,31 @@ def is_bad_image_url(url: str) -> bool:
         return True
     return False
 
-# ========== СБОР КАНДИДАТОВ КАРТИНОК ==========
-def collect_image_candidates_generic(soup, base_url: str) -> list:
-    """Собирает все возможные URL картинок со страницы."""
-    candidates = []
+def looks_like_image(data: bytes) -> bool:
+    """Проверяет сигнатуру картинки: JPEG, PNG, WebP, GIF."""
+    if not data or len(data) < 12:
+        return False
+    if data[:3] == b'\xff\xd8\xff':
+        return True
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return True
+    if data[:4] == b'GIF8':
+        return True
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return True
+    return False
 
-    # 1. og:image
+def collect_image_candidates_generic(soup, base_url: str) -> list:
+    candidates = []
     for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
         tag = soup.find('meta', property=prop)
         if tag and tag.get('content'):
             candidates.append(tag['content'])
+    for name in ['twitter:image', 'twitter:image:src']:
+        tag = soup.find('meta', attrs={'name': name})
+        if tag and tag.get('content'):
+            candidates.append(tag['content'])
 
-    # 2. twitter:image
-    tag = soup.find('meta', attrs={'name': 'twitter:image'})
-    if tag and tag.get('content'):
-        candidates.append(tag['content'])
-    tag = soup.find('meta', attrs={'name': 'twitter:image:src'})
-    if tag and tag.get('content'):
-        candidates.append(tag['content'])
-
-    # 3. <img> в article, figure, picture
     for container in [soup.find('article'), soup.find('main'), soup]:
         if not container:
             continue
@@ -459,7 +442,6 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             for img in figure.find_all('img', src=True):
                 candidates.append(img.get('src', ''))
 
-    # 4. JSON-LD image
     for script in soup.find_all('script', attrs={'type': 'application/ld+json'}):
         try:
             data = json.loads(script.string)
@@ -481,7 +463,6 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
         except Exception:
             continue
 
-    # Нормализуем
     normalized = []
     for raw in candidates:
         if not raw:
@@ -493,28 +474,31 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             url = urljoin(base_url, url)
         elif not url.startswith('http'):
             continue
-
         if is_bad_image_url(url):
             continue
         if not re.search(r'\.(jpg|jpeg|png|webp|gif)(\?|$)', url, re.IGNORECASE):
             continue
-
         if url not in normalized:
             normalized.append(url)
-
     return normalized
 
-def extract_image_url_for_infobrics(soup, base_url: str) -> str:
-    return None
-
 def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
-    """Возвращает первый подходящий URL картинки (без загрузки)."""
     candidates = collect_image_candidates_generic(soup, base_url)
     return candidates[0] if candidates else None
 
-# ========== ЗАГРУЗКА КАРТИНКИ ZEROEDGE ==========
+def is_zerohedge_cdn(url: str) -> bool:
+    return 'zhedge.com' in url or 'zerohedge.com' in url or 'cms.zerohedge.com' in url
+
+def transform_zerohedge_url(url: str, fmt: str = 'jpeg') -> str:
+    """Меняет format=auto → format=jpeg (или другой) в CDN-URL ZeroHedge."""
+    if 'format=auto' in url:
+        return url.replace('format=auto', f'format={fmt}')
+    if 'format=' not in url:
+        sep = '&' if '?' in url else '?'
+        return f"{url}{sep}format={fmt}"
+    return url
+
 def try_download_image(url: str, referer: str = None) -> bytes:
-    """Пробует скачать картинку с разными заголовками."""
     if not url:
         return None
 
@@ -527,13 +511,20 @@ def try_download_image(url: str, referer: str = None) -> bytes:
         headers_base['Origin'] = f'{p.scheme}://{p.netloc}'
 
     accept_variants = [
-        'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         'image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5',
+        'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         '*/*',
     ]
 
     variants = [url]
-    # Если есть query — пробуем и без него
+    # Для ZeroHedge CDN: пытаемся с format=jpeg, потом без query
+    if is_zerohedge_cdn(url):
+        jpeg_url = transform_zerohedge_url(url, 'jpeg')
+        if jpeg_url != url:
+            variants.insert(0, jpeg_url)
+        png_url = transform_zerohedge_url(url, 'png')
+        if png_url not in variants:
+            variants.append(png_url)
     if '?' in url:
         variants.append(url.split('?')[0])
 
@@ -544,51 +535,46 @@ def try_download_image(url: str, referer: str = None) -> bytes:
                 headers['Accept'] = accept
                 r = requests.get(u, headers=headers, timeout=20, allow_redirects=True)
                 ct = r.headers.get('Content-Type', '').lower()
-                if r.status_code == 200 and ct.startswith('image/') and len(r.content) > 2000:
-                    logger.info(f"  ✅ Картинка скачана: {u[:70]} → {len(r.content)} байт")
-                    return r.content
+                if r.status_code != 200:
+                    continue
+                if not ct.startswith('image/'):
+                    continue
+                if not looks_like_image(r.content):
+                    logger.info(f"  ⚠️ Не картинка по сигнатуре: {u[:60]} ({len(r.content)} байт, {ct[:30]})")
+                    continue
+                if len(r.content) < 3000:
+                    logger.info(f"  ⚠️ Слишком мелкая картинка: {u[:60]} ({len(r.content)} байт)")
+                    continue
+                logger.info(f"  ✅ Картинка скачана: {u[:70]} → {len(r.content)} байт")
+                return r.content
             except Exception as e:
                 logger.warning(f"  ⚠️ Ошибка загрузки {u[:60]}: {e}")
     return None
 
 def fetch_image_for_zerohedge(image_candidates: list) -> bytes:
-    """Перебирает всех кандидатов и загружает первый рабочий."""
     if not image_candidates:
         return None
-
     logger.info(f"ZeroHedge: пробуем {len(image_candidates)} кандидатов на картинку")
-
     for i, url in enumerate(image_candidates):
         logger.info(f"  Кандидат {i+1}/{len(image_candidates)}: {url[:70]}")
         content = try_download_image(url, referer='https://www.zerohedge.com/')
         if content:
             return content
-
     logger.warning("ZeroHedge: ни один кандидат не подошёл")
     return None
 
 def fetch_image_with_fallback(image_url: str, referer: str = None) -> bytes:
-    """Стандартная загрузка картинки для не-ZeroHedge."""
     if image_url:
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            if referer:
-                headers['Referer'] = referer
-            r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
-            ct = r.headers.get('Content-Type', '').lower()
-            if r.status_code == 200 and ct.startswith('image/') and len(r.content) > 1000:
-                return r.content
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
-
+        content = try_download_image(image_url, referer=referer)
+        if content:
+            return content
     if FALLBACK_IMAGE_URL:
         try:
             r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
             if r.status_code == 200 and r.headers.get('Content-Type', '').startswith('image/'):
-                logger.info("🖼️ Использована заглушка для картинки")
-                return r.content
+                if looks_like_image(r.content):
+                    logger.info("🖼️ Использована заглушка для картинки")
+                    return r.content
         except Exception as e:
             logger.error(f"Не удалось загрузить заглушку: {e}")
     return None
@@ -644,9 +630,7 @@ def is_foreign_text(text: str) -> bool:
     if len(foreign_chars) > 3:
         return True
     foreign_words = re.findall(r'\b(el|la|los|las|de|del|en|con|por|para|una|uno|este|esta|como|pero|más|sin|sobre|entre|cuando|donde|qué|quién|también|desde|hasta|hacia|según|tras|durante|contra|mediante)\b', text, re.IGNORECASE)
-    if len(foreign_words) > 5:
-        return True
-    return False
+    return len(foreign_words) > 5
 
 def is_bad_title(title: str) -> bool:
     if not title:
@@ -731,11 +715,9 @@ def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
         return []
     if len(text) <= max_chunk:
         return [text]
-
     chunks = []
     current = ""
     sentences = re.split(r'(?<=[.!?])\s+', text)
-
     for sent in sentences:
         sent = sent.strip()
         if not sent:
@@ -756,10 +738,8 @@ def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
                 if current:
                     chunks.append(current)
                 current = sent
-
     if current:
         chunks.append(current)
-
     return chunks
 
 def translate_text(text: str) -> str:
@@ -767,13 +747,10 @@ def translate_text(text: str) -> str:
         return text
     if re.search('[а-яА-Я]', text):
         return text
-
     chunks = split_into_chunks(text, max_chunk=TRANSLATE_CHUNK_SIZE)
     logger.info(f"  🔪 Разбито на {len(chunks)} кусков")
-
     translated_parts = []
     method_stats = {}
-
     for i, chunk in enumerate(chunks):
         result, method = translate_chunk(chunk)
         if method:
@@ -782,11 +759,9 @@ def translate_text(text: str) -> str:
         else:
             logger.warning(f"  ⚠️ Кусок {i+1}/{len(chunks)} не переведён ({len(chunk)} символов)")
             translated_parts.append(chunk)
-
     if method_stats:
         stats_str = ', '.join(f"{k}: {v}" for k, v in method_stats.items())
         logger.info(f"  ✅ Методы перевода: {stats_str}")
-
     return ' '.join(translated_parts)
 
 # ========== ОСНОВНОЙ КЛАСС ==========
@@ -917,13 +892,11 @@ class NewsBot:
     def _can_post(self) -> bool:
         if IS_MANUAL_RUN:
             return True
-
         now = get_local_time()
         hour = now.hour
         if 23 <= hour or hour < 7:
             logger.info("Ночное время, публикация отложена")
             return False
-
         today = now.date()
         today_posts = 0
         last_times = []
@@ -935,11 +908,9 @@ class NewsBot:
                     last_times.append(pt)
             except:
                 continue
-
         if today_posts >= MAX_POSTS_PER_DAY:
             logger.info(f"Дневной лимит {MAX_POSTS_PER_DAY} достигнут")
             return False
-
         if last_times:
             last_times.sort(reverse=True)
             elapsed = (now - last_times[0]).total_seconds()
@@ -947,7 +918,6 @@ class NewsBot:
                 wait = (MIN_INTERVAL - elapsed) // 60
                 logger.info(f"Минимальный интервал: следующий пост через {wait:.0f} минут")
                 return False
-
         return True
 
     def _next_delay(self) -> int:
@@ -966,26 +936,20 @@ class NewsBot:
         try:
             feed = feedparser.parse(url)
             articles = []
-
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
-
                 if re.search(r'(избранные статьи|featured articles|selected articles)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
-
                 if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
-
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
-
                 if is_foreign_title(title):
                     logger.info(f"⏭️ {source_name}: пропущен нерусский/неанглийский заголовок '{title[:50]}...'")
                     continue
-
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
                     if summary:
@@ -993,18 +957,15 @@ class NewsBot:
                         title = summary.split('.')[0].strip()
                         if len(title) < 5 and len(summary) > 10:
                             title = summary[:100].strip()
-
                 title = clean_title(title)
                 if not title:
                     continue
-
                 articles.append({
                     'url': entry.link,
                     'title': title,
                     'source': source_name
                 })
                 logger.info(f"{source_name} RSS: {title[:80]}...")
-
             return articles
         except Exception as e:
             logger.error(f"❌ Ошибка RSS {source_name}: {e}")
@@ -1016,17 +977,13 @@ class NewsBot:
             response = fetch_url(url)
             if not response:
                 return None
-
             if 'substack.com' in url or 'asia-pacificresearch.com' in url:
                 logger.warning(f"⏭️ {source_name}: статья пропущена (403)")
                 return None
-
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
-
             image_candidates = collect_image_candidates_generic(soup, base_url)
             image_url = image_candidates[0] if image_candidates else None
-
             if image_url:
                 logger.info(f"Найдено {len(image_candidates)} кандидатов, первый: {image_url[:80]}...")
             else:
@@ -1035,57 +992,41 @@ class NewsBot:
             content_parts = []
             content_container = None
             selectors = [
-                'article',
-                'div.entry-content',
-                'div.post-content',
-                'div.content',
-                'div.article-content',
-                'div.main-content',
-                'div.article__text',
-                'main',
-                'div.body'
+                'article', 'div.entry-content', 'div.post-content', 'div.content',
+                'div.article-content', 'div.main-content', 'div.article__text',
+                'main', 'div.body'
             ]
-
             for selector in selectors:
                 if selector.startswith('div.') or selector.startswith('main') or selector == 'article':
                     container = soup.select_one(selector)
                     if container:
                         content_container = container
                         break
-
             if content_container:
                 for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
-
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-
                     if is_excluded_author(text):
                         logger.info(f"⏭️ Пропущен абзац с именем автора")
                         continue
-
                     if contains_link(text):
                         logger.info(f"⏭️ Пропущен абзац со ссылкой")
                         continue
-
                     if is_foreign_text(text):
                         logger.info(f"⏭️ Пропущен абзац на иностранном языке")
                         continue
-
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         logger.info(f"⏭️ Пропущен мусорный абзац")
                         continue
-
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
-
             if len(content_parts) < 2:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
-
                     if is_excluded_author(text):
                         continue
                     if contains_link(text):
@@ -1095,24 +1036,19 @@ class NewsBot:
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
-
                     if len(text) > 40 and not text.startswith('Read more'):
                         if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
                             content_parts.append(text)
-
             if len(content_parts) < 2:
                 logger.warning(f"⚠️ {source_name}: недостаточно контента для {url}")
                 return None
-
             content = '\n\n'.join(content_parts[:20])
             content = unescape_html(content)
             content = remove_junk_paragraphs(content)
             content = balance_brackets(content)
-
             if len(content) < 150:
                 logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
                 return None
-
             return {
                 'content': content,
                 'image': image_url,
@@ -1120,7 +1056,6 @@ class NewsBot:
                 'source': source_name,
                 'url': url
             }
-
         except Exception as e:
             logger.error(f"Ошибка парсинга {source_name}: {e}")
             return None
@@ -1153,26 +1088,21 @@ class NewsBot:
     # ========== СБОР НОВОСТЕЙ ==========
     async def fetch_news(self) -> list:
         items = []
-
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
             ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
             ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
         ]
-
         for source_name, get_func, parse_func in sources:
             try:
                 logger.info(f"📰 Парсинг {source_name}...")
                 articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
-
                 for article in articles[:3]:
                     title = article.get('title', '')
                     url = article.get('url', '')
-
                     if self._is_duplicate(url, title):
                         continue
-
                     data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
                     if data:
                         data['title'] = title
@@ -1182,7 +1112,6 @@ class NewsBot:
             except Exception as e:
                 logger.error(f"❌ Критическая ошибка {source_name}: {e}")
                 continue
-
         logger.info(f"📊 Всего новых статей: {len(items)}")
         return items
 
@@ -1195,41 +1124,31 @@ class NewsBot:
             image_url = post.get('image')
             image_candidates = post.get('image_candidates', [])
             source_name = post.get('source', '')
-
             if not title_en or not content_en:
                 logger.error("❌ Нет заголовка или содержимого")
                 return
-
             title_en = clean_title(title_en)
             if not title_en:
                 logger.warning("⏭️ Пропуск: пустой заголовок")
                 return
-
             if url in self.state['sent_links']:
                 logger.warning(f"⛔ Уже опубликовано: {url[:80]}...")
                 return
-
             logger.info(f"📝 Перевод: {title_en[:80]}...")
-
             loop = asyncio.get_event_loop()
-
             title_short = truncate_at_sentence(title_en, max_len=300)
             content_short = truncate_at_sentence(content_en, max_len=MAX_TRANSLATE_INPUT)
-
             if not title_short:
                 title_short = title_en[:300]
             if not content_short:
                 logger.warning("⚠️ Контент не удалось обрезать по предложению, пропуск")
                 return
-
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
-
             title_ru = await loop.run_in_executor(None, translate_text, title_short)
             title_ru = unescape_html(title_ru)
             title_ru = postprocess_translation(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_short
-
             if is_bad_title(title_ru):
                 logger.warning(f"⚠️ Заголовок смешанный, повторный перевод...")
                 title_retry = await loop.run_in_executor(None, translate_text, title_short)
@@ -1239,26 +1158,20 @@ class NewsBot:
                 if title_retry and not is_bad_title(title_retry):
                     title_ru = title_retry
                     logger.info(f"✅ Повторный перевод удался")
-
             content_ru = await loop.run_in_executor(None, translate_text, content_short)
             content_ru = unescape_html(content_ru)
             content_ru = postprocess_translation(content_ru)
             content_ru = content_ru or content_short
-
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
-
             content_ru = unescape_html(content_ru)
             content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
-
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, source_name, url, title_en, content_en)
-
             title_clean = clean_title(title_ru) or title_ru
             title_escaped = html_module.escape(title_clean)
-
             content_truncated = self._truncate_text(content_ru, is_caption=True)
             message = f"*{title_escaped}*\n\n{content_truncated}"
 
@@ -1267,16 +1180,6 @@ class NewsBot:
                 img_bytes = fetch_image_for_zerohedge(image_candidates)
             else:
                 img_bytes = fetch_image_with_fallback(image_url, referer=url)
-
-            # Финальный фолбэк на заглушку
-            if not img_bytes:
-                try:
-                    r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
-                    if r.status_code == 200 and r.headers.get('Content-Type', '').startswith('image/'):
-                        logger.info("🖼️ Использована заглушка для картинки")
-                        img_bytes = r.content
-                except Exception as e:
-                    logger.error(f"Не удалось загрузить заглушку: {e}")
 
             if img_bytes:
                 try:
@@ -1304,7 +1207,6 @@ class NewsBot:
             logger.info("📝 Публикация текстом")
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
-
             if len(text_message) > MAX_MESSAGE:
                 title_part = f"*{title_escaped}*\n\n"
                 available = MAX_MESSAGE - len(title_part) - 50
@@ -1313,7 +1215,6 @@ class NewsBot:
                     truncated_body = content_ru[:available]
                 truncated_body = balance_brackets(truncated_body)
                 text_message = f"*{title_escaped}*\n\n{truncated_body}"
-
             await self.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=text_message,
@@ -1321,7 +1222,6 @@ class NewsBot:
                 disable_web_page_preview=False
             )
             logger.info("✅ Опубликовано ТЕКСТОМ")
-
             self._mark_sent(url, title_en, content_en)
             self._log_post(url, title_en)
 
@@ -1350,28 +1250,23 @@ class NewsBot:
         if IS_MANUAL_RUN:
             logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА")
         logger.info("=" * 50)
-
         news = await self.fetch_news()
         if not news:
             logger.info("📭 Новых статей нет")
             return
-
         published_count = 0
         for article in news:
             if not self._can_post():
                 logger.info(f"⏸️ Лимит, опубликовано {published_count}")
                 break
-
             logger.info(f"📤 Публикация {published_count + 1}/{len(news)}")
             await self.publish(article)
             published_count += 1
-
             if published_count < len(news):
                 if IS_MANUAL_RUN:
                     await asyncio.sleep(10)
                 else:
                     await asyncio.sleep(60)
-
         logger.info(f"✅ Опубликовано: {published_count}")
 
     async def run_forever(self):
@@ -1383,7 +1278,7 @@ class NewsBot:
                 logger.info(f"⏰ Следующий запуск через {delay // 60} минут")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"❌ Ошибка: {e}")
+                logger.error(f"❌ Критическая ошибка: {e}")
                 await asyncio.sleep(300)
 
 async def main():
@@ -1393,7 +1288,6 @@ async def main():
     if not CHANNEL_ID:
         logger.error("❌ CHANNEL_ID не задан!")
         return
-
     bot = NewsBot()
     if 'GITHUB_ACTIONS' in os.environ:
         await bot.run_once()
