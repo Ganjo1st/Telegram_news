@@ -1,68 +1,5 @@
 {
   "posts": {
-    "18a9850e17f3ae4b": {
-      "source": "RT",
-      "url": "https://www.rt.com/news/647036-musk-zelensky-gone-too-far/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
-      "original_title": "Zelensky has gone too far – Musk",
-      "original_content_preview": "Tech billionaire Elon Musk has lashed out at Vladimir Zelensky, siding with President Donald Trump, who has warned that Kiev’s continued attacks on Russian oil refineries are worsening a global fuel crisis and hurting American farmers.\n\nTrump has also called for a change of leadership in Kiev, accusing Zelensky of repeatedly rejecting opportunities to end the conflict and deliberately ignoring Washington’s requests.\n\n“We told him, do whatever you want, but don’t hit the diesel fuel, because ther",
-      "time": "2026-10-11T07:27:16.501075+00:00"
-    },
-    "fe15baef8fce060b": {
-      "source": "RT",
-      "url": "https://www.rt.com/news/647035-trump-saudi-strikes-yemen/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
-      "original_title": "US could join Saudi strikes on Yemen – Trump",
-      "original_content_preview": "US President Donald Trump has said Washington may join Saudi Arabia’s military campaign against Yemen’s Houthis, signaling a possible reversal of his previous reluctance to intervene directly in the escalating conflict.\n\nSpeaking to reporters at the White House on Saturday, Trump was asked whether American forces could join Saudi strikes against the Yemeni group, also known as Ansar Allah, following another deadly attack on Riyadh’s international airport.\n\n”We may. We’re going to look at it,”Tru",
-      "time": "2026-10-11T07:27:37.270270+00:00"
-    },
-    "a6045d40b703256a": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/ai/some-safety-protections-chatgpt-teens-dont-work-watchdog-finds",
-      "original_title": "Some Safety Protections In ChatGPT For Teens Dont Work, Watchdog Finds",
-      "original_content_preview": "Authored by Zachary Stieber via The Epoch Times,\n\nA number of new guardrails introduced by OpenAI in a special version of its widely used artificial intelligence tool do not work, according to a newly published assessment by a watchdog.\n\nUsers of ChatGPT who say they are under the age of 18, or flagged as being a minor, began automatically being placed in ChatGPT for Teens over the summer, according to OpenAI. The company touted the version of its artificial intelligence (AI) chatbot as containi",
-      "time": "2026-10-11T07:27:54.934204+00:00"
-    },
-    "bfeed455adf89472": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/energy/ramaswamys-nuclear-startup-betting-reactor-skips-enrichment",
-      "original_title": "Ramaswamys Nuclear Startup Is Betting On A Reactor That Skips Enrichment",
-      "original_content_preview": "Vivek Ramaswamy may be busyrunning for governor of Ohio, but the nuclear startup he cofounded just became one of the most richly valued names in the sector without having shown the public so much as a design drawing.\n\nAtlas Atomics, which remains in stealth mode, has raised about$400 million in a Series A round at a valuation of roughly $1.9 billion, Bloombergreportedon Thursday, citing people familiar with the matter. General Catalyst is leading the round, with Andreessen Horowitz participating",
-      "time": "2026-10-11T07:28:12.310040+00:00"
-    },
-    "dd45acd6476d827d": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/political/american-express-hit-350-million-fine-anti-money-laundering-lapses",
-      "original_title": "American Express Hit With $350 Million Fine For Anti-Money Laundering Lapses",
-      "original_content_preview": "Authored by Bill Pan via The Epoch Times,\n\nAmerican Express has been ordered to pay a $350 million penalty over what federal regulators described as \"critical deficiencies\" in its anti-money laundering controls.\n\nThe regulators said it missed about $13 billion in suspected activity over more than a decade.\n\nThe Office of the Comptroller of the Currency announced the civil penalty and a cease-and-desist order on Thursday against American Express National Bank, the Utah-based banking subsidiary of",
-      "time": "2026-10-11T07:28:29.544490+00:00"
-    },
-    "1f84b5d1dd69b569": {
-      "source": "RT",
-      "url": "https://www.rt.com/news/647033-rogue-ai-us-government-websites/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
-      "original_title": "Rogue AI targeted US government websites – tech giant",
-      "original_content_preview": "American AI giant Anthropic has published a report detailing previously undisclosed instances of“unintended”actions by its artificial intelligence model, which included attempts to provide falsified information to the US authorities for the first time.\n\nSome of the cases investigated by the company“involved websites run by US government agencies at the federal, state, and local levels,”Anthropic stated in a press release published on Friday, adding that it had briefed the White House and all the",
-      "time": "2026-10-11T13:16:32.740521+00:00"
-    },
-    "544934c8f7d6b5e8": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/ai/america-winning-ai-race",
-      "original_title": "Is America Winning The AI Race?",
-      "original_content_preview": "Authored by Petr Svab via The Epoch Times,\n\nThe question of where the U.S.-China artificial intelligence arms race is heading weighs heavily on the future of both countries, as mastery of AI may determine the world's economic and military leadership, experts say.\n\nTo assess the state of the U.S.-China AI competition, The Epoch Times consulted 10 experts across the defense and cybersecurity sectors. Most agreed that the United States maintains a lead in frontier AI models as well as in the scale ",
-      "time": "2026-10-11T13:16:49.662760+00:00"
-    },
-    "192ff375f96ad46b": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/weather/interplanetary-shockwave-detected",
-      "original_title": "Interplanetary Shockwave Detected?",
-      "original_content_preview": "Space weather websiteSolarHamreported that an \"interplanetary shockwave\" was detected Saturday morning as acoronal mass ejection (CME)struck Earth's geomagnetic field.\n\n\"A veryimpressive spike in plasma density was noted in solar wind data, along with an impressive strength (Bt) and a Bz component that is swinging wildly between north and south. NOAA/SWPC have already added a moderate (G2) storm watch for the hours ahead and Strong (G3) conditions may also be possible,\" SolarHam wrote in the upd",
-      "time": "2026-10-11T13:17:04.931014+00:00"
-    },
-    "bed26526da905659": {
-      "source": "ZeroHedge",
-      "url": "https://www.zerohedge.com/political/paramount-warner-reveals-extent-californias-control",
-      "original_title": "Paramount-Warner Reveals The Extent Of Californias Control",
-      "original_content_preview": "Authored by Tom Campbell via RealClearMarkets,\n\nTwelve state Attorneys General have just settled their lawsuit that tried to block Paramount from acquiring Warner Brothers.The case was brought under federal antitrust law. The settlement, however, goes far afield from antitrust. A state Attorney General is a political office-holder. It is neither surprising nor inappropriate that each would bring political considerations into the decision to sue, and now to settle a suit, against a merger of the ",
-      "time": "2026-10-11T13:17:22.477835+00:00"
-    },
     "8c063280444a9b33": {
       "source": "RT",
       "url": "https://www.rt.com/news/647039-pentagon-raises-official-us-death/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
@@ -6502,6 +6439,41 @@
       "original_title": "Leaked Photo: Susie Wiles Accused Of Banning MAHA Activists From White House",
       "original_content_preview": "Former White House Chief of Staff Susie Wiles is facing new allegations thatMake America Healthy Again (MAHA) activists were blacklisted from White House events after speaking out against alleged corruption involving the Environmental Protection Agency (EPA).\n\nIndependent journalist Nick Monroe aired the accusations on X,citing an anonymous source who allegedly provided photographic evidence that activists had been barred from attending White House events. The photograph purports to show a White",
       "time": "2026-11-10T07:13:22.895935+00:00"
+    },
+    "9a0e3ab612f62398": {
+      "source": "RT",
+      "url": "https://rt-english.com/news/648621-germany-threatens-veto-eu-aid-ukraine/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
+      "original_title": "Merz threatens EU budget veto over Ukraine aid – media",
+      "original_content_preview": "German Chancellor Friedrich Merz has threatened to block the EU’s next seven-year budget unless all member states commit to providing more financial aid to Ukraine, several media outlets reported on Monday.\n\nThe EU has pledged to cover around €45 billion ($52 billion) of Ukraine’s projected €70 billion funding shortfall in 2027, as the conflict with Russia approaches its fifth year in February. However, Hungary, Slovakia, and the Czech Republic have signaled opposition to contributing to additio",
+      "time": "2026-11-10T13:48:53.635854+00:00"
+    },
+    "7fd77d32c993eb91": {
+      "source": "RT",
+      "url": "https://rt-english.com/news/648620-hegseth-impeachment-second-time/?utm_source=rss&utm_medium=rss&utm_campaign=RSS",
+      "original_title": "Republican moves to impeach Trump’s secretary of war after election rout",
+      "original_content_preview": "Outgoing US Representative Thomas Massie has reintroduced eight articles of impeachment against US President Donald Trump’s War Secretary Pete Hegseth after Democrats won control of both chambers of Congress.\n\nMassie, a self-described libertarian Republican from Kentucky, alleges that Hegseth violated the 1973 War Powers Resolution by waging war against Iran without congressional authorization and failed to minimize civilian casualties during US strikes. The conflict, triggered by a joint US-Isr",
+      "time": "2026-11-10T13:49:10.778747+00:00"
+    },
+    "bd33bcd584fc0a1f": {
+      "source": "ZeroHedge",
+      "url": "https://www.zerohedge.com/geopolitical/us-expels-lebanese-diplomat-over-social-media-post-supporting-hezbollah",
+      "original_title": "US Expels Lebanese Diplomat Over Social Media Post Supporting Hezbollah",
+      "original_content_preview": "The US State Department informed the Lebanese Embassy in Washington that its Detroit consul, Ibrahim Charara, was declared persona non grata and had 48 hours to leave the country,Asharq Al-Awsatreported on Sunday.\n\nCiting Lebanese Foreign Ministry sources, the Saudi-owned newspaper reported that theUS decision came in response to old social media posts attributed to Charara regarding the 1983 bombing of the US Marine barracks in Beirut.\n\nIn October of that year, a truck bomb destroyed the US Mar",
+      "time": "2026-11-10T13:49:27.719296+00:00"
+    },
+    "79f2d4226b029365": {
+      "source": "ZeroHedge",
+      "url": "https://www.zerohedge.com/geopolitical/israel-rich-enough-enough-buy-us-weapons-without-financial-aid-rubio-says",
+      "original_title": "Israel Is Rich Enough To Buy US Weapons Without Financial Aid, Rubio Says",
+      "original_content_preview": "The White House is much too late in belateldy 'discovering' this talking point, but admin officials continue to say that it's time for Israel to stand on its own and begin purchasing weapons without relying on US financial assistance.\n\nUS Secretary of State Marco Rubio on Mondaystated,\"Israel is now prosperous and rich enough to be able to be a sales country. They can buy weapons from us, but we no longer have to provide the financing.\"\n\nComing off Republicans getting clobbered in the midterms, ",
+      "time": "2026-11-10T13:49:44.466340+00:00"
+    },
+    "ec1f2bf6f1d548ea": {
+      "source": "ZeroHedge",
+      "url": "https://www.zerohedge.com/political/senate-republicans-revolt-against-their-own-leaders",
+      "original_title": "Senate Republicans Revolt Against Their Own Leaders",
+      "original_content_preview": "A bloc of Senate Republicans led by Sen. Ron Johnson (R-WI) is pushing to postpone Tuesday's GOP leadership elections, arguing that the conference needs time to examine its midterm election losses before it picks the leaders who will guide it in the minority.\n\nDemocrats won control of the Senate with 54 seats, and that total could climb depending on the outcomes of the races in Mississippi and Alaska. Republicans expect Senate Majority Leader John Thune (R-SD) to seek another term as the chamber",
+      "time": "2026-11-10T13:50:00.234433+00:00"
     }
   }
 }
