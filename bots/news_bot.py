@@ -110,6 +110,9 @@ JUNK_PHRASES = [
     'подарок для global research',
     'global research e-books',
     'global research ebook',
+    'free hat with multitool',
+    'zer ohedge store',
+    'zerohedge store',
 ]
 
 NON_ENGLISH_MARKERS = [
@@ -389,7 +392,6 @@ def is_bad_image_url(url: str) -> bool:
     return False
 
 def looks_like_image(data: bytes) -> bool:
-    """Проверяет сигнатуру картинки: JPEG, PNG, WebP, GIF."""
     if not data or len(data) < 12:
         return False
     if data[:3] == b'\xff\xd8\xff':
@@ -402,6 +404,7 @@ def looks_like_image(data: bytes) -> bool:
         return True
     return False
 
+# ========== СБОР КАНДИДАТОВ КАРТИНОК (ДЛЯ НЕ-ZEROEDGE) ==========
 def collect_image_candidates_generic(soup, base_url: str) -> list:
     candidates = []
     for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
@@ -420,48 +423,6 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             candidates.append(img.get('src', ''))
         for img in container.find_all('img', attrs={'data-src': True}):
             candidates.append(img.get('data-src', ''))
-        for img in container.find_all('img', attrs={'data-srcset': True}):
-            srcset = img.get('data-srcset', '')
-            for part in srcset.split(','):
-                u = part.strip().split(' ')[0]
-                if u:
-                    candidates.append(u)
-        for img in container.find_all('img', attrs={'srcset': True}):
-            srcset = img.get('srcset', '')
-            for part in srcset.split(','):
-                u = part.strip().split(' ')[0]
-                if u:
-                    candidates.append(u)
-        for source in container.find_all('source', attrs={'srcset': True}):
-            srcset = source.get('srcset', '')
-            for part in srcset.split(','):
-                u = part.strip().split(' ')[0]
-                if u:
-                    candidates.append(u)
-        for figure in container.find_all('figure'):
-            for img in figure.find_all('img', src=True):
-                candidates.append(img.get('src', ''))
-
-    for script in soup.find_all('script', attrs={'type': 'application/ld+json'}):
-        try:
-            data = json.loads(script.string)
-            images = []
-            if isinstance(data, dict):
-                img = data.get('image')
-                if isinstance(img, str):
-                    images.append(img)
-                elif isinstance(img, list):
-                    for it in img:
-                        if isinstance(it, str):
-                            images.append(it)
-                        elif isinstance(it, dict) and it.get('url'):
-                            images.append(it['url'])
-                elif isinstance(img, dict) and img.get('url'):
-                    images.append(img['url'])
-            for it in images:
-                candidates.append(it)
-        except Exception:
-            continue
 
     normalized = []
     for raw in candidates:
@@ -482,15 +443,83 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             normalized.append(url)
     return normalized
 
-def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
-    candidates = collect_image_candidates_generic(soup, base_url)
-    return candidates[0] if candidates else None
+# ========== СПЕЦИАЛЬНЫЙ СБОР КАРТИНОК ДЛЯ ZEROEDGE ==========
+def collect_zerohedge_image_candidates(soup, base_url: str) -> list:
+    """
+    Для ZeroHedge картинку берём СТРОГО из тела статьи.
+    Отбрасываем рекламу (ZeroHedge Store), сайдбары, портреты из related.
+    """
+    candidates = []
+
+    # 1. og:image — но только если это не реклама
+    for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
+        tag = soup.find('meta', property=prop)
+        if tag and tag.get('content'):
+            url = tag['content']
+            url_lower = url.lower()
+            # Отсекаем рекламу магазина
+            if 'store' in url_lower or 'hat' in url_lower or 'multitool' in url_lower:
+                logger.info(f"ZeroHedge: пропущен og:image (реклама): {url[:60]}")
+                continue
+            candidates.append(url)
+
+    # 2. Картинки внутри <article> или контейнера статьи
+    article = soup.find('article')
+    if not article:
+        article = soup.find('div', class_=re.compile(r'(article-content|post-content|entry-content)', re.IGNORECASE))
+
+    if article:
+        for img in article.find_all('img', src=True):
+            src = img.get('src', '')
+            src_lower = src.lower()
+            if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
+                logger.info(f"ZeroHedge: пропущена реклама в статье: {src[:60]}")
+                continue
+            candidates.append(src)
+        for img in article.find_all('img', attrs={'data-src': True}):
+            src = img.get('data-src', '')
+            src_lower = src.lower()
+            if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
+                continue
+            candidates.append(src)
+
+    # 3. Если в article ничего нет — ищем в div с классом content
+    if not candidates:
+        for div in soup.find_all('div', class_=re.compile(r'(content|body|text)', re.IGNORECASE)):
+            for img in div.find_all('img', src=True):
+                src = img.get('src', '')
+                src_lower = src.lower()
+                if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
+                    continue
+                candidates.append(src)
+
+    # Нормализация
+    normalized = []
+    for raw in candidates:
+        if not raw:
+            continue
+        url = raw.strip()
+        if url.startswith('//'):
+            url = 'https:' + url
+        elif url.startswith('/'):
+            url = urljoin(base_url, url)
+        elif not url.startswith('http'):
+            continue
+
+        if is_bad_image_url(url):
+            continue
+        if not re.search(r'\.(jpg|jpeg|png|webp|gif)(\?|$)', url, re.IGNORECASE):
+            continue
+        if url not in normalized:
+            normalized.append(url)
+
+    logger.info(f"ZeroHedge: собрано {len(normalized)} кандидатов из тела статьи")
+    return normalized
 
 def is_zerohedge_cdn(url: str) -> bool:
     return 'zhedge.com' in url or 'zerohedge.com' in url or 'cms.zerohedge.com' in url
 
 def transform_zerohedge_url(url: str, fmt: str = 'jpeg') -> str:
-    """Меняет format=auto → format=jpeg (или другой) в CDN-URL ZeroHedge."""
     if 'format=auto' in url:
         return url.replace('format=auto', f'format={fmt}')
     if 'format=' not in url:
@@ -517,7 +546,6 @@ def try_download_image(url: str, referer: str = None) -> bytes:
     ]
 
     variants = [url]
-    # Для ZeroHedge CDN: пытаемся с format=jpeg, потом без query
     if is_zerohedge_cdn(url):
         jpeg_url = transform_zerohedge_url(url, 'jpeg')
         if jpeg_url != url:
@@ -540,7 +568,7 @@ def try_download_image(url: str, referer: str = None) -> bytes:
                 if not ct.startswith('image/'):
                     continue
                 if not looks_like_image(r.content):
-                    logger.info(f"  ⚠️ Не картинка по сигнатуре: {u[:60]} ({len(r.content)} байт, {ct[:30]})")
+                    logger.info(f"  ⚠️ Не картинка по сигнатуре: {u[:60]} ({len(r.content)} байт)")
                     continue
                 if len(r.content) < 3000:
                     logger.info(f"  ⚠️ Слишком мелкая картинка: {u[:60]} ({len(r.content)} байт)")
@@ -642,6 +670,7 @@ def is_bad_title(title: str) -> bool:
         'Gates', 'Musk', 'Xi', 'Kim', 'Erdogan', 'Khamenei', 'Sanchez',
         'Iran', 'Iraq', 'Syria', 'Israel', 'Palestine', 'Hamas', 'Hezbollah',
         'Telegram', 'Google', 'Microsoft', 'Apple', 'Meta', 'Facebook', 'Twitter',
+        'Nvidia', 'Jensen', 'Huang',
     }
     en_words = re.findall(r'\b[a-zA-Z]{3,}\b', title)
     en_words = [w for w in en_words if w not in allowed_en and w.upper() != w]
@@ -982,7 +1011,13 @@ class NewsBot:
                 return None
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
-            image_candidates = collect_image_candidates_generic(soup, base_url)
+
+            # ========== ВЫБОР ФУНКЦИИ СБОРА КАРТИНОК ==========
+            if source_name == 'ZeroHedge':
+                image_candidates = collect_zerohedge_image_candidates(soup, base_url)
+            else:
+                image_candidates = collect_image_candidates_generic(soup, base_url)
+
             image_url = image_candidates[0] if image_candidates else None
             if image_url:
                 logger.info(f"Найдено {len(image_candidates)} кандидатов, первый: {image_url[:80]}...")
