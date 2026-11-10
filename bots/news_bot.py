@@ -404,7 +404,7 @@ def looks_like_image(data: bytes) -> bool:
         return True
     return False
 
-# ========== СБОР КАНДИДАТОВ КАРТИНОК (ДЛЯ НЕ-ZEROEDGE) ==========
+# ========== СБОР КАНДИДАТОВ КАРТИНОК ==========
 def collect_image_candidates_generic(soup, base_url: str) -> list:
     candidates = []
     for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
@@ -443,55 +443,56 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             normalized.append(url)
     return normalized
 
-# ========== СПЕЦИАЛЬНЫЙ СБОР КАРТИНОК ДЛЯ ZEROEDGE ==========
 def collect_zerohedge_image_candidates(soup, base_url: str) -> list:
     """
-    Для ZeroHedge картинку берём СТРОГО из тела статьи.
-    Отбрасываем рекламу (ZeroHedge Store), сайдбары, портреты из related.
+    Для ZeroHedge картинку берём из нескольких типовых контейнеров.
     """
     candidates = []
 
-    # 1. og:image — но только если это не реклама
+    # 1. og:image — только если это не реклама
     for prop in ['og:image', 'og:image:secure_url', 'og:image:url']:
         tag = soup.find('meta', property=prop)
         if tag and tag.get('content'):
             url = tag['content']
             url_lower = url.lower()
-            # Отсекаем рекламу магазина
             if 'store' in url_lower or 'hat' in url_lower or 'multitool' in url_lower:
-                logger.info(f"ZeroHedge: пропущен og:image (реклама): {url[:60]}")
                 continue
             candidates.append(url)
 
-    # 2. Картинки внутри <article> или контейнера статьи
+    # 2. Картинки в article
     article = soup.find('article')
-    if not article:
-        article = soup.find('div', class_=re.compile(r'(article-content|post-content|entry-content)', re.IGNORECASE))
-
     if article:
         for img in article.find_all('img', src=True):
             src = img.get('src', '')
-            src_lower = src.lower()
-            if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
-                logger.info(f"ZeroHedge: пропущена реклама в статье: {src[:60]}")
+            if 'store' in src.lower() or 'hat' in src.lower() or 'multitool' in src.lower():
                 continue
             candidates.append(src)
         for img in article.find_all('img', attrs={'data-src': True}):
             src = img.get('data-src', '')
-            src_lower = src.lower()
-            if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
+            if 'store' in src.lower() or 'hat' in src.lower() or 'multitool' in src.lower():
                 continue
             candidates.append(src)
 
-    # 3. Если в article ничего нет — ищем в div с классом content
-    if not candidates:
-        for div in soup.find_all('div', class_=re.compile(r'(content|body|text)', re.IGNORECASE)):
-            for img in div.find_all('img', src=True):
-                src = img.get('src', '')
-                src_lower = src.lower()
-                if 'store' in src_lower or 'hat' in src_lower or 'multitool' in src_lower:
-                    continue
-                candidates.append(src)
+    # 3. Картинки в типовых контейнерах ZeroHedge
+    for container in soup.find_all('div', class_=re.compile(r'(field--name-field-image|article-content|post-content|entry-content|content-body)', re.IGNORECASE)):
+        for img in container.find_all('img', src=True):
+            src = img.get('src', '')
+            if 'store' in src.lower() or 'hat' in src.lower() or 'multitool' in src.lower():
+                continue
+            candidates.append(src)
+        for img in container.find_all('img', attrs={'data-src': True}):
+            src = img.get('data-src', '')
+            if 'store' in src.lower() or 'hat' in src.lower() or 'multitool' in src.lower():
+                continue
+            candidates.append(src)
+
+    # 4. Картинки в figure
+    for figure in soup.find_all('figure'):
+        for img in figure.find_all('img', src=True):
+            src = img.get('src', '')
+            if 'store' in src.lower() or 'hat' in src.lower() or 'multitool' in src.lower():
+                continue
+            candidates.append(src)
 
     # Нормализация
     normalized = []
@@ -513,7 +514,7 @@ def collect_zerohedge_image_candidates(soup, base_url: str) -> list:
         if url not in normalized:
             normalized.append(url)
 
-    logger.info(f"ZeroHedge: собрано {len(normalized)} кандидатов из тела статьи")
+    logger.info(f"ZeroHedge: собрано {len(normalized)} кандидатов")
     return normalized
 
 def is_zerohedge_cdn(url: str) -> bool:
@@ -1012,7 +1013,6 @@ class NewsBot:
             soup = BeautifulSoup(response.text, 'html.parser')
             base_url = f'https://{url.split("/")[2]}'
 
-            # ========== ВЫБОР ФУНКЦИИ СБОРА КАРТИНОК ==========
             if source_name == 'ZeroHedge':
                 image_candidates = collect_zerohedge_image_candidates(soup, base_url)
             else:
@@ -1216,6 +1216,16 @@ class NewsBot:
             else:
                 img_bytes = fetch_image_with_fallback(image_url, referer=url)
 
+            # Если картинки нет — принудительно заглушка
+            if not img_bytes:
+                try:
+                    r = requests.get(FALLBACK_IMAGE_URL, timeout=15)
+                    if r.status_code == 200 and r.headers.get('Content-Type', '').startswith('image/'):
+                        logger.info("🖼️ Использована заглушка (картинка не найдена)")
+                        img_bytes = r.content
+                except Exception as e:
+                    logger.error(f"Не удалось загрузить заглушку: {e}")
+
             if img_bytes:
                 try:
                     if len(message) > MAX_CAPTION:
@@ -1239,7 +1249,7 @@ class NewsBot:
                 except TelegramError as e:
                     logger.warning(f"Ошибка фото: {e}")
 
-            logger.info("📝 Публикация текстом")
+            logger.info("📝 Публикация текстом (картинка недоступна)")
             text_content = self._truncate_text(content_ru, is_caption=False)
             text_message = f"*{title_escaped}*\n\n{text_content}"
             if len(text_message) > MAX_MESSAGE:
