@@ -274,9 +274,7 @@ def is_non_english_body(text: str) -> bool:
         return False
     text_lower = ' ' + text.lower() + ' '
     hits = sum(1 for marker in NON_ENGLISH_MARKERS if marker in text_lower)
-    if hits >= 3:
-        return True
-    return False
+    return hits >= 3
 
 def cut_non_english_tail(text: str) -> str:
     if not text:
@@ -372,6 +370,35 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
         cut = cut[:last_space]
     return cut.rstrip(' ,.;:') + '…'
 
+def _split_for_caption(content: str, available: int) -> tuple:
+    """Делит контент на (caption_part, remaining_part) по границе предложения.
+    Нужно для 2-шаговой публикации: фото + досылка остатка."""
+    if not content or available <= 0:
+        return (content or "", "")
+    if len(content) <= available:
+        return (content, "")
+
+    # Ищем последнюю границу предложения перед available
+    cut_pos = -1
+    for punct in ['.', '!', '?']:
+        for m in re.finditer(re.escape(punct) + r'(?=\s|$)', content[:available + 1]):
+            if m.end() > cut_pos:
+                cut_pos = m.end()
+
+    if cut_pos > available * 0.5:
+        caption_part = content[:cut_pos].strip()
+        remaining = content[cut_pos:].strip()
+        return (caption_part, remaining)
+
+    # Fallback: режем по границе слова
+    cut = content[:available]
+    last_space = cut.rfind(' ')
+    if last_space > available * 0.6:
+        cut = cut[:last_space]
+    caption_part = cut.rstrip(' ,.;:')
+    remaining = content[len(caption_part):].strip()
+    return (caption_part, remaining)
+
 def fetch_url(url: str, timeout: int = None):
     if timeout is None:
         timeout = REQUEST_TIMEOUT
@@ -423,7 +450,6 @@ def _detect_image_format(content: bytes) -> str:
     return 'unknown'
 
 def _is_image_content(content: bytes, ct: str = '') -> bool:
-    """Проверяет, что это реально картинка — по Content-Type И magic bytes."""
     if not content or len(content) < 100:
         return False
     if _detect_image_format(content) != 'unknown':
@@ -433,21 +459,16 @@ def _is_image_content(content: bytes, ct: str = '') -> bool:
     return False
 
 def _normalize_to_jpeg(content: bytes):
-    """
-    Конвертирует любое изображение (WebP, PNG, GIF, AVIF-если поддерживается) в JPEG.
-    Telegram sendPhoto надёжно принимает только JPEG/PNG/GIF; AVIF/WebP часто
-    приводят к 400 Image_process_failed.
-    """
+    """Конвертирует WebP/AVIF/BMP в JPEG. JPEG/PNG/GIF — пропускает как есть."""
     if not content:
         return None
     fmt = _detect_image_format(content)
     if fmt == 'jpeg':
         return content
-    if fmt == 'png' or fmt == 'gif':
-        # Telegram их принимает нативно, не трогаем
+    if fmt in ('png', 'gif'):
         return content
     if not _HAS_PIL:
-        logger.warning("PIL не установлен — не могу конвертировать %s в JPEG", fmt)
+        logger.warning("PIL не установлен — не могу конвертировать %s", fmt)
         return None
     try:
         img = Image.open(BytesIO(content))
@@ -473,24 +494,56 @@ def _normalize_to_jpeg(content: bytes):
         logger.warning(f"PIL convert failed ({fmt}): {e}")
         return None
 
+def _preprocess_image_url(url: str) -> str:
+    """Принудительно ставит format=jpeg в CDN-URL (Cloudflare Images и др.).
+    Это спасает от AVIF, который Telegram не умеет обрабатывать."""
+    if not url:
+        return url
+    original = url
+    # Cloudflare Images: /cdn-cgi/image/<params>/<url>
+    url = re.sub(
+        r'(/cdn-cgi/image/[^/]*?)\bformat=(auto|webp|avif|json)\b',
+        r'\1format=jpeg',
+        url,
+        flags=re.IGNORECASE
+    )
+    # Query string: ?format=auto / &format=webp / ?fm=avif
+    url = re.sub(
+        r'([?&])format=(auto|webp|avif)\b',
+        r'\1format=jpeg',
+        url,
+        flags=re.IGNORECASE
+    )
+    url = re.sub(
+        r'([?&])fm=(auto|webp|avif)\b',
+        r'\1fm=jpeg',
+        url,
+        flags=re.IGNORECASE
+    )
+    if url != original:
+        logger.info(f"  🔧 URL format: ...{original[-50:]} → ...{url[-50:]}")
+    return url
+
 def _fetch_via_proxy(image_url: str, force_jpeg: bool = True):
-    """Пробует получить картинку через бесплатные image-прокси (обход Cloudflare/hotlink/AVIF)."""
+    """Загрузка через бесплатные image-прокси. force_jpeg=True → output=jpg."""
     if not image_url:
         return None
-    quoted = requests.utils.quote(image_url, safe='')
+    clean_url = _preprocess_image_url(image_url)
+    quoted = requests.utils.quote(clean_url, safe='')
     if force_jpeg:
         templates = (
-            f"https://wsrv.nl/?url={quoted}&w=1280&output=jpg&q=88",
-            f"https://images.weserv.nl/?url={quoted}&w=1280&output=jpg&q=88",
-            f"https://wsrv.nl/?url={quoted}&w=1200",
-            f"https://images.weserv.nl/?url={quoted}&w=1200",
+            f"https://wsrv.nl/?url={quoted}&w=1280&output=jpg&q=85",
+            f"https://images.weserv.nl/?url={quoted}&w=1280&output=jpg&q=85",
+            f"https://wsrv.nl/?url={quoted}&w=1000&output=jpg",
+            f"https://images.weserv.nl/?url={quoted}&w=1000&output=jpg",
+            f"https://wsrv.nl/?url={quoted}",
         )
     else:
         templates = (
             f"https://wsrv.nl/?url={quoted}&w=1200",
             f"https://images.weserv.nl/?url={quoted}&w=1200",
         )
-    for proxy_url in templates:
+    for i, proxy_url in enumerate(templates):
         try:
             r = requests.get(proxy_url, headers={'User-Agent': UA},
                              timeout=25, allow_redirects=True)
@@ -499,10 +552,15 @@ def _fetch_via_proxy(image_url: str, force_jpeg: bool = True):
                 if force_jpeg:
                     jpeg = _normalize_to_jpeg(r.content)
                     if jpeg:
+                        logger.info(f"  proxy {i+1}/{len(templates)} OK ({len(jpeg)}b)")
                         return jpeg
+                    logger.info(f"  proxy {i+1}: image but normalize failed")
                 else:
                     return r.content
-        except Exception:
+            else:
+                logger.info(f"  proxy {i+1}: {r.status_code} {ct[:30]}")
+        except Exception as e:
+            logger.info(f"  proxy {i+1} exc: {e}")
             continue
     return None
 
@@ -551,7 +609,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
     return None
 
 def collect_image_candidates_generic(soup, base_url: str) -> list:
-    """Собирает все возможные URL картинок для универсального поиска."""
     candidates = []
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
@@ -604,43 +661,49 @@ def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
 
 def fetch_zerohedge_image(image_url: str):
     """
-    Улучшенная загрузка картинки ZeroHedge:
-    - Accept только jpeg/png → Cloudflare не отдаёт AVIF (у него format=auto)
-    - Pillow-нормализация → если всё же WebP/AVIF, конвертируем в JPEG
-    - Прокси с output=jpg → гарантированно JPEG
+    Загрузка картинки ZeroHedge.
+    1) Сначала пробуем модифицированный URL (format=auto → format=jpeg) — Cloudflare
+       отдаст настоящий JPEG, без AVIF.
+    2) Если не вышло — оригинальный URL (Pillow 11 может декодировать AVIF).
+    3) Если не вышло — прокси с output=jpg (конвертирует на стороне сервера).
     """
     if not image_url:
         return None
+
+    modified_url = _preprocess_image_url(image_url)
+    try_urls = [modified_url]
+    if modified_url != image_url:
+        try_urls.append(image_url)
+
     base_headers = {
         'User-Agent': UA,
         'Referer': 'https://www.zerohedge.com/',
         'Origin': 'https://www.zerohedge.com',
-        # Ключевое: НЕ просим avif/webp, иначе Cloudflare отдаст AVIF,
-        # который Telegram не умеет обрабатывать (400 Image_process_failed).
+        # Приоритет JPEG — на случай если сервер всё же учитывает Accept
         'Accept': 'image/jpeg,image/png,*/*;q=0.5',
         'Accept-Language': 'en-US,en;q=0.9',
         'Sec-Fetch-Dest': 'image',
         'Sec-Fetch-Mode': 'no-cors',
         'Sec-Fetch-Site': 'same-site',
     }
-    # 1) Прямая загрузка
-    try:
-        r = requests.get(image_url, headers=base_headers, timeout=20, allow_redirects=True)
-        ct = r.headers.get('Content-Type', '')
-        fmt = _detect_image_format(r.content)
-        if r.status_code == 200 and _is_image_content(r.content, ct):
-            jpeg = _normalize_to_jpeg(r.content)
-            if jpeg:
-                logger.info(f"ZH ✓ direct {fmt}→{_detect_image_format(jpeg)}: "
-                            f"{image_url[:60]} ({len(jpeg)}b)")
-                return jpeg
-            logger.info(f"ZH ✗ direct: не смог нормализовать {fmt} → JPEG")
-        else:
-            logger.info(f"ZH ✗ direct: {image_url[:60]} → {r.status_code} {ct[:30]} {fmt}")
-    except Exception as e:
-        logger.info(f"ZH ✗ direct exc: {image_url[:60]} → {e}")
 
-    # 2) Прокси с output=jpg (конвертирует AVIF/WebP/что угодно в JPEG)
+    for idx, u in enumerate(try_urls):
+        try:
+            r = requests.get(u, headers=base_headers, timeout=20, allow_redirects=True)
+            ct = r.headers.get('Content-Type', '')
+            fmt = _detect_image_format(r.content)
+            if r.status_code == 200 and _is_image_content(r.content, ct):
+                jpeg = _normalize_to_jpeg(r.content)
+                if jpeg:
+                    logger.info(f"ZH ✓ direct[{idx}] {fmt}→{_detect_image_format(jpeg)}: "
+                                f"{u[:60]} ({len(jpeg)}b)")
+                    return jpeg
+                logger.info(f"ZH ✗ direct[{idx}]: normalize fail {fmt} ({len(r.content)}b)")
+            else:
+                logger.info(f"ZH ✗ direct[{idx}]: {u[:60]} → {r.status_code} {ct[:30]} {fmt}")
+        except Exception as e:
+            logger.info(f"ZH ✗ direct[{idx}] exc: {u[:60]} → {e}")
+
     proxied = _fetch_via_proxy(image_url, force_jpeg=True)
     if proxied:
         logger.info(f"ZH ✓ proxy JPEG: {image_url[:60]} ({len(proxied)}b)")
@@ -650,8 +713,9 @@ def fetch_zerohedge_image(image_url: str):
     return None
 
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
-    """Стандартная загрузка картинки с нормализацией в JPEG и прокси-фолбэком."""
+    """Стандартная загрузка картинки: модифицированный URL → прямая → прокси → заглушка."""
     if image_url:
+        clean_url = _preprocess_image_url(image_url)
         try:
             headers = {
                 'User-Agent': UA,
@@ -659,7 +723,7 @@ def fetch_image_with_fallback(image_url: str, referer: str = None, source: str =
             }
             if referer:
                 headers['Referer'] = referer
-            r = requests.get(image_url, headers=headers, timeout=15, allow_redirects=True)
+            r = requests.get(clean_url, headers=headers, timeout=15, allow_redirects=True)
             ct = r.headers.get('Content-Type', '')
             if r.status_code == 200 and _is_image_content(r.content, ct):
                 jpeg = _normalize_to_jpeg(r.content)
@@ -1034,12 +1098,6 @@ class NewsBot:
         delay = int(delay * random.uniform(0.85, 1.15))
         return max(MIN_INTERVAL, min(delay, MAX_INTERVAL))
 
-    def _truncate_text(self, text: str, is_caption: bool = False) -> str:
-        max_len = MAX_CAPTION if is_caption else MAX_MESSAGE
-        max_len = max_len - 100
-        result = truncate_at_sentence(text, max_len)
-        return balance_brackets(result)
-
     # ========== ПАРСИНГ RSS ==========
     def _parse_rss_feed(self, url: str, source_name: str, limit: int = 5) -> list:
         try:
@@ -1157,17 +1215,13 @@ class NewsBot:
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
                     if is_excluded_author(text):
-                        logger.info("⏭️ Пропущен абзац с именем автора")
                         continue
                     if contains_link(text):
-                        logger.info("⏭️ Пропущен абзац со ссылкой")
                         continue
                     if is_foreign_text(text):
-                        logger.info("⏭️ Пропущен абзац на иностранном языке")
                         continue
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
-                        logger.info("⏭️ Пропущен мусорный абзац")
                         continue
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
@@ -1374,31 +1428,25 @@ class NewsBot:
             if not img_bytes:
                 img_bytes = fetch_fallback_image()
 
-            # Финальная нормализация: Telegram sendPhoto надёжно принимает JPEG/PNG/GIF.
-            # AVIF/WebP часто дают 400 Image_process_failed — конвертим.
+            # Финальная страховка: гарантируем, что это JPEG/PNG/GIF
             if img_bytes:
                 norm = _normalize_to_jpeg(img_bytes)
                 if norm is None:
-                    logger.warning("⚠️ Картинка не конвертируется в JPEG, используем заглушку")
+                    logger.warning("⚠️ Картинка не конвертируется в JPEG, пробуем заглушку")
                     img_bytes = fetch_fallback_image()
                 else:
                     img_bytes = norm
 
-            # ========== ПУБЛИКАЦИЯ С ФОТО ==========
+            # ========== ПУБЛИКАЦИЯ С ФОТО (2-ШАГОВАЯ, ЕСЛИ НУЖНО) ==========
             if img_bytes:
                 try:
                     available = MAX_CAPTION - len(title_clean) - 20
                     if available < 50:
                         available = MAX_CAPTION - 100
-                    body_truncated = truncate_at_sentence(content_ru, available)
-                    if not body_truncated:
-                        body_truncated = content_ru[:available]
-                    body_truncated = balance_brackets(body_truncated)
-                    body_escaped = html_module.escape(body_truncated, quote=False)
 
+                    body_for_caption, remaining = _split_for_caption(content_ru, available)
+                    body_escaped = html_module.escape(body_for_caption, quote=False)
                     caption = f"<b>{title_escaped}</b>\n\n{body_escaped}".strip()
-                    if len(caption) > MAX_CAPTION + 200:
-                        caption = caption[:MAX_CAPTION + 200]
 
                     await self.bot.send_photo(
                         chat_id=CHANNEL_ID,
@@ -1406,14 +1454,55 @@ class NewsBot:
                         caption=caption,
                         parse_mode='HTML'
                     )
-                    logger.info("✅ Опубликовано С ФОТО")
+                    logger.info(f"✅ Опубликовано С ФОТО (caption {len(body_for_caption)}ch)")
+
+                    # Досылка продолжения, если осталось
+                    if remaining and len(remaining) > 30:
+                        max_chunk = MAX_MESSAGE - 100
+                        chunks = []
+                        current = ""
+                        sentences = re.split(r'(?<=[.!?])\s+', remaining)
+                        for sent in sentences:
+                            if len(current) + len(sent) + 1 <= max_chunk:
+                                current = (current + ' ' + sent).strip() if current else sent
+                            else:
+                                if current:
+                                    chunks.append(current)
+                                current = sent
+                        if current:
+                            chunks.append(current)
+
+                        for chunk in chunks:
+                            chunk_escaped = html_module.escape(chunk, quote=False)
+                            try:
+                                await self.bot.send_message(
+                                    chat_id=CHANNEL_ID,
+                                    text=chunk_escaped,
+                                    parse_mode='HTML',
+                                    disable_web_page_preview=True
+                                )
+                                logger.info(f"📝 Дослано продолжение: {len(chunk)}ch")
+                                await asyncio.sleep(1)
+                            except TelegramError as e2:
+                                logger.warning(f"Ошибка досылки: {e2}")
+                                try:
+                                    await self.bot.send_message(
+                                        chat_id=CHANNEL_ID,
+                                        text=chunk[:MAX_MESSAGE],
+                                        parse_mode=None,
+                                        disable_web_page_preview=True
+                                    )
+                                except Exception:
+                                    pass
+
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
                     return
+
                 except TelegramError as e:
                     logger.warning(f"Ошибка отправки фото: {e}")
                     try:
-                        plain_caption = f"{title_clean}\n\n{body_truncated}"[:MAX_CAPTION]
+                        plain_caption = f"{title_clean}\n\n{body_for_caption}"[:MAX_CAPTION]
                         await self.bot.send_photo(
                             chat_id=CHANNEL_ID,
                             photo=img_bytes,
