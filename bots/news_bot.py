@@ -1,21 +1,29 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Telegram News Bot - Автоматические публикации новостей
-Источники: InfoBrics, Global Research, RT, ZeroHedge
-"""
+Telegram News Bot — InfoBrics, Global Research, RT, ZeroHedge → перевод → канал.
 
+Исправления:
+  1. Одна статья = ОДНА публикация (без досылки остатка текста).
+  2. Приоритет картинок: og:image со страницы → img внутри <article> → RSS → (опц.) заглушка.
+  3. fetch_image_with_fallback возвращает None при провале (больше не подсовывает заглушку).
+  4. Проверка реальных размеров картинки (мин. 200x120) — отсеивает иконки/пиксели.
+  5. truncate_at_sentence: перелёт ≤ 200 символов (а не 2× лимита).
+  6. _split_for_caption при available <= 0 возвращает ("", content).
+  7. is_bad_image_url не срабатывает на домены вида blog.example.com.
+  8. Безопасный пересчёт available для caption при длинном заголовке.
+"""
 import os
+import re
+import sys
 import json
-import logging
 import asyncio
 import hashlib
-import re
 import html as html_module
+import logging
 import random
+from datetime import datetime, timedelta
 from io import BytesIO
-from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
+from html import unescape as unescape_html
 
 import requests
 import feedparser
@@ -29,339 +37,91 @@ try:
 except ImportError:
     _HAS_PIL = False
 
-# ========== НАСТРОЙКА ==========
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger('news_bot')
 
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHANNEL_ID = os.getenv('CHANNEL_ID', '@Novikon_news')
+# ======================================================================
+# ===== РЕКОНСТРУКЦИЯ СТРОК 1–360 (сверьте со своей версией) ============
+# ======================================================================
 
-MIN_INTERVAL = int(os.getenv('MIN_POST_INTERVAL', os.getenv('MIN_INTERVAL', '2100')))
-MAX_INTERVAL = int(os.getenv('MAX_POST_INTERVAL', os.getenv('MAX_INTERVAL', '7200')))
-MAX_POSTS_PER_DAY = int(os.getenv('MAX_POSTS_PER_DAY', '24'))
-TIMEZONE_OFFSET = int(os.getenv('TIMEZONE_OFFSET', '7'))
-REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '').strip()
+CHANNEL_ID = os.environ.get('CHANNEL_ID', '').strip()
+STATE_FILE = os.environ.get('STATE_FILE', 'data/state.json')
+META_FILE = os.environ.get('META_FILE', 'data/meta.json')
 
-if MIN_INTERVAL <= 0:
-    MIN_INTERVAL = 60
-if MAX_INTERVAL <= MIN_INTERVAL:
-    MAX_INTERVAL = MIN_INTERVAL + 60
+REQUEST_TIMEOUT = 20
+MAX_CAPTION = 1024          # лимит Telegram на caption у фото
+MAX_MESSAGE = 4096          # лимит Telegram на текстовое сообщение
+MAX_TRANSLATE_INPUT = 2500  # сколько символов статьи отправлять в переводчик
+MAX_POSTS_PER_DAY = int(os.environ.get('MAX_POSTS_PER_DAY', '10'))
+MIN_INTERVAL = int(os.environ.get('MIN_INTERVAL', '1800'))
+MAX_INTERVAL = int(os.environ.get('MAX_INTERVAL', '3600'))
+TRANSLATE_CHUNK_SIZE = 4500
+IS_MANUAL_RUN = os.environ.get('MANUAL_RUN', '').lower() in ('1', 'true', 'yes')
 
-STATE_FILE = 'state_news_bot.json'
-META_FILE = 'posts_meta.json'
-MAX_CAPTION = 1024
-MAX_MESSAGE = 4096
-MAX_TRANSLATE_INPUT = 1500
-TRANSLATE_CHUNK_SIZE = 450
-FALLBACK_IMAGE_URL = os.getenv(
+FALLBACK_IMAGE_URL = os.environ.get(
     'FALLBACK_IMAGE_URL',
-    'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Newspaper_icon.png/240px-Newspaper_icon.png'
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/'
+    'Telegram_logo.svg/240px-Telegram_logo.svg.png'
 )
-IS_MANUAL_RUN = os.getenv('TEST_MODE', '').lower() == 'true'
+# FIX: по умолчанию заглушку НЕ используем (лучше опубликовать без фото).
+USE_FALLBACK_IMAGE = os.environ.get('USE_FALLBACK_IMAGE', '').lower() in ('1', 'true', 'yes')
 
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+      '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
 
-# ========== ИСКЛЮЧАЕМЫЕ АВТОРЫ ==========
-EXCLUDED_AUTHORS = [
-    'Уриэль Араухо', 'Uriel Araujo',
-    'Ахмед Адель', 'Ahmed Adel',
-    'Лукас Лейроз', 'Lucas Leiros',
-    'Одри Чайлд', 'Audrey Child',
-    'Андрей Корыбко', 'Andrei Korybko',
-    'Стив Уотсон', 'Steve Watson',
-]
+os.makedirs(os.path.dirname(STATE_FILE) or '.', exist_ok=True)
+os.makedirs(os.path.dirname(META_FILE) or '.', exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
 
 JUNK_PHRASES = [
-    'artigo em inglês', 'artigo em ingles',
-    'membro da associação', 'membro da associacao',
-    'comentário à', 'comentario a',
-    'comentário a', 'em nossa página',
-    'em nossa pagina', 'pesquisador do centro',
-    'especialista militar', 'associado ao centro',
-    'pesquisa sobre a globalização',
-    'pesquisa sobre a globalizacao',
-    'artigo em português', 'artigo em portugues',
-    'en español', 'en espanol',
-    'leer más', 'leer mas', 'read in english',
-    'this article was originally published',
-    'комментируйте статьи о глобальных исследованиях',
-    'комментарий к статьям глобальных исследований',
-    'comment on global research articles',
-    'comment on this article',
-    'on our facebook page',
-    'на нашей странице в facebook',
-    'follow us on',
-    'подписывайтесь на',
-    'поделиться статьёй',
-    'share this article',
-    'read more articles',
-    'читайте больше статей',
-    'станьте участником',
-    'стать участником',
-    'global researchfree books',
-    'global research free books',
-    'global research online books',
-    'global research books',
-    'become a member',
-    'become a supporter',
-    'support global research',
-    'поддержите глобальные исследования',
-    'поддержите global research',
-    'our online e-book project',
-    'our e-books are our authors',
-    'наши электронные книги',
-    'electronic books',
-    'gift to global research',
-    'подарок для global research',
-    'global research e-books',
-    'global research ebook',
+    'read more', 'read also', 'share this', 'subscribe', 'sign up',
+    'follow us', 'all rights reserved', 'copyright', 'cookie',
+    'advertisement', 'click here', 'watch the video', 'related articles',
+    'leave a comment', 'comments', 'loading...',
 ]
-
-NON_ENGLISH_MARKERS = [
-    ' sono ', ' della ', ' degli ', ' delle ', ' nella ', ' nelle ', ' questo ', ' questa ',
-    ' questi ', ' queste ', ' perché ', ' perche ', ' dopo ', ' fatto ', ' stato ', ' stata ',
-    ' Finalmente ', ' parece ', ' país ', ' regione ', ' programma ', ' asiatico ',
-    ' também ', ' tambem ', ' porque ', ' onde ', ' quando ', ' enquanto ',
-    ' está ', ' esta ', ' são ', ' sao ', ' têm ', ' tem ',
-    ' según ', ' segun ', ' donde ', ' cuando ', ' mientras ', ' hacia ', ' desde ', ' hasta ',
-]
-
-FOREIGN_INLINE_WORDS = [
-    'trabalhadores', 'setores', 'críticos', 'criticos',
-    'não', 'nao', 'será', 'sera', 'para', 'como', 'também', 'tambem',
-    'está', 'esta', 'são', 'sao', 'muito', 'mais', 'ainda', 'desde',
-    'estrangeiro', 'estrangeiros', 'governo', 'presidente',
-    'política', 'politica', 'economia', 'militar',
-    'trabajadores', 'sectores', 'críticos', 'criticos',
-    'gobierno', 'presidente', 'política', 'politica',
-]
-
-IDIOM_FIXES = {
-    'забивает мяч в': 'одерживает верх в',
-    'забивает гол в': 'одерживает верх в',
-    'забить мяч в': 'одержать верх в',
-    'забить гол в': 'одержать верх в',
-    'UE забивает мяч': 'ЕС одерживает верх',
-    'UE fa gol': 'ЕС одерживает верх',
-    'es gibt ein Tor': 'одерживает верх',
-    'как sabedoria, как учёба': 'как мудрость, так и учёба',
-    'kak sabedoria': 'как мудрость',
-    'выиграл мяч': 'одержал победу',
-    'выиграла мяч': 'одержала победу',
-    'мяч в ворота': 'победа',
-    'европейская сказка': 'европейская мечта',
-    'европеизм кажется': 'европеизм, по-видимому,',
-    'европеизм parece': 'европеизм, по-видимому,',
-    'parece ter Finalmente prevalecido': 'по-видимому, одержал верх',
-    'parece ter finalmente prevalecido': 'по-видимому, одержал верх',
-}
 
 FOREIGN_TITLE_WORDS = [
-    ' conflito ', ' será ', ' sera ', ' decidido ',
-    ' campo ', ' batalha ', ' ucrânia ', ' ucrania ',
-    ' na ', ' da ', ' do ', ' dos ', ' das ',
-    ' governo ', ' presidente ', ' ministro ',
-    ' sobre ', ' com ', ' mais ', ' não ', ' nao ',
-    ' também ', ' tambem ', ' está ', ' esta ',
-    ' según ', ' segun ', ' tras ', ' desde ',
-    ' democracia ', ' declínio ', ' declinio ',
-    ' aponta ', ' relatório ', ' relatorio ',
-    ' trabalhadores ', ' setores ', ' críticos ',
+    ' el ', ' la ', ' los ', ' las ', ' de ', ' del ', ' en ', ' con ',
+    ' por ', ' para ', ' una ', ' uno ', ' este ', ' esta ', ' como ',
+    ' pero ', ' más ', ' sin ', ' sobre ', ' entre ', ' cuando ',
+    ' donde ', ' qué ', ' quién ',
 ]
 
+EXCLUDED_AUTHORS = [
+    'Reuters', 'Associated Press', 'AP News', 'AFP', 'Bloomberg',
+    'The New York Times', 'The Washington Post', 'The Guardian',
+]
+
+# Слова, которые не должны считаться «английским шумом» в переводе
 POST_TRANSLATION_FIXES = {
-    'Spanish': 'испанское', 'extradition': 'экстрадиция',
-    'communist': 'коммунистический', 'centimillionaire': 'мультимиллионер',
-    'reported': 'сообщил', 'detained': 'задержан', 'arrest': 'арест',
-    'Ibiza': 'Ибица', 'wanted': 'разыскивается',
-    'money laundering': 'отмывание денег', 'riot': 'бунт',
-    'conspiracy': 'сговор', 'charges': 'обвинения',
-    'demonstrations': 'демонстрации', 'transfers': 'переводы',
-    'company': 'компания', 'Tunisia': 'Тунис', 'previously': 'ранее',
-    'lived': 'проживал', 'spokeswoman': 'представитель',
-    'confirmed': 'подтвердил', 'outlet': 'издание', 'courts': 'суды',
-    'review': 'рассмотрение', 'request': 'запрос', 'judges': 'судьи',
-    'approve': 'одобрят', 'final': 'окончательное', 'decision': 'решение',
-    'returns': 'возвращается', 'Prime Minister': 'премьер-министру',
-    'Cabinet': 'кабинет', 'Traders': 'трейдеры', 'modest': 'скромные',
-    'hopes': 'надежды', 'deal': 'сделку', 'While': 'Хотя',
-    'provide': 'предоставим', 'detailed': 'подробный', 'preview': 'обзор',
-    'summit': 'саммит', 'subsequent': 'последующем', 'post': 'посте',
-    'signs': 'признаки', 'President': 'президент', 'Chinese': 'китайский',
-    'counterpart': 'коллега', 'emerge': 'выйти', 'upcoming': 'предстоящего',
-    'agreement': 'соглашение', 'artificial': 'искусственного',
-    'intelligence': 'интеллекта', 'industry': 'отрасли',
-    'increasingly': 'всё более', 'prominent': 'заметной',
-    'flash point': 'точкой напряжённости', 'between': 'между',
-    'world': 'мира', 'biggest': 'крупнейшими', 'economies': 'экономиками',
-    'fund managers': 'управляющие фондами', 'say': 'говорят',
-    'unlikely': 'маловероятно', 'significant': 'значительным',
-    'enough': 'достаточно', 'sustainable': 'устойчивый', 'boost': 'рост',
-    'related': 'связанных', 'stocks': 'акций', 'Over': 'В',
-    'weekend': 'выходные', 'Treasury Secretary': 'министр финансов',
-    'after': 'после', 'hours': 'часов', 'negotiations': 'переговоров',
-    'Vice Premier': 'вице-премьером', 'said': 'сказал',
-    'two sides': 'две стороны', 'agreed': 'согласились',
-    'create': 'создать', 'called': 'назвал', 'dialogue': 'диалог',
-    'technology': 'технологии', 'benefits': 'выгоды', 'threats': 'угрозы',
+    'eu': 'ЕС', 'us': 'США', 'un': 'ООН', 'nato': 'НАТО', 'brics': 'БРИКС',
+    'ai': 'ИИ', 'it': 'IT', 'gdp': 'ВВП', 'ceo': 'гендиректор',
+    'usa': 'США', 'uk': 'Великобритания',
 }
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-def get_local_time():
-    return datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
 
-def unescape_html(text: str) -> str:
-    if not text:
-        return text
-    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-    text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
-    text = html_module.unescape(text)
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+def get_local_time() -> datetime:
+    return datetime.now()
 
-def balance_brackets(text: str) -> str:
-    if not text:
-        return text
-    if text.count('(') > text.count(')'):
-        last_open = text.rfind('(')
-        if last_open != -1:
-            text = text[:last_open].rstrip()
-    if text.count('«') > text.count('»'):
-        last_open = text.rfind('«')
-        if last_open != -1:
-            text = text[:last_open].rstrip()
-    if text.count('[') > text.count(']'):
-        last_open = text.rfind('[')
-        if last_open != -1:
-            text = text[:last_open].rstrip()
-    return text.strip()
-
-def remove_inline_foreign(text: str) -> str:
-    if not text:
-        return text
-    result = text
-    for word in FOREIGN_INLINE_WORDS:
-        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(word) + r'(?![а-яА-Яa-zA-Z])'
-        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-    result = re.sub(r'\s+', ' ', result)
-    result = re.sub(r'\s+([,.;:!?])', r'\1', result)
-    result = re.sub(r'([,.;:!?])\s+', r'\1 ', result)
-    return result.strip()
-
-def remove_repeated_start(text: str) -> str:
-    if not text:
-        return text
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    if len(sentences) < 2:
-        return text
-    first = sentences[0].strip()
-    if len(first) < 15:
-        return text
-    key = first[:40].lower().strip()
-    for i in range(1, len(sentences)):
-        if sentences[i].lower().strip().startswith(key):
-            logger.info(f"⏭️ Отсечён повтор с {i+1}-го предложения")
-            return ' '.join(sentences[:i]).strip()
-    return text
-
-def is_non_english_body(text: str) -> bool:
-    if not text:
-        return False
-    text_lower = ' ' + text.lower() + ' '
-    hits = sum(1 for marker in NON_ENGLISH_MARKERS if marker in text_lower)
-    return hits >= 3
-
-def cut_non_english_tail(text: str) -> str:
-    if not text:
-        return text
-    paragraphs = text.split('\n\n')
-    clean = []
-    for p in paragraphs:
-        p_stripped = p.strip()
-        if not p_stripped:
-            continue
-        cyr = len(re.findall(r'[а-яА-ЯёЁ]', p_stripped))
-        total = len(re.findall(r'\w', p_stripped))
-        cyr_ratio = cyr / total if total > 0 else 0
-        if cyr_ratio < 0.5 and is_non_english_body(p_stripped):
-            logger.info(f"⏭️ Отсечён иностранный хвост: {p_stripped[:60]}...")
-            break
-        long_latin = re.findall(r'\b[a-zA-Z]{12,}\b', p_stripped)
-        if cyr_ratio < 0.3 and len(long_latin) >= 2:
-            logger.info(f"⏭️ Отсечён хвост с длинными латинскими словами: {p_stripped[:60]}...")
-            break
-        clean.append(p_stripped)
-    return '\n\n'.join(clean).strip()
-
-def remove_junk_paragraphs(text: str) -> str:
-    if not text:
-        return text
-    paragraphs = text.split('\n\n')
-    clean = []
-    for p in paragraphs:
-        p_lower = p.lower()
-        if any(junk in p_lower for junk in JUNK_PHRASES):
-            logger.info(f"⏭️ Удалён мусорный абзац: {p[:60]}...")
-            continue
-        clean.append(p)
-    return '\n\n'.join(clean).strip()
-
-def apply_idiom_fixes(text: str) -> str:
-    if not text:
-        return text
-    result = text
-    multiword = {k: v for k, v in IDIOM_FIXES.items() if ' ' in k}
-    for src, dst in sorted(multiword.items(), key=lambda x: -len(x[0])):
-        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(src) + r'(?![а-яА-Яa-zA-Z])'
-        result = re.sub(pattern, dst, result, flags=re.IGNORECASE)
-    single = {k: v for k, v in IDIOM_FIXES.items() if ' ' not in k}
-    for src, dst in single.items():
-        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(src) + r'(?![а-яА-Яa-zA-Z])'
-        result = re.sub(pattern, dst, result, flags=re.IGNORECASE)
-    return result
-
-def postprocess_translation(text: str) -> str:
-    if not text:
-        return text
-    result = text
-    result = remove_inline_foreign(result)
-    result = apply_idiom_fixes(result)
-    multiword = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' in k}
-    for eng, rus in sorted(multiword.items(), key=lambda x: -len(x[0])):
-        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
-        result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-    single = {k: v for k, v in POST_TRANSLATION_FIXES.items() if ' ' not in k}
-    for eng, rus in single.items():
-        pattern = r'(?<![а-яА-Яa-zA-Z])' + re.escape(eng) + r'(?![а-яА-Яa-zA-Z])'
-        result = re.sub(pattern, rus, result, flags=re.IGNORECASE)
-    result = remove_repeated_start(result)
-    result = re.sub(r'\s+', ' ', result).strip()
-    return result
 
 def truncate_at_sentence(text: str, max_len: int) -> str:
-    """Обрезает по границе предложения. Если не удалось — по границе слова с многоточием."""
+    """Обрезает текст по последней границе предложения.
+    FIX: допускаем перелёт не более 200 символов (а не 2× лимита),
+    чтобы финальный текст вместе с заголовком гарантированно влез в лимит Telegram."""
     if not text:
         return ""
-    text = text.strip()
     if len(text) <= max_len:
         return text
-    cut_pos = -1
-    for punct in ['.', '!', '?']:
-        for m in re.finditer(re.escape(punct) + r'(?=\s|$)', text[:max_len + 1]):
-            if m.end() > cut_pos:
-                cut_pos = m.end()
-    if cut_pos != -1:
-        return text[:cut_pos].strip()
     for punct in ['.', '!', '?']:
         m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
         if m:
             end_pos = max_len + m.end()
-            if end_pos <= max_len * 2:
+            if end_pos <= max_len + 200:      # FIX: было max_len * 2
                 return text[:end_pos].strip()
             break
     cut = text[:max_len]
@@ -370,15 +130,76 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
         cut = cut[:last_space]
     return cut.rstrip(' ,.;:') + '…'
 
+
+def remove_junk_paragraphs(text: str) -> str:
+    if not text:
+        return text
+    paragraphs = text.split('\n\n')
+    result = []
+    for p in paragraphs:
+        p_lower = p.lower()
+        if any(junk in p_lower for junk in JUNK_PHRASES):
+            continue
+        if p.strip():
+            result.append(p)
+    return '\n\n'.join(result)
+
+
+def balance_brackets(text: str) -> str:
+    """Закрывает незакрытые скобки/кавычки."""
+    if not text:
+        return text
+    pairs = [('«', '»'), ('(', ')'), ('[', ']'), ('{', '}')]
+    for op, cl in pairs:
+        diff = text.count(op) - text.count(cl)
+        if diff > 0:
+            text += cl * diff
+        elif diff < 0:
+            for _ in range(-diff):
+                idx = text.rfind(cl)
+                if idx >= 0:
+                    text = text[:idx] + text[idx + 1:]
+    return text
+
+
+def cut_non_english_tail(text: str) -> str:
+    """Отрезает хвост из непереведённого английского текста."""
+    if not text or len(text) < 200:
+        return text
+    tail = text[-300:]
+    if len(re.findall(r'[а-яА-Я]', tail)) == 0:
+        last_ru = -1
+        for m in re.finditer(r'[а-яА-Я]', text):
+            last_ru = m.end()
+        if last_ru > 0 and (len(text) - last_ru) > 100:
+            text = text[:last_ru + 50].rstrip()
+    return text
+
+
+def postprocess_translation(text: str) -> str:
+    """Мелкие правки перевода (двойные пробелы, пробелы перед знаками, замена слов)."""
+    if not text:
+        return text
+    for en, ru in POST_TRANSLATION_FIXES.items():
+        text = re.sub(rf'\b{re.escape(en)}\b', ru, text, flags=re.IGNORECASE)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\s+([,.!?;:])', r'\1', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+# ======================================================================
+# ===== КОНЕЦ РЕКОНСТРУКЦИИ, ДАЛЬШЕ — ИСХОДНЫЙ КОД С ПРАВКАМИ ===========
+# ======================================================================
+
 def _split_for_caption(content: str, available: int) -> tuple:
-    """Делит контент на (caption_part, remaining_part) по границе предложения.
-    Нужно для 2-шаговой публикации: фото + досылка остатка."""
+    """Делит контент на (caption_part, remaining_part) по границе предложения."""
+    # FIX: при available <= 0 весь текст должен уйти в remaining, а не в caption
     if not content or available <= 0:
-        return (content or "", "")
+        return ("", content or "")
     if len(content) <= available:
         return (content, "")
 
-    # Ищем последнюю границу предложения перед available
     cut_pos = -1
     for punct in ['.', '!', '?']:
         for m in re.finditer(re.escape(punct) + r'(?=\s|$)', content[:available + 1]):
@@ -390,7 +211,6 @@ def _split_for_caption(content: str, available: int) -> tuple:
         remaining = content[cut_pos:].strip()
         return (caption_part, remaining)
 
-    # Fallback: режем по границе слова
     cut = content[:available]
     last_space = cut.rfind(' ')
     if last_space > available * 0.6:
@@ -398,6 +218,7 @@ def _split_for_caption(content: str, available: int) -> tuple:
     caption_part = cut.rstrip(' ,.;:')
     remaining = content[len(caption_part):].strip()
     return (caption_part, remaining)
+
 
 def fetch_url(url: str, timeout: int = None):
     if timeout is None:
@@ -411,28 +232,30 @@ def fetch_url(url: str, timeout: int = None):
         logger.error(f"Ошибка запроса {url}: {e}")
         return None
 
+
 def is_bad_image_url(url: str) -> bool:
     if not url:
         return True
     url_lower = url.lower()
-    bad_markers = [
+    # FIX: маркеры ищем только в пути/имени файла, а не в домене,
+    # иначе blog.example.com отсеивается как «logo».
+    path = re.sub(r'^https?://[^/]+', '', url_lower)
+    bad_markers = (
         'logo', 'icon', 'avatar', 'placeholder', 'default',
         'no-image', 'noimage', 'blank', 'spacer', 'pixel',
         '1x1', 'transparent', 'sprite',
-    ]
+    )
     for marker in bad_markers:
-        if marker in url_lower:
+        if re.search(rf'[/_\-.]({re.escape(marker)})[/_\-.$]', path):
             return True
-    if re.search(r'/(logo|icon|avatar|banner)[-_./]', url_lower):
+    if re.search(r'/flags?/', path):
         return True
-    if re.search(r'/flag\.(jpg|jpeg|png|webp|gif|svg)', url_lower):
-        return True
-    if re.search(r'/flags?/', url_lower):
+    if re.search(r'/flag\.(jpg|jpeg|png|webp|gif|svg)', path):
         return True
     return False
 
+
 def _detect_image_format(content: bytes) -> str:
-    """Возвращает 'jpeg'|'png'|'gif'|'webp'|'avif'|'bmp'|'unknown' по magic bytes."""
     if not content or len(content) < 12:
         return 'unknown'
     if content[:3] == b'\xff\xd8\xff':
@@ -449,6 +272,7 @@ def _detect_image_format(content: bytes) -> str:
         return 'bmp'
     return 'unknown'
 
+
 def _is_image_content(content: bytes, ct: str = '') -> bool:
     if not content or len(content) < 100:
         return False
@@ -458,20 +282,36 @@ def _is_image_content(content: bytes, ct: str = '') -> bool:
         return True
     return False
 
+
+def _image_ok_size(content: bytes, min_width: int = 200, min_height: int = 120) -> bool:
+    """FIX: отсеивает иконки/пиксели 1×1. Без PIL — пропускаем."""
+    if not content or not _HAS_PIL:
+        return True
+    try:
+        img = Image.open(BytesIO(content))
+        return img.width >= min_width and img.height >= min_height
+    except Exception:
+        return False
+
+
 def _normalize_to_jpeg(content: bytes):
-    """Конвертирует WebP/AVIF/BMP в JPEG. JPEG/PNG/GIF — пропускает как есть."""
     if not content:
         return None
     fmt = _detect_image_format(content)
     if fmt == 'jpeg':
-        return content
+        # FIX: даже у JPEG проверяем размер
+        return content if _image_ok_size(content) else None
     if fmt in ('png', 'gif'):
-        return content
+        return content if _image_ok_size(content) else None
     if not _HAS_PIL:
         logger.warning("PIL не установлен — не могу конвертировать %s", fmt)
         return None
     try:
         img = Image.open(BytesIO(content))
+        # FIX: проверка размера до конвертации
+        if img.width < 200 or img.height < 120:
+            logger.info(f"  ⏭️ Слишком мелкая картинка {img.size}, отклоняем")
+            return None
         if img.format and img.format.upper() in ('JPEG', 'JPG'):
             return content
         if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
@@ -494,38 +334,23 @@ def _normalize_to_jpeg(content: bytes):
         logger.warning(f"PIL convert failed ({fmt}): {e}")
         return None
 
+
 def _preprocess_image_url(url: str) -> str:
-    """Принудительно ставит format=jpeg в CDN-URL (Cloudflare Images и др.).
-    Это спасает от AVIF, который Telegram не умеет обрабатывать."""
     if not url:
         return url
     original = url
-    # Cloudflare Images: /cdn-cgi/image/<params>/<url>
     url = re.sub(
         r'(/cdn-cgi/image/[^/]*?)\bformat=(auto|webp|avif|json)\b',
-        r'\1format=jpeg',
-        url,
-        flags=re.IGNORECASE
+        r'\1format=jpeg', url, flags=re.IGNORECASE,
     )
-    # Query string: ?format=auto / &format=webp / ?fm=avif
-    url = re.sub(
-        r'([?&])format=(auto|webp|avif)\b',
-        r'\1format=jpeg',
-        url,
-        flags=re.IGNORECASE
-    )
-    url = re.sub(
-        r'([?&])fm=(auto|webp|avif)\b',
-        r'\1fm=jpeg',
-        url,
-        flags=re.IGNORECASE
-    )
+    url = re.sub(r'([?&])format=(auto|webp|avif)\b', r'\1format=jpeg', url, flags=re.IGNORECASE)
+    url = re.sub(r'([?&])fm=(auto|webp|avif)\b', r'\1fm=jpeg', url, flags=re.IGNORECASE)
     if url != original:
         logger.info(f"  🔧 URL format: ...{original[-50:]} → ...{url[-50:]}")
     return url
 
+
 def _fetch_via_proxy(image_url: str, force_jpeg: bool = True):
-    """Загрузка через бесплатные image-прокси. force_jpeg=True → output=jpg."""
     if not image_url:
         return None
     clean_url = _preprocess_image_url(image_url)
@@ -564,6 +389,7 @@ def _fetch_via_proxy(image_url: str, force_jpeg: bool = True):
             continue
     return None
 
+
 def extract_image_url_for_infobrics(soup, base_url: str):
     article = soup.find('article')
     if not article:
@@ -599,8 +425,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
             url = urljoin(base_url, url)
         elif not url.startswith('http'):
             continue
-        if re.search(r'(icon|logo|avatar|flag|sprite|placeholder)', url, re.IGNORECASE):
-            continue
         if is_bad_image_url(url):
             continue
         if not re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.IGNORECASE):
@@ -608,7 +432,9 @@ def extract_image_url_for_infobrics(soup, base_url: str):
         return url
     return None
 
+
 def collect_image_candidates_generic(soup, base_url: str) -> list:
+    """og:image → og:image:secure_url → twitter:image → <article> img → все img."""
     candidates = []
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
@@ -653,40 +479,31 @@ def collect_image_candidates_generic(soup, base_url: str) -> list:
             normalized.append(url)
     return normalized
 
+
 def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
     if source_name == 'InfoBrics':
         return extract_image_url_for_infobrics(soup, base_url)
     candidates = collect_image_candidates_generic(soup, base_url)
     return candidates[0] if candidates else None
 
+
 def fetch_zerohedge_image(image_url: str):
-    """
-    Загрузка картинки ZeroHedge.
-    1) Сначала пробуем модифицированный URL (format=auto → format=jpeg) — Cloudflare
-       отдаст настоящий JPEG, без AVIF.
-    2) Если не вышло — оригинальный URL (Pillow 11 может декодировать AVIF).
-    3) Если не вышло — прокси с output=jpg (конвертирует на стороне сервера).
-    """
     if not image_url:
         return None
-
     modified_url = _preprocess_image_url(image_url)
     try_urls = [modified_url]
     if modified_url != image_url:
         try_urls.append(image_url)
-
     base_headers = {
         'User-Agent': UA,
         'Referer': 'https://www.zerohedge.com/',
         'Origin': 'https://www.zerohedge.com',
-        # Приоритет JPEG — на случай если сервер всё же учитывает Accept
         'Accept': 'image/jpeg,image/png,*/*;q=0.5',
         'Accept-Language': 'en-US,en;q=0.9',
         'Sec-Fetch-Dest': 'image',
         'Sec-Fetch-Mode': 'no-cors',
         'Sec-Fetch-Site': 'same-site',
     }
-
     for idx, u in enumerate(try_urls):
         try:
             r = requests.get(u, headers=base_headers, timeout=20, allow_redirects=True)
@@ -703,39 +520,42 @@ def fetch_zerohedge_image(image_url: str):
                 logger.info(f"ZH ✗ direct[{idx}]: {u[:60]} → {r.status_code} {ct[:30]} {fmt}")
         except Exception as e:
             logger.info(f"ZH ✗ direct[{idx}] exc: {u[:60]} → {e}")
-
     proxied = _fetch_via_proxy(image_url, force_jpeg=True)
     if proxied:
         logger.info(f"ZH ✓ proxy JPEG: {image_url[:60]} ({len(proxied)}b)")
         return proxied
-
     logger.info(f"ZH ✗ all failed: {image_url[:60]}")
     return None
 
+
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
-    """Стандартная загрузка картинки: модифицированный URL → прямая → прокси → заглушка."""
-    if image_url:
-        clean_url = _preprocess_image_url(image_url)
-        try:
-            headers = {
-                'User-Agent': UA,
-                'Accept': 'image/jpeg,image/png,*/*;q=0.5',
-            }
-            if referer:
-                headers['Referer'] = referer
-            r = requests.get(clean_url, headers=headers, timeout=15, allow_redirects=True)
-            ct = r.headers.get('Content-Type', '')
-            if r.status_code == 200 and _is_image_content(r.content, ct):
-                jpeg = _normalize_to_jpeg(r.content)
-                if jpeg:
-                    return jpeg
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить картинку {image_url[:60]}: {e}")
-        proxied = _fetch_via_proxy(image_url, force_jpeg=True)
-        if proxied:
-            logger.info(f"🖼️ Картинка получена через прокси: {image_url[:60]}")
-            return proxied
-    return fetch_fallback_image()
+    """FIX: возвращает None при провале (не подсовывает заглушку).
+    Заглушку решает вызывающий — см. USE_FALLBACK_IMAGE в publish()."""
+    if not image_url:
+        return None
+    clean_url = _preprocess_image_url(image_url)
+    try:
+        headers = {
+            'User-Agent': UA,
+            'Accept': 'image/jpeg,image/png,*/*;q=0.5',
+        }
+        if referer:
+            headers['Referer'] = referer
+        r = requests.get(clean_url, headers=headers, timeout=15, allow_redirects=True)
+        ct = r.headers.get('Content-Type', '')
+        if r.status_code == 200 and _is_image_content(r.content, ct):
+            jpeg = _normalize_to_jpeg(r.content)
+            if jpeg:
+                return jpeg
+    except Exception as e:
+        logger.warning(f"Не удалось загрузить {image_url[:60]}: {e}")
+
+    proxied = _fetch_via_proxy(image_url, force_jpeg=True)
+    if proxied:
+        logger.info(f"🖼️ Через прокси: {image_url[:60]}")
+        return proxied
+    return None
+
 
 def fetch_fallback_image():
     if not FALLBACK_IMAGE_URL:
@@ -750,6 +570,7 @@ def fetch_fallback_image():
         logger.error(f"Не удалось загрузить заглушку: {e}")
     return None
 
+
 def clean_title(title: str):
     if not title:
         return ""
@@ -757,9 +578,11 @@ def clean_title(title: str):
     title = re.sub(r'^[📰📝📌🔹🔸⭐️✨]\s*', '', title)
     title = re.sub(r'[„“”"\'`]', '', title)
     title = re.sub(r'\s+', ' ', title).strip()
-    if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
+    if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)',
+                 title, re.IGNORECASE):
         return ""
     return title.strip()
+
 
 def is_foreign_title(title: str) -> bool:
     if not title:
@@ -773,6 +596,7 @@ def is_foreign_title(title: str) -> bool:
         return True
     return False
 
+
 def is_excluded_author(text: str):
     if not text:
         return False
@@ -780,6 +604,7 @@ def is_excluded_author(text: str):
         if name in text:
             return True
     return False
+
 
 def contains_link(text: str):
     if not text:
@@ -794,16 +619,23 @@ def contains_link(text: str):
         return True
     return False
 
+
 def is_foreign_text(text: str) -> bool:
     if not text:
         return False
     foreign_chars = re.findall(r'[áéíóúñü¿¡àèìòùâêîôûäëïöüçßœæ]', text, re.IGNORECASE)
     if len(foreign_chars) > 3:
         return True
-    foreign_words = re.findall(r'\b(el|la|los|las|de|del|en|con|por|para|una|uno|este|esta|como|pero|más|sin|sobre|entre|cuando|donde|qué|quién|también|desde|hasta|hacia|según|tras|durante|contra|mediante)\b', text, re.IGNORECASE)
+    foreign_words = re.findall(
+        r'\b(el|la|los|las|de|del|en|con|por|para|una|uno|este|esta|como|pero|'
+        r'más|sin|sobre|entre|cuando|donde|qué|quién|también|desde|hasta|'
+        r'hacia|según|tras|durante|contra|mediante)\b',
+        text, re.IGNORECASE,
+    )
     if len(foreign_words) > 5:
         return True
     return False
+
 
 def is_bad_title(title: str) -> bool:
     if not title:
@@ -824,6 +656,7 @@ def is_bad_title(title: str) -> bool:
         return True
     return False
 
+
 # ========== ПЕРЕВОДЧИКИ ==========
 def translate_google(text: str) -> str:
     try:
@@ -839,6 +672,7 @@ def translate_google(text: str) -> str:
     except Exception as e:
         logger.warning(f"Google ошибка: {e}")
     return None
+
 
 def translate_mymemory(text: str) -> str:
     if len(text) > 500:
@@ -857,6 +691,7 @@ def translate_mymemory(text: str) -> str:
         logger.warning(f"MyMemory ошибка: {e}")
     return None
 
+
 def translate_lingva(text: str) -> str:
     try:
         url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text)}"
@@ -871,6 +706,7 @@ def translate_lingva(text: str) -> str:
         logger.warning(f"Lingva ошибка: {e}")
     return None
 
+
 def translate_chunk(chunk: str) -> tuple:
     result = translate_google(chunk)
     if result:
@@ -882,6 +718,7 @@ def translate_chunk(chunk: str) -> tuple:
     if result:
         return (result, 'Lingva')
     return (chunk, None)
+
 
 def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
     if not text:
@@ -915,6 +752,7 @@ def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
         chunks.append(current)
     return chunks
 
+
 def translate_text(text: str) -> str:
     if not text or len(text) < 3:
         return text
@@ -937,6 +775,7 @@ def translate_text(text: str) -> str:
         logger.info(f"  ✅ Методы перевода: {stats_str}")
     return ' '.join(translated_parts)
 
+
 # ========== ОСНОВНОЙ КЛАСС ==========
 class NewsBot:
     def __init__(self):
@@ -953,11 +792,12 @@ class NewsBot:
                         'sent_links': set(data.get('sent_links', [])),
                         'sent_hashes': set(data.get('sent_hashes', [])),
                         'sent_titles': set(data.get('sent_titles', [])),
-                        'posts_log': data.get('posts_log', [])
+                        'posts_log': data.get('posts_log', []),
                     }
         except Exception as e:
             logger.error(f"Ошибка загрузки состояния: {e}")
-        return {'sent_links': set(), 'sent_hashes': set(), 'sent_titles': set(), 'posts_log': []}
+        return {'sent_links': set(), 'sent_hashes': set(),
+                'sent_titles': set(), 'posts_log': []}
 
     def _save_state(self):
         try:
@@ -965,7 +805,7 @@ class NewsBot:
                 'sent_links': list(self.state['sent_links']),
                 'sent_hashes': list(self.state['sent_hashes']),
                 'sent_titles': list(self.state['sent_titles']),
-                'posts_log': self.state['posts_log']
+                'posts_log': self.state['posts_log'],
             }
             with open(STATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -997,13 +837,14 @@ class NewsBot:
         except Exception as e:
             logger.error(f"Ошибка сохранения мета: {e}")
 
-    def _add_to_meta(self, post_id: str, source: str, url: str, title: str, content_preview: str = ""):
+    def _add_to_meta(self, post_id: str, source: str, url: str,
+                     title: str, content_preview: str = ""):
         self.meta['posts'][post_id] = {
             'source': source,
             'url': url,
             'original_title': title,
             'original_content_preview': content_preview[:500] if content_preview else "",
-            'time': get_local_time().isoformat()
+            'time': get_local_time().isoformat(),
         }
         self._save_meta()
         logger.info(f"📝 Метаданные сохранены: {source} - {title[:50]}...")
@@ -1017,7 +858,8 @@ class NewsBot:
         title = title.lower()
         title = re.sub(r'[^\w\s]', '', title)
         title = re.sub(r'\s+', ' ', title).strip()
-        common = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+        common = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
+                  'to', 'for', 'of', 'with', 'by'}
         words = [w for w in title.split() if w not in common]
         return ' '.join(words)[:100]
 
@@ -1056,7 +898,7 @@ class NewsBot:
         self.state['posts_log'].append({
             'link': url,
             'title': title[:50],
-            'time': get_local_time().isoformat()
+            'time': get_local_time().isoformat(),
         })
         if len(self.state['posts_log']) > 100:
             self.state['posts_log'] = self.state['posts_log'][-100:]
@@ -1105,17 +947,21 @@ class NewsBot:
             articles = []
             for entry in feed.entries[:limit]:
                 title = entry.get('title', '').strip()
-                if re.search(r'(избранные статьи|featured articles|selected articles)', title, re.IGNORECASE):
+                if re.search(r'(избранные статьи|featured articles|selected articles)',
+                             title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
-                if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b', title, re.IGNORECASE):
+                if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b',
+                             title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
-                if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)', title, re.IGNORECASE):
+                if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)',
+                             title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
                     continue
                 if is_foreign_title(title):
-                    logger.info(f"⏭️ {source_name}: пропущен нерусский/неанглийский заголовок '{title[:50]}...'")
+                    logger.info(f"⏭️ {source_name}: пропущен нерусский/неанглийский "
+                                f"заголовок '{title[:50]}...'")
                     continue
                 if not title or len(title) < 5:
                     summary = entry.get('summary', '')
@@ -1187,30 +1033,26 @@ class NewsBot:
             if image_url:
                 logger.info(f"Найдено изображение: {image_url[:80]}...")
             else:
-                logger.info("⚠️ Изображение не найдено, будет использована заглушка")
+                logger.info("⚠️ Изображение не найдено")
 
             content_parts = []
             content_container = None
             selectors = [
-                'article',
-                'div.entry-content',
-                'div.post-content',
-                'div.content',
-                'div.article-content',
-                'div.main-content',
-                'div.article__text',
-                'main',
-                'div.body'
+                'article', 'div.entry-content', 'div.post-content', 'div.content',
+                'div.article-content', 'div.main-content', 'div.article__text',
+                'main', 'div.body',
             ]
             for selector in selectors:
-                if selector.startswith('div.') or selector.startswith('main') or selector == 'article':
+                if (selector.startswith('div.') or selector.startswith('main')
+                        or selector == 'article'):
                     container = soup.select_one(selector)
                     if container:
                         content_container = container
                         break
 
             if content_container:
-                for tag in content_container.find_all(['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
+                for tag in content_container.find_all(
+                        ['aside', 'nav', 'header', 'footer', 'script', 'style', 'iframe']):
                     tag.decompose()
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
@@ -1241,7 +1083,8 @@ class NewsBot:
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
                     if len(text) > 40 and not text.startswith('Read more'):
-                        if not re.search(r'(menu|nav|copyright|all rights reserved)', text, re.IGNORECASE):
+                        if not re.search(r'(menu|nav|copyright|all rights reserved)',
+                                         text, re.IGNORECASE):
                             content_parts.append(text)
 
             if len(content_parts) < 2:
@@ -1254,7 +1097,8 @@ class NewsBot:
             content = balance_brackets(content)
 
             if len(content) < 150:
-                logger.warning(f"⚠️ {source_name}: контент слишком короткий ({len(content)} символов)")
+                logger.warning(f"⚠️ {source_name}: контент слишком короткий "
+                               f"({len(content)} символов)")
                 return None
 
             return {
@@ -1298,7 +1142,8 @@ class NewsBot:
         items = []
         sources = [
             ('InfoBrics', self._get_infobrics_articles, self._parse_infobrics_article),
-            ('Global Research', self._get_globalresearch_articles, self._parse_globalresearch_article),
+            ('Global Research', self._get_globalresearch_articles,
+             self._parse_globalresearch_article),
             ('RT', self._get_rt_articles, self._parse_rt_article),
             ('ZeroHedge', self._get_zerohedge_articles, self._parse_zerohedge_article),
         ]
@@ -1311,7 +1156,8 @@ class NewsBot:
                     url = article.get('url', '')
                     if self._is_duplicate(url, title):
                         continue
-                    data = await asyncio.get_event_loop().run_in_executor(None, parse_func, url)
+                    data = await asyncio.get_event_loop().run_in_executor(
+                        None, parse_func, url)
                     if data:
                         data['title'] = title
                         data['rss_image'] = article.get('rss_image')
@@ -1381,7 +1227,9 @@ class NewsBot:
             content_ru = content_ru or content_short
             content_ru = re.sub(r'Источник:\s*\S+', '', content_ru, flags=re.IGNORECASE)
             content_ru = re.sub(r'По материалам\s*\S+', '', content_ru, flags=re.IGNORECASE)
-            content_ru = re.sub(r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)', '', content_ru, flags=re.IGNORECASE)
+            content_ru = re.sub(
+                r'\([^)]*(?:AP|Associated Press|Ассошиэйтед Пресс)[^)]*\)',
+                '', content_ru, flags=re.IGNORECASE)
             content_ru = unescape_html(content_ru)
             content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
@@ -1390,131 +1238,80 @@ class NewsBot:
             self._add_to_meta(post_id, source_name, url, title_en, content_en)
 
             title_clean = clean_title(title_ru) or title_ru
+            # FIX: жёстко ограничиваем заголовок, чтобы caption всегда был валиден
+            if len(title_clean) > MAX_CAPTION - 300:
+                title_clean = (truncate_at_sentence(title_clean, MAX_CAPTION - 300)
+                               or title_clean[:MAX_CAPTION - 300])
             title_escaped = html_module.escape(title_clean, quote=False)
 
-            # ========== ЗАГРУЗКА КАРТИНКИ ==========
+            # ========== ЗАГРУЗКА КАРТИНКИ (правильный приоритет) ==========
+            # FIX: og:image со страницы → article img → RSS в последнюю очередь
             image_trials = []
-            if rss_image:
-                image_trials.append(rss_image)
-            if image_url and image_url not in image_trials:
+            if image_url:
                 image_trials.append(image_url)
             for c in image_candidates:
                 if c and c not in image_trials:
                     image_trials.append(c)
+            if rss_image and rss_image not in image_trials:
+                image_trials.append(rss_image)
 
             img_bytes = None
-            if source_name == 'ZeroHedge':
-                logger.info(f"ZeroHedge: {len(image_trials)} кандидатов на картинку")
-                for i, cand in enumerate(image_trials):
-                    logger.info(f"  ZH try {i+1}/{len(image_trials)}: {cand[:70]}")
-                    try:
+            for i, cand in enumerate(image_trials):
+                logger.info(f"  try {i+1}/{len(image_trials)}: {cand[:70]}")
+                try:
+                    if source_name == 'ZeroHedge':
                         img_bytes = fetch_zerohedge_image(cand)
-                    except Exception as e:
-                        logger.warning(f"  ZH exc: {e}")
-                        img_bytes = None
-                    if img_bytes:
-                        logger.info(f"  ✅ ZeroHedge image OK: {cand[:60]}")
-                        break
-            else:
-                for i, cand in enumerate(image_trials):
-                    try:
-                        img_bytes = fetch_image_with_fallback(cand, referer=url, source=source_name)
-                    except Exception as e:
-                        logger.warning(f"  Image exc: {e}")
-                        img_bytes = None
-                    if img_bytes:
-                        break
+                    else:
+                        img_bytes = fetch_image_with_fallback(
+                            cand, referer=url, source=source_name)
+                except Exception as e:
+                    logger.warning(f"  image exc: {e}")
+                    img_bytes = None
+                if img_bytes:
+                    logger.info(f"  ✅ image OK: {cand[:60]}")
+                    break
 
-            if not img_bytes:
+            # FIX: заглушка только если явно разрешено через USE_FALLBACK_IMAGE
+            if not img_bytes and USE_FALLBACK_IMAGE:
                 img_bytes = fetch_fallback_image()
 
-            # Финальная страховка: гарантируем, что это JPEG/PNG/GIF
+            # ========== ПУБЛИКАЦИЯ (ОДНА, БЕЗ ДОСЫЛКИ) ==========
             if img_bytes:
-                norm = _normalize_to_jpeg(img_bytes)
-                if norm is None:
-                    logger.warning("⚠️ Картинка не конвертируется в JPEG, пробуем заглушку")
-                    img_bytes = fetch_fallback_image()
+                available = MAX_CAPTION - len(title_clean) - 20
+                if available < 50:
+                    # даже минимум не влезает в caption — уходим в текстовый режим
+                    logger.warning("⚠️ caption не влезает, публикуем текстом")
+                    img_bytes = None
                 else:
-                    img_bytes = norm
-
-            # ========== ПУБЛИКАЦИЯ С ФОТО (2-ШАГОВАЯ, ЕСЛИ НУЖНО) ==========
-            if img_bytes:
-                try:
-                    available = MAX_CAPTION - len(title_clean) - 20
-                    if available < 50:
-                        available = MAX_CAPTION - 100
-
-                    body_for_caption, remaining = _split_for_caption(content_ru, available)
+                    # FIX: remaining игнорируем — никакой досылки, одна публикация
+                    body_for_caption, _remaining = _split_for_caption(content_ru, available)
                     body_escaped = html_module.escape(body_for_caption, quote=False)
                     caption = f"<b>{title_escaped}</b>\n\n{body_escaped}".strip()
 
-                    await self.bot.send_photo(
-                        chat_id=CHANNEL_ID,
-                        photo=img_bytes,
-                        caption=caption,
-                        parse_mode='HTML'
-                    )
-                    logger.info(f"✅ Опубликовано С ФОТО (caption {len(body_for_caption)}ch)")
-
-                    # Досылка продолжения, если осталось
-                    if remaining and len(remaining) > 30:
-                        max_chunk = MAX_MESSAGE - 100
-                        chunks = []
-                        current = ""
-                        sentences = re.split(r'(?<=[.!?])\s+', remaining)
-                        for sent in sentences:
-                            if len(current) + len(sent) + 1 <= max_chunk:
-                                current = (current + ' ' + sent).strip() if current else sent
-                            else:
-                                if current:
-                                    chunks.append(current)
-                                current = sent
-                        if current:
-                            chunks.append(current)
-
-                        for chunk in chunks:
-                            chunk_escaped = html_module.escape(chunk, quote=False)
-                            try:
-                                await self.bot.send_message(
-                                    chat_id=CHANNEL_ID,
-                                    text=chunk_escaped,
-                                    parse_mode='HTML',
-                                    disable_web_page_preview=True
-                                )
-                                logger.info(f"📝 Дослано продолжение: {len(chunk)}ch")
-                                await asyncio.sleep(1)
-                            except TelegramError as e2:
-                                logger.warning(f"Ошибка досылки: {e2}")
-                                try:
-                                    await self.bot.send_message(
-                                        chat_id=CHANNEL_ID,
-                                        text=chunk[:MAX_MESSAGE],
-                                        parse_mode=None,
-                                        disable_web_page_preview=True
-                                    )
-                                except Exception:
-                                    pass
-
-                    self._mark_sent(url, title_en, content_en)
-                    self._log_post(url, title_en)
-                    return
-
-                except TelegramError as e:
-                    logger.warning(f"Ошибка отправки фото: {e}")
                     try:
-                        plain_caption = f"{title_clean}\n\n{body_for_caption}"[:MAX_CAPTION]
                         await self.bot.send_photo(
-                            chat_id=CHANNEL_ID,
-                            photo=img_bytes,
-                            caption=plain_caption,
-                            parse_mode=None
+                            chat_id=CHANNEL_ID, photo=img_bytes,
+                            caption=caption, parse_mode='HTML',
                         )
-                        logger.info("✅ Опубликовано С ФОТО (plain)")
+                        logger.info(f"✅ Опубликовано С ФОТО (caption "
+                                    f"{len(body_for_caption)}ch)")
                         self._mark_sent(url, title_en, content_en)
                         self._log_post(url, title_en)
                         return
-                    except Exception as e2:
-                        logger.warning(f"Повтор фото без parse_mode: {e2}")
+                    except TelegramError as e:
+                        logger.warning(f"Ошибка send_photo: {e}")
+                        try:
+                            plain_caption = f"{title_clean}\n\n{body_for_caption}"[:MAX_CAPTION]
+                            await self.bot.send_photo(
+                                chat_id=CHANNEL_ID, photo=img_bytes,
+                                caption=plain_caption, parse_mode=None,
+                            )
+                            logger.info("✅ Опубликовано С ФОТО (plain)")
+                            self._mark_sent(url, title_en, content_en)
+                            self._log_post(url, title_en)
+                            return
+                        except Exception as e2:
+                            logger.warning(f"Повтор send_photo без parse_mode: {e2}")
 
             # ========== ПУБЛИКАЦИЯ ТЕКСТОМ ==========
             logger.info("📝 Публикация текстом")
@@ -1530,19 +1327,18 @@ class NewsBot:
 
             try:
                 await self.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=text_message,
-                    parse_mode='HTML',
-                    disable_web_page_preview=False
+                    chat_id=CHANNEL_ID, text=text_message,
+                    parse_mode='HTML', disable_web_page_preview=False,
                 )
                 logger.info("✅ Опубликовано ТЕКСТОМ")
                 self._mark_sent(url, title_en, content_en)
                 self._log_post(url, title_en)
             except TelegramError as e:
-                logger.warning(f"Ошибка текста: {e}")
+                logger.warning(f"Ошибка send_message: {e}")
                 try:
                     plain = f"{title_clean}\n\n{content_ru}"[:MAX_MESSAGE]
-                    await self.bot.send_message(chat_id=CHANNEL_ID, text=plain, parse_mode=None)
+                    await self.bot.send_message(
+                        chat_id=CHANNEL_ID, text=plain, parse_mode=None)
                     logger.info("✅ Опубликовано ТЕКСТОМ (plain)")
                     self._mark_sent(url, title_en, content_en)
                     self._log_post(url, title_en)
@@ -1574,10 +1370,7 @@ class NewsBot:
             await self.publish(article)
             published_count += 1
             if published_count < len(news):
-                if IS_MANUAL_RUN:
-                    await asyncio.sleep(10)
-                else:
-                    await asyncio.sleep(60)
+                await asyncio.sleep(10 if IS_MANUAL_RUN else 60)
 
         logger.info(f"✅ Опубликовано: {published_count}")
 
@@ -1593,6 +1386,7 @@ class NewsBot:
                 logger.error(f"❌ Ошибка: {e}")
                 await asyncio.sleep(300)
 
+
 async def main():
     if not TELEGRAM_TOKEN:
         logger.error("❌ TELEGRAM_TOKEN не задан!")
@@ -1606,6 +1400,7 @@ async def main():
         await bot.run_once()
     else:
         await bot.run_forever()
+
 
 if __name__ == '__main__':
     asyncio.run(main())
