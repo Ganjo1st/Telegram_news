@@ -34,10 +34,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate secrets
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHANNEL_ID:     ${{ secrets.TELEGRAM_CHANNEL_ID }}
+        run: |
+          if [ -z "$TELEGRAM_TOKEN" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN пуст. Добавьте его в Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "$CHANNEL_ID" ]; then
+            echo "::error::TELEGRAM_CHANNEL_ID пуст. Добавьте его в Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
       - name: Run bot
         env:
-          TELEGRAM_TOKEN:    ${{ secrets.TELEGRAM_TOKEN }}
-          CHANNEL_ID:        ${{ secrets.CHANNEL_ID }}
+          TELEGRAM_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHANNEL_ID:        ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TEST_MODE:         "true"
           MIN_POST_INTERVAL: "120"
           MAX_POST_INTERVAL: "300"
