@@ -12,7 +12,7 @@ FIX-набор:
   - STATE_FILE/META_FILE совпадают с тем, что коммитит workflow.
   - MIN_INTERVAL/MAX_INTERVAL читают MIN_POST_INTERVAL/MAX_POST_INTERVAL.
   - TIMEZONE_OFFSET применяется в get_local_time().
-  - TEST_MODE обрабатывается.
+  - TEST_MODE обрабатывается (в т.ч. обходит ночной режим).
 """
 import os
 import re
@@ -48,7 +48,6 @@ except ImportError:
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '').strip()
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '').strip()
 
-# FIX: имена совпадают с тем, что коммитит workflow
 STATE_FILE = os.environ.get('STATE_FILE', 'state_news_bot.json')
 META_FILE = os.environ.get('META_FILE', 'posts_meta.json')
 
@@ -58,7 +57,6 @@ MAX_MESSAGE = 4096
 MAX_TRANSLATE_INPUT = 2500
 MAX_POSTS_PER_DAY = int(os.environ.get('MAX_POSTS_PER_DAY', '10'))
 
-# FIX: читаем оба имени (MIN_POST_INTERVAL из workflow и MIN_INTERVAL)
 MIN_INTERVAL = int(
     os.environ.get('MIN_POST_INTERVAL')
     or os.environ.get('MIN_INTERVAL')
@@ -72,7 +70,6 @@ MAX_INTERVAL = int(
 if MAX_INTERVAL < MIN_INTERVAL:
     MAX_INTERVAL = MIN_INTERVAL
 
-# FIX: TIMEZONE_OFFSET и TEST_MODE применяются
 TIMEZONE_OFFSET = int(os.environ.get('TIMEZONE_OFFSET', '0'))
 TEST_MODE = os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes')
 
@@ -127,7 +124,6 @@ POST_TRANSLATION_FIXES = {
 # ======================================================================
 
 def get_local_time() -> datetime:
-    # FIX: применяем TIMEZONE_OFFSET из workflow
     return datetime.now() + timedelta(hours=TIMEZONE_OFFSET)
 
 
@@ -205,7 +201,6 @@ def postprocess_translation(text: str) -> str:
 
 
 def _split_for_caption(content: str, available: int) -> tuple:
-    # FIX: при available <= 0 весь текст уходит в remaining, а не в caption
     if not content or available <= 0:
         return ("", content or "")
     if len(content) <= available:
@@ -248,7 +243,6 @@ def is_bad_image_url(url: str) -> bool:
     if not url:
         return True
     url_lower = url.lower()
-    # FIX: проверяем только путь, а не домен (blog.example.com больше не отсеивается)
     path = re.sub(r'^https?://[^/]+', '', url_lower)
     bad_markers = (
         'logo', 'icon', 'avatar', 'placeholder', 'default',
@@ -294,7 +288,6 @@ def _is_image_content(content: bytes, ct: str = '') -> bool:
 
 
 def _image_ok_size(content: bytes, min_width: int = 200, min_height: int = 120) -> bool:
-    # FIX: отсеиваем иконки/пиксели 1×1
     if not content or not _HAS_PIL:
         return True
     try:
@@ -536,7 +529,6 @@ def fetch_zerohedge_image(image_url: str):
 
 
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
-    # FIX: не подсовываем заглушку — возвращаем None при провале
     if not image_url:
         return None
     clean_url = _preprocess_image_url(image_url)
@@ -911,7 +903,8 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
-        if IS_MANUAL_RUN:
+        # FIX: TEST_MODE обходит ночной режим и интервалы для тестирования
+        if IS_MANUAL_RUN or TEST_MODE:
             return True
         now = get_local_time()
         hour = now.hour
@@ -1157,6 +1150,10 @@ class NewsBot:
             try:
                 logger.info(f"📰 Парсинг {source_name}...")
                 articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
+                # FIX: логируем пустой ответ RSS для наглядности
+                if not articles:
+                    logger.warning(f"⚠️ {source_name}: 0 статей из RSS")
+                    continue
                 for article in articles[:3]:
                     title = article.get('title', '')
                     url = article.get('url', '')
