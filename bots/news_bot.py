@@ -1,15 +1,18 @@
 """
 Telegram News Bot — InfoBrics, Global Research, RT, ZeroHedge → перевод → канал.
 
-Исправления:
-  1. Одна статья = ОДНА публикация (без досылки остатка текста).
-  2. Приоритет картинок: og:image со страницы → img внутри <article> → RSS → (опц.) заглушка.
-  3. fetch_image_with_fallback возвращает None при провале (больше не подсовывает заглушку).
-  4. Проверка реальных размеров картинки (мин. 200x120) — отсеивает иконки/пиксели.
-  5. truncate_at_sentence: перелёт ≤ 200 символов (а не 2× лимита).
-  6. _split_for_caption при available <= 0 возвращает ("", content).
-  7. is_bad_image_url не срабатывает на домены вида blog.example.com.
-  8. Безопасный пересчёт available для caption при длинном заголовке.
+FIX-набор:
+  - Одна статья = ОДНА публикация (без досылки остатка).
+  - Приоритет картинок: og:image → article img → RSS → (опц.) заглушка.
+  - fetch_image_with_fallback возвращает None при провале.
+  - Проверка реальных размеров картинки (мин. 200×120).
+  - truncate_at_sentence: перелёт ≤ 200 символов.
+  - _split_for_caption: ("", content) при available <= 0.
+  - is_bad_image_url не срабатывает на домены вида blog.example.com.
+  - STATE_FILE/META_FILE совпадают с тем, что коммитит workflow.
+  - MIN_INTERVAL/MAX_INTERVAL читают MIN_POST_INTERVAL/MAX_POST_INTERVAL.
+  - TIMEZONE_OFFSET применяется в get_local_time().
+  - TEST_MODE обрабатывается.
 """
 import os
 import re
@@ -39,21 +42,40 @@ except ImportError:
 
 
 # ======================================================================
-# ===== РЕКОНСТРУКЦИЯ СТРОК 1–360 (сверьте со своей версией) ============
+# ===== КОНСТАНТЫ ======================================================
 # ======================================================================
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '').strip()
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '').strip()
-STATE_FILE = os.environ.get('STATE_FILE', 'data/state.json')
-META_FILE = os.environ.get('META_FILE', 'data/meta.json')
 
-REQUEST_TIMEOUT = 20
-MAX_CAPTION = 1024          # лимит Telegram на caption у фото
-MAX_MESSAGE = 4096          # лимит Telegram на текстовое сообщение
-MAX_TRANSLATE_INPUT = 2500  # сколько символов статьи отправлять в переводчик
+# FIX: имена совпадают с тем, что коммитит workflow
+STATE_FILE = os.environ.get('STATE_FILE', 'state_news_bot.json')
+META_FILE = os.environ.get('META_FILE', 'posts_meta.json')
+
+REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', '20'))
+MAX_CAPTION = 1024
+MAX_MESSAGE = 4096
+MAX_TRANSLATE_INPUT = 2500
 MAX_POSTS_PER_DAY = int(os.environ.get('MAX_POSTS_PER_DAY', '10'))
-MIN_INTERVAL = int(os.environ.get('MIN_INTERVAL', '1800'))
-MAX_INTERVAL = int(os.environ.get('MAX_INTERVAL', '3600'))
+
+# FIX: читаем оба имени (MIN_POST_INTERVAL из workflow и MIN_INTERVAL)
+MIN_INTERVAL = int(
+    os.environ.get('MIN_POST_INTERVAL')
+    or os.environ.get('MIN_INTERVAL')
+    or '1800'
+)
+MAX_INTERVAL = int(
+    os.environ.get('MAX_POST_INTERVAL')
+    or os.environ.get('MAX_INTERVAL')
+    or '3600'
+)
+if MAX_INTERVAL < MIN_INTERVAL:
+    MAX_INTERVAL = MIN_INTERVAL
+
+# FIX: TIMEZONE_OFFSET и TEST_MODE применяются
+TIMEZONE_OFFSET = int(os.environ.get('TIMEZONE_OFFSET', '0'))
+TEST_MODE = os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes')
+
 TRANSLATE_CHUNK_SIZE = 4500
 IS_MANUAL_RUN = os.environ.get('MANUAL_RUN', '').lower() in ('1', 'true', 'yes')
 
@@ -62,14 +84,10 @@ FALLBACK_IMAGE_URL = os.environ.get(
     'https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/'
     'Telegram_logo.svg/240px-Telegram_logo.svg.png'
 )
-# FIX: по умолчанию заглушку НЕ используем (лучше опубликовать без фото).
 USE_FALLBACK_IMAGE = os.environ.get('USE_FALLBACK_IMAGE', '').lower() in ('1', 'true', 'yes')
 
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-
-os.makedirs(os.path.dirname(STATE_FILE) or '.', exist_ok=True)
-os.makedirs(os.path.dirname(META_FILE) or '.', exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,7 +115,6 @@ EXCLUDED_AUTHORS = [
     'The New York Times', 'The Washington Post', 'The Guardian',
 ]
 
-# Слова, которые не должны считаться «английским шумом» в переводе
 POST_TRANSLATION_FIXES = {
     'eu': 'ЕС', 'us': 'США', 'un': 'ООН', 'nato': 'НАТО', 'brics': 'БРИКС',
     'ai': 'ИИ', 'it': 'IT', 'gdp': 'ВВП', 'ceo': 'гендиректор',
@@ -105,14 +122,16 @@ POST_TRANSLATION_FIXES = {
 }
 
 
+# ======================================================================
+# ===== УТИЛИТЫ ========================================================
+# ======================================================================
+
 def get_local_time() -> datetime:
-    return datetime.now()
+    # FIX: применяем TIMEZONE_OFFSET из workflow
+    return datetime.now() + timedelta(hours=TIMEZONE_OFFSET)
 
 
 def truncate_at_sentence(text: str, max_len: int) -> str:
-    """Обрезает текст по последней границе предложения.
-    FIX: допускаем перелёт не более 200 символов (а не 2× лимита),
-    чтобы финальный текст вместе с заголовком гарантированно влез в лимит Telegram."""
     if not text:
         return ""
     if len(text) <= max_len:
@@ -121,7 +140,7 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
         m = re.search(re.escape(punct) + r'(?=\s|$)', text[max_len:])
         if m:
             end_pos = max_len + m.end()
-            if end_pos <= max_len + 200:      # FIX: было max_len * 2
+            if end_pos <= max_len + 200:
                 return text[:end_pos].strip()
             break
     cut = text[:max_len]
@@ -146,7 +165,6 @@ def remove_junk_paragraphs(text: str) -> str:
 
 
 def balance_brackets(text: str) -> str:
-    """Закрывает незакрытые скобки/кавычки."""
     if not text:
         return text
     pairs = [('«', '»'), ('(', ')'), ('[', ']'), ('{', '}')]
@@ -163,7 +181,6 @@ def balance_brackets(text: str) -> str:
 
 
 def cut_non_english_tail(text: str) -> str:
-    """Отрезает хвост из непереведённого английского текста."""
     if not text or len(text) < 200:
         return text
     tail = text[-300:]
@@ -177,7 +194,6 @@ def cut_non_english_tail(text: str) -> str:
 
 
 def postprocess_translation(text: str) -> str:
-    """Мелкие правки перевода (двойные пробелы, пробелы перед знаками, замена слов)."""
     if not text:
         return text
     for en, ru in POST_TRANSLATION_FIXES.items():
@@ -188,13 +204,8 @@ def postprocess_translation(text: str) -> str:
     return text.strip()
 
 
-# ======================================================================
-# ===== КОНЕЦ РЕКОНСТРУКЦИИ, ДАЛЬШЕ — ИСХОДНЫЙ КОД С ПРАВКАМИ ===========
-# ======================================================================
-
 def _split_for_caption(content: str, available: int) -> tuple:
-    """Делит контент на (caption_part, remaining_part) по границе предложения."""
-    # FIX: при available <= 0 весь текст должен уйти в remaining, а не в caption
+    # FIX: при available <= 0 весь текст уходит в remaining, а не в caption
     if not content or available <= 0:
         return ("", content or "")
     if len(content) <= available:
@@ -237,8 +248,7 @@ def is_bad_image_url(url: str) -> bool:
     if not url:
         return True
     url_lower = url.lower()
-    # FIX: маркеры ищем только в пути/имени файла, а не в домене,
-    # иначе blog.example.com отсеивается как «logo».
+    # FIX: проверяем только путь, а не домен (blog.example.com больше не отсеивается)
     path = re.sub(r'^https?://[^/]+', '', url_lower)
     bad_markers = (
         'logo', 'icon', 'avatar', 'placeholder', 'default',
@@ -284,7 +294,7 @@ def _is_image_content(content: bytes, ct: str = '') -> bool:
 
 
 def _image_ok_size(content: bytes, min_width: int = 200, min_height: int = 120) -> bool:
-    """FIX: отсеивает иконки/пиксели 1×1. Без PIL — пропускаем."""
+    # FIX: отсеиваем иконки/пиксели 1×1
     if not content or not _HAS_PIL:
         return True
     try:
@@ -299,7 +309,6 @@ def _normalize_to_jpeg(content: bytes):
         return None
     fmt = _detect_image_format(content)
     if fmt == 'jpeg':
-        # FIX: даже у JPEG проверяем размер
         return content if _image_ok_size(content) else None
     if fmt in ('png', 'gif'):
         return content if _image_ok_size(content) else None
@@ -308,7 +317,6 @@ def _normalize_to_jpeg(content: bytes):
         return None
     try:
         img = Image.open(BytesIO(content))
-        # FIX: проверка размера до конвертации
         if img.width < 200 or img.height < 120:
             logger.info(f"  ⏭️ Слишком мелкая картинка {img.size}, отклоняем")
             return None
@@ -434,7 +442,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
 
 
 def collect_image_candidates_generic(soup, base_url: str) -> list:
-    """og:image → og:image:secure_url → twitter:image → <article> img → все img."""
     candidates = []
     meta_img = soup.find('meta', property='og:image')
     if meta_img and meta_img.get('content'):
@@ -529,8 +536,7 @@ def fetch_zerohedge_image(image_url: str):
 
 
 def fetch_image_with_fallback(image_url: str, referer: str = None, source: str = None):
-    """FIX: возвращает None при провале (не подсовывает заглушку).
-    Заглушку решает вызывающий — см. USE_FALLBACK_IMAGE в publish()."""
+    # FIX: не подсовываем заглушку — возвращаем None при провале
     if not image_url:
         return None
     clean_url = _preprocess_image_url(image_url)
@@ -1238,14 +1244,12 @@ class NewsBot:
             self._add_to_meta(post_id, source_name, url, title_en, content_en)
 
             title_clean = clean_title(title_ru) or title_ru
-            # FIX: жёстко ограничиваем заголовок, чтобы caption всегда был валиден
             if len(title_clean) > MAX_CAPTION - 300:
                 title_clean = (truncate_at_sentence(title_clean, MAX_CAPTION - 300)
                                or title_clean[:MAX_CAPTION - 300])
             title_escaped = html_module.escape(title_clean, quote=False)
 
-            # ========== ЗАГРУЗКА КАРТИНКИ (правильный приоритет) ==========
-            # FIX: og:image со страницы → article img → RSS в последнюю очередь
+            # ========== КАРТИНКИ: og:image → article img → RSS ==========
             image_trials = []
             if image_url:
                 image_trials.append(image_url)
@@ -1271,7 +1275,6 @@ class NewsBot:
                     logger.info(f"  ✅ image OK: {cand[:60]}")
                     break
 
-            # FIX: заглушка только если явно разрешено через USE_FALLBACK_IMAGE
             if not img_bytes and USE_FALLBACK_IMAGE:
                 img_bytes = fetch_fallback_image()
 
@@ -1279,11 +1282,9 @@ class NewsBot:
             if img_bytes:
                 available = MAX_CAPTION - len(title_clean) - 20
                 if available < 50:
-                    # даже минимум не влезает в caption — уходим в текстовый режим
                     logger.warning("⚠️ caption не влезает, публикуем текстом")
                     img_bytes = None
                 else:
-                    # FIX: remaining игнорируем — никакой досылки, одна публикация
                     body_for_caption, _remaining = _split_for_caption(content_ru, available)
                     body_escaped = html_module.escape(body_for_caption, quote=False)
                     caption = f"<b>{title_escaped}</b>\n\n{body_escaped}".strip()
@@ -1354,6 +1355,8 @@ class NewsBot:
         logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
         if IS_MANUAL_RUN:
             logger.info("🔓 РЕЖИМ РУЧНОГО ЗАПУСКА")
+        if TEST_MODE:
+            logger.info("🧪 TEST_MODE включён")
         logger.info("=" * 50)
 
         news = await self.fetch_news()
