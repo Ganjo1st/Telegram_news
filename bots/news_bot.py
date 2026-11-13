@@ -16,6 +16,7 @@ FIX-набор:
   - FIX: Поиск картинок по name="og:image" (ZeroHedge).
   - FIX: Извлечение картинки из JSON-скриптов ZeroHedge.
   - FIX: Отсеивание рекламных баннеров (store-pick-of-the-week).
+  - FIX: Улучшенный отсев видео-статей (включая "(ВИДЕО)", "[Видео]").
 """
 import os
 import re
@@ -440,7 +441,6 @@ def extract_image_url_for_infobrics(soup, base_url: str):
 
 def collect_image_candidates_generic(soup, base_url: str) -> list:
     candidates = []
-    # FIX: Ищем и property="og:image", и name="og:image"
     for meta_name in ['og:image', 'og:image:secure_url', 'twitter:image']:
         for attr in ['property', 'name']:
             meta = soup.find('meta', attrs={attr: meta_name})
@@ -490,7 +490,6 @@ def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
 
 
 def extract_zh_image_from_json(soup) -> str:
-    # FIX: Извлекаем оригинальную картинку из ld+json или __NEXT_DATA__ для ZeroHedge
     try:
         ld_json = soup.find('script', type='application/ld+json')
         if ld_json and ld_json.string:
@@ -979,10 +978,14 @@ class NewsBot:
                              title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
-                if re.search(r'\b(video|видео|watch|смотрите|look|взгляните|witness)\b',
-                             title, re.IGNORECASE):
+                
+                # FIX: Улучшенный отсев видео (включая "(ВИДЕО)", "[Видео]")
+                is_video = re.search(r'\b(video|видео|watch|смотрите|смотреть|look|взгляните|witness)\b', title, re.IGNORECASE)
+                is_video_tag = re.search(r'[\(\[]\s*(видео|video|watch|смотрите|смотреть)\s*[\)\]]', title, re.IGNORECASE)
+                if is_video or is_video_tag:
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
+
                 if re.search(r'(популярн|popular|most popular|top|trending|daily|roundup|summary|recap)',
                              title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущен заголовок '{title[:50]}...'")
@@ -1052,7 +1055,6 @@ class NewsBot:
             zh_candidates = []
             if source_name == 'ZeroHedge':
                 zh_candidates = collect_image_candidates_generic(soup, base_url)
-                # FIX: Для ZeroHedge приоритет у картинки из JSON (самый надежный источник)
                 zh_json_image = extract_zh_image_from_json(soup)
                 if zh_json_image and zh_json_image not in zh_candidates:
                     zh_candidates.insert(0, zh_json_image)
