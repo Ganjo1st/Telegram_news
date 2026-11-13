@@ -13,6 +13,9 @@ FIX-набор:
   - MIN_INTERVAL/MAX_INTERVAL читают MIN_POST_INTERVAL/MAX_POST_INTERVAL.
   - TIMEZONE_OFFSET применяется в get_local_time().
   - TEST_MODE обрабатывается (в т.ч. обходит ночной режим).
+  - FIX: Поиск картинок по name="og:image" (ZeroHedge).
+  - FIX: Извлечение картинки из JSON-скриптов ZeroHedge.
+  - FIX: Отсеивание рекламных баннеров (store-pick-of-the-week).
 """
 import os
 import re
@@ -247,7 +250,8 @@ def is_bad_image_url(url: str) -> bool:
     bad_markers = (
         'logo', 'icon', 'avatar', 'placeholder', 'default',
         'no-image', 'noimage', 'blank', 'spacer', 'pixel',
-        '1x1', 'transparent', 'sprite',
+        '1x1', 'transparent', 'sprite', 'store-pick-of-the-week',
+        'marketing', 'banner', 'advert',
     )
     for marker in bad_markers:
         if re.search(rf'[/_\-.]({re.escape(marker)})[/_\-.$]', path):
@@ -436,15 +440,13 @@ def extract_image_url_for_infobrics(soup, base_url: str):
 
 def collect_image_candidates_generic(soup, base_url: str) -> list:
     candidates = []
-    meta_img = soup.find('meta', property='og:image')
-    if meta_img and meta_img.get('content'):
-        candidates.append(meta_img['content'])
-    meta_img_secure = soup.find('meta', property='og:image:secure_url')
-    if meta_img_secure and meta_img_secure.get('content'):
-        candidates.append(meta_img_secure['content'])
-    meta_twitter = soup.find('meta', attrs={'name': 'twitter:image'})
-    if meta_twitter and meta_twitter.get('content'):
-        candidates.append(meta_twitter['content'])
+    # FIX: Ищем и property="og:image", и name="og:image"
+    for meta_name in ['og:image', 'og:image:secure_url', 'twitter:image']:
+        for attr in ['property', 'name']:
+            meta = soup.find('meta', attrs={attr: meta_name})
+            if meta and meta.get('content'):
+                candidates.append(meta['content'])
+                
     article = soup.find('article')
     if article:
         for img in article.find_all('img', src=True):
@@ -485,6 +487,34 @@ def extract_image_url(soup, base_url: str, source_name: str = '') -> str:
         return extract_image_url_for_infobrics(soup, base_url)
     candidates = collect_image_candidates_generic(soup, base_url)
     return candidates[0] if candidates else None
+
+
+def extract_zh_image_from_json(soup) -> str:
+    # FIX: Извлекаем оригинальную картинку из ld+json или __NEXT_DATA__ для ZeroHedge
+    try:
+        ld_json = soup.find('script', type='application/ld+json')
+        if ld_json and ld_json.string:
+            data = json.loads(ld_json.string)
+            if 'image' in data:
+                img = data['image']
+                if isinstance(img, list) and len(img) > 0:
+                    return img[0]
+                elif isinstance(img, str):
+                    return img
+    except Exception:
+        pass
+
+    try:
+        next_data = soup.find('script', id='__NEXT_DATA__')
+        if next_data and next_data.string:
+            data = json.loads(next_data.string)
+            node = data.get('props', {}).get('pageProps', {}).get('node', {})
+            if node.get('teaserImageUrl'):
+                return node['teaserImageUrl']
+    except Exception:
+        pass
+    
+    return None
 
 
 def fetch_zerohedge_image(image_url: str):
@@ -903,7 +933,6 @@ class NewsBot:
         self._save_state()
 
     def _can_post(self) -> bool:
-        # FIX: TEST_MODE обходит ночной режим и интервалы для тестирования
         if IS_MANUAL_RUN or TEST_MODE:
             return True
         now = get_local_time()
@@ -1023,6 +1052,11 @@ class NewsBot:
             zh_candidates = []
             if source_name == 'ZeroHedge':
                 zh_candidates = collect_image_candidates_generic(soup, base_url)
+                # FIX: Для ZeroHedge приоритет у картинки из JSON (самый надежный источник)
+                zh_json_image = extract_zh_image_from_json(soup)
+                if zh_json_image and zh_json_image not in zh_candidates:
+                    zh_candidates.insert(0, zh_json_image)
+                
                 image_url = zh_candidates[0] if zh_candidates else None
                 if zh_candidates:
                     logger.info(f"ZeroHedge: собрано {len(zh_candidates)} кандидатов картинок")
@@ -1150,7 +1184,6 @@ class NewsBot:
             try:
                 logger.info(f"📰 Парсинг {source_name}...")
                 articles = await asyncio.get_event_loop().run_in_executor(None, get_func)
-                # FIX: логируем пустой ответ RSS для наглядности
                 if not articles:
                     logger.warning(f"⚠️ {source_name}: 0 статей из RSS")
                     continue
