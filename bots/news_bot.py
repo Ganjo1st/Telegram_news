@@ -17,6 +17,7 @@ FIX-набор:
   - FIX: Извлечение картинки из JSON-скриптов ZeroHedge.
   - FIX: Отсеивание рекламных баннеров (store-pick-of-the-week).
   - FIX: Улучшенный отсев видео-статей (включая "(ВИДЕО)", "[Видео]").
+  - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
 """
 import os
 import re
@@ -102,6 +103,7 @@ JUNK_PHRASES = [
     'follow us', 'all rights reserved', 'copyright', 'cookie',
     'advertisement', 'click here', 'watch the video', 'related articles',
     'leave a comment', 'comments', 'loading...',
+    'associado ao', 'comente', 'siga-nos', 'assine', 'newsletter',
 ]
 
 FOREIGN_TITLE_WORDS = [
@@ -980,9 +982,8 @@ class NewsBot:
                     continue
                 
                 # FIX: Улучшенный отсев видео (включая "(ВИДЕО)", "[Видео]")
-                is_video = re.search(r'\b(video|видео|watch|смотрите|смотреть|look|взгляните|witness)\b', title, re.IGNORECASE)
-                is_video_tag = re.search(r'[\(\[]\s*(видео|video|watch|смотрите|смотреть)\s*[\)\]]', title, re.IGNORECASE)
-                if is_video or is_video_tag:
+                video_pattern = r'(\bvideo\b|\bвидео\b|\bwatch\b|\bсмотрите\b|\bсмотреть\b|\bwitness\b|\bтрансляция\b|\bstream\b|\(\s*видео\s*\)|\[\s*видео\s*\]|\(\s*video\s*\)|\[\s*video\s*\])'
+                if re.search(video_pattern, title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
                     continue
 
@@ -1100,6 +1101,13 @@ class NewsBot:
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
+                    # FIX: Отсев биографий и футеров Global Research
+                    if re.search(r'(Associado ao Centro|Comente artigos|Siga-nos|Assine nossa|Newsletter)', text, re.IGNORECASE):
+                        continue
+                    # FIX: Удаление абзацев с упоминанием автора
+                    if re.search(r'(Лукас Лейрос|Lucas Leiroz|Leiroz de Almeida)', text, re.IGNORECASE):
+                        continue
+                    
                     if len(text) > 40:
                         if not text.startswith('Read more') and not text.startswith('Share this'):
                             content_parts.append(text)
@@ -1117,6 +1125,13 @@ class NewsBot:
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
+                    # FIX: Отсев биографий и футеров Global Research (глобальный поиск)
+                    if re.search(r'(Associado ao Centro|Comente artigos|Siga-nos|Assine nossa|Newsletter)', text, re.IGNORECASE):
+                        continue
+                    # FIX: Удаление абзацев с упоминанием автора
+                    if re.search(r'(Лукас Лейрос|Lucas Leiroz|Leiroz de Almeida)', text, re.IGNORECASE):
+                        continue
+                    
                     if len(text) > 40 and not text.startswith('Read more'):
                         if not re.search(r'(menu|nav|copyright|all rights reserved)',
                                          text, re.IGNORECASE):
