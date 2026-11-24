@@ -18,6 +18,7 @@ FIX-набор:
   - FIX: Отсеивание рекламных баннеров (store-pick-of-the-week).
   - FIX: Улучшенный отсев видео-статей (включая "(ВИДЕО)", "[Видео]").
   - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
+  - FIX: RT — принудительный перевод тела даже при кириллических вкраплениях (НАТО, США).
 """
 import os
 import re
@@ -782,10 +783,10 @@ def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
     return chunks
 
 
-def translate_text(text: str) -> str:
+def translate_text(text: str, force: bool = False) -> str:
     if not text or len(text) < 3:
         return text
-    if re.search('[а-яА-Я]', text):
+    if not force and re.search('[а-яА-Я]', text):
         return text
     chunks = split_into_chunks(text, max_chunk=TRANSLATE_CHUNK_SIZE)
     logger.info(f"  🔪 Разбито на {len(chunks)} кусков")
@@ -1259,14 +1260,17 @@ class NewsBot:
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
 
-            title_ru = await loop.run_in_executor(None, translate_text, title_short)
+            # FIX: RT — принудительный перевод, даже если в тексте есть кириллица (НАТО, США и т.п.)
+            is_rt = (source_name == 'RT')
+
+            title_ru = await loop.run_in_executor(None, translate_text, title_short, is_rt)
             title_ru = unescape_html(title_ru)
             title_ru = postprocess_translation(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_short
 
             if is_bad_title(title_ru):
                 logger.warning("⚠️ Заголовок смешанный, повторный перевод...")
-                title_retry = await loop.run_in_executor(None, translate_text, title_short)
+                title_retry = await loop.run_in_executor(None, translate_text, title_short, is_rt)
                 title_retry = unescape_html(title_retry)
                 title_retry = postprocess_translation(title_retry)
                 title_retry = clean_title(title_retry)
@@ -1274,7 +1278,7 @@ class NewsBot:
                     title_ru = title_retry
                     logger.info("✅ Повторный перевод удался")
 
-            content_ru = await loop.run_in_executor(None, translate_text, content_short)
+            content_ru = await loop.run_in_executor(None, translate_text, content_short, is_rt)
             content_ru = unescape_html(content_ru)
             content_ru = postprocess_translation(content_ru)
             content_ru = content_ru or content_short
