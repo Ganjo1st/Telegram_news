@@ -19,6 +19,7 @@ FIX-набор:
   - FIX: Улучшенный отсев видео-статей (включая "(ВИДЕО)", "[Видео]").
   - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
   - FIX: RT — принудительный перевод тела даже при кириллических вкраплениях (НАТО, США).
+  - FIX: Отсев коротких абзацев-атрибуций соцсетей (— @handle + дата).
 """
 import os
 import re
@@ -153,12 +154,43 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
     return cut.rstrip(' ,.;:') + '…'
 
 
+# FIX: короткие абзацы-атрибуции соцсетей вида
+#   "– New York Post (@nypost) 21 ноября 2026 г."
+#   "— Подкаст All-In (@theallinpod)21 ноября 2026 г."
+SOCIAL_HANDLE_RE = re.compile(r'@[A-Za-z0-9_]{2,}')
+SOCIAL_DATE_RE = re.compile(
+    r'(?:\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|'
+    r'сентября|октября|ноября|декабря)\s+\d{4})'
+    r'|(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+'
+    r'\d{1,2},?\s+\d{4})'
+    r'|(?:\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+    r'[a-z]*\.?\s+\d{4})',
+    re.IGNORECASE,
+)
+
+
+def is_social_attribution(text: str) -> bool:
+    """Короткий абзац-атрибуция соцсети: @handle + дата, длина < 200."""
+    if not text:
+        return False
+    t = text.strip()
+    if not t or len(t) > 200:
+        return False
+    if not SOCIAL_HANDLE_RE.search(t):
+        return False
+    if not SOCIAL_DATE_RE.search(t):
+        return False
+    return True
+
+
 def remove_junk_paragraphs(text: str) -> str:
     if not text:
         return text
     paragraphs = text.split('\n\n')
     result = []
     for p in paragraphs:
+        if is_social_attribution(p):
+            continue
         p_lower = p.lower()
         if any(junk in p_lower for junk in JUNK_PHRASES):
             continue
@@ -1093,6 +1125,9 @@ class NewsBot:
                     tag.decompose()
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
+                    # FIX: Отсев коротких абзацев-атрибуций соцсетей
+                    if is_social_attribution(text):
+                        continue
                     if is_excluded_author(text):
                         continue
                     if contains_link(text):
@@ -1117,6 +1152,9 @@ class NewsBot:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
+                    # FIX: Отсев коротких абзацев-атрибуций соцсетей
+                    if is_social_attribution(text):
+                        continue
                     if is_excluded_author(text):
                         continue
                     if contains_link(text):
@@ -1290,6 +1328,8 @@ class NewsBot:
             content_ru = unescape_html(content_ru)
             content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
+            # FIX: страховочная зачистка атрибуций соцсетей после перевода
+            content_ru = remove_junk_paragraphs(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
             self._add_to_meta(post_id, source_name, url, title_en, content_en)
