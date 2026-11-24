@@ -20,6 +20,7 @@ FIX-набор:
   - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
   - FIX: RT — принудительный перевод тела даже при кириллических вкраплениях (НАТО, США).
   - FIX: Отсев коротких абзацев-атрибуций соцсетей (— @handle + дата).
+  - FIX: Global Research — обход Cloudflare через curl_cffi (имитация TLS Chrome).
 """
 import os
 import re
@@ -40,6 +41,13 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
+
+# FIX: curl_cffi для обхода Cloudflare на Global Research
+try:
+    from curl_cffi import requests as curl_requests
+    _HAS_CURL_CFFI = True
+except ImportError:
+    _HAS_CURL_CFFI = False
 
 try:
     from PIL import Image
@@ -154,9 +162,6 @@ def truncate_at_sentence(text: str, max_len: int) -> str:
     return cut.rstrip(' ,.;:') + '…'
 
 
-# FIX: короткие абзацы-атрибуции соцсетей вида
-#   "– New York Post (@nypost) 21 ноября 2026 г."
-#   "— Подкаст All-In (@theallinpod)21 ноября 2026 г."
 SOCIAL_HANDLE_RE = re.compile(r'@[A-Za-z0-9_]{2,}')
 SOCIAL_DATE_RE = re.compile(
     r'(?:\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|'
@@ -170,7 +175,6 @@ SOCIAL_DATE_RE = re.compile(
 
 
 def is_social_attribution(text: str) -> bool:
-    """Короткий абзац-атрибуция соцсети: @handle + дата, длина < 200."""
     if not text:
         return False
     t = text.strip()
@@ -265,11 +269,19 @@ def _split_for_caption(content: str, available: int) -> tuple:
     return (caption_part, remaining)
 
 
-def fetch_url(url: str, timeout: int = None):
+def fetch_url(url: str, timeout: int = None, use_curl: bool = False):
+    """FIX: для Global Research используем curl_cffi (имитация TLS Chrome)."""
     if timeout is None:
         timeout = REQUEST_TIMEOUT
     try:
         headers = {'User-Agent': UA}
+        if use_curl and _HAS_CURL_CFFI:
+            # curl_cffi автоматически подставляет TLS-отпечаток Chrome
+            response = curl_requests.get(url, headers=headers, timeout=timeout,
+                                         impersonate="chrome")
+            response.raise_for_status()
+            return response
+        # Стандартный requests для остальных источников
         response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
         return response
@@ -1014,7 +1026,6 @@ class NewsBot:
                     logger.info(f"⏭️ {source_name}: пропущены избранные статьи '{title[:50]}...'")
                     continue
                 
-                # FIX: Улучшенный отсев видео (включая "(ВИДЕО)", "[Видео]")
                 video_pattern = r'(\bvideo\b|\bвидео\b|\bwatch\b|\bсмотрите\b|\bсмотреть\b|\bwitness\b|\bтрансляция\b|\bstream\b|\(\s*видео\s*\)|\[\s*видео\s*\]|\(\s*video\s*\)|\[\s*video\s*\])'
                 if re.search(video_pattern, title, re.IGNORECASE):
                     logger.info(f"⏭️ {source_name}: пропущено видео/смотрите '{title[:50]}...'")
@@ -1077,7 +1088,9 @@ class NewsBot:
     # ========== ПАРСИНГ СТАТЬИ ==========
     def _parse_article(self, url: str, source_name: str):
         try:
-            response = fetch_url(url)
+            # FIX: для Global Research используем curl_cffi (обход Cloudflare)
+            use_curl = (source_name == 'Global Research')
+            response = fetch_url(url, use_curl=use_curl)
             if not response:
                 return None
             if 'substack.com' in url or 'asia-pacificresearch.com' in url:
@@ -1125,7 +1138,6 @@ class NewsBot:
                     tag.decompose()
                 for p in content_container.find_all('p'):
                     text = p.get_text(strip=True)
-                    # FIX: Отсев коротких абзацев-атрибуций соцсетей
                     if is_social_attribution(text):
                         continue
                     if is_excluded_author(text):
@@ -1137,10 +1149,8 @@ class NewsBot:
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
-                    # FIX: Отсев биографий и футеров Global Research
                     if re.search(r'(Associado ao Centro|Comente artigos|Siga-nos|Assine nossa|Newsletter)', text, re.IGNORECASE):
                         continue
-                    # FIX: Удаление абзацев с упоминанием автора
                     if re.search(r'(Лукас Лейрос|Lucas Leiroz|Leiroz de Almeida)', text, re.IGNORECASE):
                         continue
                     
@@ -1152,7 +1162,6 @@ class NewsBot:
                 logger.info(f"⚠️ {source_name}: ищем p на всей странице")
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
-                    # FIX: Отсев коротких абзацев-атрибуций соцсетей
                     if is_social_attribution(text):
                         continue
                     if is_excluded_author(text):
@@ -1164,10 +1173,8 @@ class NewsBot:
                     text_lower = text.lower()
                     if any(junk in text_lower for junk in JUNK_PHRASES):
                         continue
-                    # FIX: Отсев биографий и футеров Global Research (глобальный поиск)
                     if re.search(r'(Associado ao Centro|Comente artigos|Siga-nos|Assine nossa|Newsletter)', text, re.IGNORECASE):
                         continue
-                    # FIX: Удаление абзацев с упоминанием автора
                     if re.search(r'(Лукас Лейрос|Lucas Leiroz|Leiroz de Almeida)', text, re.IGNORECASE):
                         continue
                     
@@ -1298,7 +1305,6 @@ class NewsBot:
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
 
-            # FIX: RT — принудительный перевод, даже если в тексте есть кириллица (НАТО, США и т.п.)
             is_rt = (source_name == 'RT')
 
             title_ru = await loop.run_in_executor(None, translate_text, title_short, is_rt)
@@ -1328,7 +1334,6 @@ class NewsBot:
             content_ru = unescape_html(content_ru)
             content_ru = cut_non_english_tail(content_ru)
             content_ru = balance_brackets(content_ru)
-            # FIX: страховочная зачистка атрибуций соцсетей после перевода
             content_ru = remove_junk_paragraphs(content_ru)
 
             post_id = hashlib.md5(url.encode()).hexdigest()[:16]
@@ -1340,7 +1345,6 @@ class NewsBot:
                                or title_clean[:MAX_CAPTION - 300])
             title_escaped = html_module.escape(title_clean, quote=False)
 
-            # ========== КАРТИНКИ: og:image → article img → RSS ==========
             image_trials = []
             if image_url:
                 image_trials.append(image_url)
@@ -1369,7 +1373,6 @@ class NewsBot:
             if not img_bytes and USE_FALLBACK_IMAGE:
                 img_bytes = fetch_fallback_image()
 
-            # ========== ПУБЛИКАЦИЯ (ОДНА, БЕЗ ДОСЫЛКИ) ==========
             if img_bytes:
                 available = MAX_CAPTION - len(title_clean) - 20
                 if available < 50:
@@ -1405,7 +1408,6 @@ class NewsBot:
                         except Exception as e2:
                             logger.warning(f"Повтор send_photo без parse_mode: {e2}")
 
-            # ========== ПУБЛИКАЦИЯ ТЕКСТОМ ==========
             logger.info("📝 Публикация текстом")
             available = MAX_MESSAGE - len(title_clean) - 20
             if available < 100:
@@ -1440,7 +1442,6 @@ class NewsBot:
         except Exception as e:
             logger.error(f"❌ Критическая ошибка publish: {e}")
 
-    # ========== ОСНОВНОЙ ЦИКЛ ==========
     async def run_once(self):
         logger.info("=" * 50)
         logger.info(f"🚀 Запуск [{get_local_time().strftime('%H:%M:%S')}]")
