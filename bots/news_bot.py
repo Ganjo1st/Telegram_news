@@ -20,7 +20,8 @@ FIX-набор:
   - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
   - FIX: RT — принудительный перевод тела даже при кириллических вкраплениях (НАТО, США).
   - FIX: Отсев коротких абзацев-атрибуций соцсетей (— @handle + дата).
-  - FIX: Global Research — обход Cloudflare через curl_cffi (имитация TLS Chrome).
+  - FIX: Global Research — стандартный requests + Referer/Accept-Language (без curl_cffi).
+  - FIX: Двойная проверка дедупликации перед публикацией (защита от гонок).
 """
 import os
 import re
@@ -41,13 +42,6 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
-
-# FIX: curl_cffi для обхода Cloudflare на Global Research
-try:
-    from curl_cffi import requests as curl_requests
-    _HAS_CURL_CFFI = True
-except ImportError:
-    _HAS_CURL_CFFI = False
 
 try:
     from PIL import Image
@@ -269,19 +263,17 @@ def _split_for_caption(content: str, available: int) -> tuple:
     return (caption_part, remaining)
 
 
-def fetch_url(url: str, timeout: int = None, use_curl: bool = False):
-    """FIX: для Global Research используем curl_cffi (имитация TLS Chrome)."""
+def fetch_url(url: str, timeout: int = None, source_name: str = ''):
     if timeout is None:
         timeout = REQUEST_TIMEOUT
     try:
         headers = {'User-Agent': UA}
-        if use_curl and _HAS_CURL_CFFI:
-            # curl_cffi автоматически подставляет TLS-отпечаток Chrome
-            response = curl_requests.get(url, headers=headers, timeout=timeout,
-                                         impersonate="chrome")
-            response.raise_for_status()
-            return response
-        # Стандартный requests для остальных источников
+        # FIX: Global Research иногда отдаёт 403 без Referer/Accept-Language
+        if source_name == 'Global Research':
+            headers['Referer'] = 'https://www.globalresearch.ca/'
+            headers['Accept-Language'] = 'en-US,en;q=0.9'
+            headers['Accept'] = ('text/html,application/xhtml+xml,'
+                                 'application/xml;q=0.9,*/*;q=0.8')
         response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
         return response
@@ -1088,9 +1080,7 @@ class NewsBot:
     # ========== ПАРСИНГ СТАТЬИ ==========
     def _parse_article(self, url: str, source_name: str):
         try:
-            # FIX: для Global Research используем curl_cffi (обход Cloudflare)
-            use_curl = (source_name == 'Global Research')
-            response = fetch_url(url, use_curl=use_curl)
+            response = fetch_url(url, source_name=source_name)
             if not response:
                 return None
             if 'substack.com' in url or 'asia-pacificresearch.com' in url:
@@ -1289,8 +1279,9 @@ class NewsBot:
                 logger.warning("⏭️ Пропуск: пустой заголовок")
                 return
 
-            if url in self.state['sent_links']:
-                logger.warning(f"⛔ Уже опубликовано: {url[:80]}...")
+            # FIX: двойная проверка дедупликации перед публикацией
+            if self._is_duplicate(url, title_en, content_en):
+                logger.warning(f"⛔ Повторная проверка: дубликат, пропуск {url[:80]}...")
                 return
 
             logger.info(f"📝 Перевод: {title_en[:80]}...")
