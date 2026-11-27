@@ -20,8 +20,9 @@ FIX-набор:
   - FIX: Отсеивание биографий авторов по именам (без отбрасывания всей статьи).
   - FIX: RT — принудительный перевод тела даже при кириллических вкраплениях (НАТО, США).
   - FIX: Отсев коротких абзацев-атрибуций соцсетей (— @handle + дата).
-  - FIX: Global Research — стандартный requests + Referer/Accept-Language (без curl_cffi).
+  - FIX: Global Research — curl_cffi (если установлен) + фолбэк на requests.
   - FIX: Двойная проверка дедупликации перед публикацией (защита от гонок).
+  - FIX: RT — принудительный перевод даже если результат не содержит кириллицы.
 """
 import os
 import re
@@ -42,6 +43,14 @@ import feedparser
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
+
+# FIX: curl_cffi только для Global Research (обход Cloudflare)
+try:
+    from curl_cffi import requests as curl_requests
+    _HAS_CURL_CFFI = True
+except ImportError:
+    _HAS_CURL_CFFI = False
+    curl_requests = None
 
 try:
     from PIL import Image
@@ -268,8 +277,20 @@ def fetch_url(url: str, timeout: int = None, source_name: str = ''):
         timeout = REQUEST_TIMEOUT
     try:
         headers = {'User-Agent': UA}
-        # FIX: Global Research иногда отдаёт 403 без Referer/Accept-Language
         if source_name == 'Global Research':
+            # FIX: curl_cffi для обхода Cloudflare (если установлен)
+            if _HAS_CURL_CFFI and curl_requests is not None:
+                try:
+                    response = curl_requests.get(
+                        url, headers=headers, timeout=timeout,
+                        impersonate="chrome",
+                    )
+                    response.raise_for_status()
+                    return response
+                except Exception as e:
+                    logger.warning(f"curl_cffi не сработал для GR: {e}, "
+                                   f"пробуем requests")
+            # Фолбэк на requests с Referer/Accept-Language
             headers['Referer'] = 'https://www.globalresearch.ca/'
             headers['Accept-Language'] = 'en-US,en;q=0.9'
             headers['Accept'] = ('text/html,application/xhtml+xml,'
@@ -724,7 +745,7 @@ def is_bad_title(title: str) -> bool:
 
 
 # ========== ПЕРЕВОДЧИКИ ==========
-def translate_google(text: str) -> str:
+def translate_google(text: str, force_ru: bool = False) -> str:
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {'client': 'gtx', 'sl': 'en', 'tl': 'ru', 'dt': 't', 'q': text}
@@ -733,14 +754,15 @@ def translate_google(text: str) -> str:
             data = response.json()
             if data and len(data) > 0:
                 result = ''.join(item[0] for item in data[0] if item and len(item) > 0)
-                if result and re.search('[а-яА-Я]', result):
-                    return result
+                if result:
+                    if force_ru or re.search('[а-яА-Я]', result):
+                        return result
     except Exception as e:
         logger.warning(f"Google ошибка: {e}")
     return None
 
 
-def translate_mymemory(text: str) -> str:
+def translate_mymemory(text: str, force_ru: bool = False) -> str:
     if len(text) > 500:
         return None
     try:
@@ -751,14 +773,15 @@ def translate_mymemory(text: str) -> str:
             data = response.json()
             if data and 'responseData' in data and 'translatedText' in data['responseData']:
                 result = data['responseData']['translatedText']
-                if result and re.search('[а-яА-Я]', result):
-                    return result
+                if result:
+                    if force_ru or re.search('[а-яА-Я]', result):
+                        return result
     except Exception as e:
         logger.warning(f"MyMemory ошибка: {e}")
     return None
 
 
-def translate_lingva(text: str) -> str:
+def translate_lingva(text: str, force_ru: bool = False) -> str:
     try:
         url = f"https://lingva.ml/api/v1/en/ru/{requests.utils.quote(text)}"
         response = requests.get(url, timeout=15)
@@ -766,21 +789,22 @@ def translate_lingva(text: str) -> str:
             data = response.json()
             if data and 'translation' in data:
                 result = data['translation']
-                if result and re.search('[а-яА-Я]', result):
-                    return result
+                if result:
+                    if force_ru or re.search('[а-яА-Я]', result):
+                        return result
     except Exception as e:
         logger.warning(f"Lingva ошибка: {e}")
     return None
 
 
-def translate_chunk(chunk: str) -> tuple:
-    result = translate_google(chunk)
+def translate_chunk(chunk: str, force_ru: bool = False) -> tuple:
+    result = translate_google(chunk, force_ru)
     if result:
         return (result, 'Google')
-    result = translate_mymemory(chunk)
+    result = translate_mymemory(chunk, force_ru)
     if result:
         return (result, 'MyMemory')
-    result = translate_lingva(chunk)
+    result = translate_lingva(chunk, force_ru)
     if result:
         return (result, 'Lingva')
     return (chunk, None)
@@ -819,7 +843,7 @@ def split_into_chunks(text: str, max_chunk: int = TRANSLATE_CHUNK_SIZE) -> list:
     return chunks
 
 
-def translate_text(text: str, force: bool = False) -> str:
+def translate_text(text: str, force: bool = False, force_ru: bool = False) -> str:
     if not text or len(text) < 3:
         return text
     if not force and re.search('[а-яА-Я]', text):
@@ -829,7 +853,7 @@ def translate_text(text: str, force: bool = False) -> str:
     translated_parts = []
     method_stats = {}
     for i, chunk in enumerate(chunks):
-        result, method = translate_chunk(chunk)
+        result, method = translate_chunk(chunk, force_ru)
         if method:
             method_stats[method] = method_stats.get(method, 0) + 1
             translated_parts.append(result)
@@ -1279,7 +1303,6 @@ class NewsBot:
                 logger.warning("⏭️ Пропуск: пустой заголовок")
                 return
 
-            # FIX: двойная проверка дедупликации перед публикацией
             if self._is_duplicate(url, title_en, content_en):
                 logger.warning(f"⛔ Повторная проверка: дубликат, пропуск {url[:80]}...")
                 return
@@ -1296,16 +1319,20 @@ class NewsBot:
             logger.info(f"  ✂️ Заголовок: {len(title_en)} → {len(title_short)} символов")
             logger.info(f"  ✂️ Контент: {len(content_en)} → {len(content_short)} символов")
 
+            # FIX: для RT — force=True (переводить даже при кириллице) и
+            # force_ru=True (принимать результат без кириллицы)
             is_rt = (source_name == 'RT')
 
-            title_ru = await loop.run_in_executor(None, translate_text, title_short, is_rt)
+            title_ru = await loop.run_in_executor(
+                None, translate_text, title_short, is_rt, is_rt)
             title_ru = unescape_html(title_ru)
             title_ru = postprocess_translation(title_ru)
             title_ru = clean_title(title_ru) or title_ru or title_short
 
             if is_bad_title(title_ru):
                 logger.warning("⚠️ Заголовок смешанный, повторный перевод...")
-                title_retry = await loop.run_in_executor(None, translate_text, title_short, is_rt)
+                title_retry = await loop.run_in_executor(
+                    None, translate_text, title_short, is_rt, is_rt)
                 title_retry = unescape_html(title_retry)
                 title_retry = postprocess_translation(title_retry)
                 title_retry = clean_title(title_retry)
@@ -1313,7 +1340,8 @@ class NewsBot:
                     title_ru = title_retry
                     logger.info("✅ Повторный перевод удался")
 
-            content_ru = await loop.run_in_executor(None, translate_text, content_short, is_rt)
+            content_ru = await loop.run_in_executor(
+                None, translate_text, content_short, is_rt, is_rt)
             content_ru = unescape_html(content_ru)
             content_ru = postprocess_translation(content_ru)
             content_ru = content_ru or content_short
